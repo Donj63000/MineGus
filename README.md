@@ -15,11 +15,21 @@ Ce dépôt contient un plugin Paper pour Minecraft 1.21.x permettant d'automatis
    - Le fichier `target/MinePlugin.jar` est alors généré.
    - Vous pouvez aussi lancer `mvn clean package -P export-to-server` pour copier automatiquement l'artefact dans le dossier `plugins` défini dans `pom.xml`.
 
-## Installation sur un serveur Paper
+## Installation du plugin (.jar)
 
-1. Copiez `target/MinePlugin.jar` dans le répertoire `plugins/` de votre serveur Paper.
-2. Démarrez (ou redémarrez) le serveur.
-3. Vérifiez avec la commande `/plugins` que *MinePlugin* apparaît bien dans la liste.
+1. Récupérez le fichier `MinePlugin.jar` (généré à l'étape précédente ou fourni dans les releases).
+2. Copiez ce fichier dans le dossier `plugins/` de votre serveur Paper.
+   - Exemple : `/home/user/paper/plugins/MinePlugin.jar`.
+3. Lancez ou redémarrez le serveur.
+4. Vérifiez la présence du plugin à l'aide de la commande `/plugins`.
+5. Lors du premier démarrage, un dossier `plugins/MinePlugin/` est créé pour stocker les données et configurations.
+
+## Utilisation du plugin
+
+Une fois le plugin chargé, vous pouvez vérifier son fonctionnement :
+1. Connectez-vous à votre serveur Minecraft.
+2. Exécutez la commande `/ping` ; le plugin devrait répondre « Pong ! ».
+3. Les autres commandes ci-dessous permettent d'automatiser différentes tâches.
 
 ## Commandes disponibles
 
