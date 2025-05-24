@@ -1,0 +1,35 @@
+name: MinePlugin
+version: 1.0
+main: org.example.MinePlugin
+api-version: "1.21.4"
+
+commands:
+  army:
+    description: Fait apparaître 5 loups + 2 golems
+    usage: /army
+
+  ping:
+    description: Répond « Pong ! »
+    usage: /ping
+
+  mineur:
+    description: Fait apparaître un PNJ mineur pour creuser une zone <LxH>
+    usage: /mineur [Largeur]x[Hauteur]
+
+  champ:
+    description: Crée un champ automatisé (labour, plantation, récolte)
+    usage: /champ [Largeur]x[Longueur]
+
+  foret:
+    description: Crée une forêt automatisée (plantation et récolte d’arbres)
+    usage: /foret [Largeur]x[Longueur]
+
+  village:
+    description: Génère un petit village de PNJ
+    usage: /village
+  eleveur:
+    description: Crée un enclos automatisé pour l'élevage
+    usage: /eleveur
+  armure:
+    description: Donne l'Armure du roi GIDON
+    usage: /armure

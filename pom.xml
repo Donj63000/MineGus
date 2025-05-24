@@ -1,0 +1,115 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0
+                             https://maven.apache.org/xsd/maven-4.0.0.xsd">
+
+    <modelVersion>4.0.0</modelVersion>
+
+    <!-- ========== IDENTITÉ DU PLUGIN ========== -->
+    <groupId>com.val.papersolo</groupId>
+    <artifactId>mineplugin</artifactId>
+    <version>1.0-SNAPSHOT</version>
+    <name>MinePlugin</name>
+    <description>Plugin Mineur + Agriculture automatisés pour Paper 1.21.x</description>
+    <packaging>jar</packaging>
+
+    <!-- ========== PROPRIÉTÉS ========== -->
+    <properties>
+        <!-- Le plugin doit être compilé en Java 17 -->
+        <maven.compiler.release>17</maven.compiler.release>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <paper.version>1.21.4-R0.1-SNAPSHOT</paper.version>            <!-- Paper API -->
+    </properties>
+
+    <!-- ========== DÉPÔTS ========== -->
+    <repositories>
+        <repository>
+            <id>papermc</id>
+            <url>https://repo.papermc.io/repository/maven-public/</url>
+        </repository>
+    </repositories>
+
+    <!-- ========== DÉPENDANCES ========== -->
+    <dependencies>
+        <dependency>
+            <groupId>io.papermc.paper</groupId>
+            <artifactId>paper-api</artifactId>
+            <version>${paper.version}</version>
+            <scope>provided</scope>
+        </dependency>
+    </dependencies>
+
+    <!-- ========== BUILD ========== -->
+    <build>
+        <!-- inclut plugin.yml & autres ressources -->
+        <resources>
+            <resource>
+                <directory>src/main/resources</directory>
+                <filtering>false</filtering>
+            </resource>
+        </resources>
+
+        <plugins>
+
+            <!-- Compilation Java -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <version>3.11.0</version>
+                <configuration>
+                    <release>${maven.compiler.release}</release>
+                </configuration>
+            </plugin>
+
+            <!-- Jar renommé -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-jar-plugin</artifactId>
+                <version>3.3.0</version>
+                <configuration>
+                    <finalName>MinePlugin</finalName>
+                </configuration>
+            </plugin>
+
+        </plugins>
+    </build>
+
+    <!-- ========== PROFIL D’EXPORT LOCAL ========== -->
+    <profiles>
+        <profile>
+            <id>export-to-server</id>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-resources-plugin</artifactId>
+                        <version>3.3.1</version>
+                        <executions>
+                            <execution>
+                                <id>copy-jar</id>
+                                <phase>package</phase>
+                                <goals><goal>copy-resources</goal></goals>
+                                <configuration>
+                                    <!-- Chemin de ton dossier /plugins -->
+                                    <outputDirectory>
+                                        C:\Users\nodig\OneDrive\Bureau\SERVEUR MINECRAFT AUGUSTIN\PaperServer\plugins
+                                    </outputDirectory>
+                                    <resources>
+                                        <resource>
+                                            <directory>${project.build.directory}</directory>
+                                            <includes>
+                                                <include>MinePlugin.jar</include>
+                                            </includes>
+                                        </resource>
+                                    </resources>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+    </profiles>
+
+</project>
