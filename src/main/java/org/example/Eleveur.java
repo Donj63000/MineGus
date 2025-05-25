@@ -357,6 +357,13 @@ public final class Eleveur implements CommandExecutor, Listener {
         });
     }
 
+    public void createRanch(Location origin, int width, int length) {
+        RanchSession rs = new RanchSession(plugin, origin, width, length);
+        rs.start();
+        sessions.add(rs);
+        saveAllSessions();
+    }
+
     public void stopAllRanches() {
         if (scoreboardTask != null) {
             scoreboardTask.cancel();

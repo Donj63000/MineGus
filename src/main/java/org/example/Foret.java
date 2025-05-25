@@ -321,6 +321,13 @@ public final class Foret implements CommandExecutor, Listener {
         plugin.getLogger().info("[Foret] Restauré " + loaded + " forêt(s).");
     }
 
+    public void createForestArea(Location origin, int width, int length) {
+        ForestSession fs = new ForestSession(plugin, origin, width, length);
+        fs.start();
+        sessions.add(fs);
+        saveAllSessions();
+    }
+
     public void stopAllForests() {
         for (ForestSession fs : sessions) {
             fs.stop();
