@@ -95,20 +95,66 @@ public final class Village implements CommandExecutor {
         // 1) Prépare la liste de toutes les actions de construction
         Queue<Runnable> actions = new LinkedList<>();
 
-        // 2) Ajoute la construction de la place centrale (puits + cloche)
-        actions.addAll(buildWellActions(world, center.clone().add(0,0,0)));
-        actions.add(() -> placeBell(world, center.clone().add(1,1,0)));
-
-        // 3) Génère les maisons en grille autour de la place
+        // Configuration de la grille
         int houseW = (int) config.get("houseWidth");
         int houseD = (int) config.get("houseDepth");
         int spacing = (int) config.get("houseSpacing");
         int roads = (int) config.get("roadWidth");
 
-        int rows = 3;
-        int cols = 4;
+        int rows = 4; // 20 maisons => 4 x 5
+        int cols = 5;
         int offsetX = -((cols - 1) * spacing) / 2;
         int offsetZ = -((rows - 1) * spacing) / 2;
+
+        int baseY = center.getBlockY();
+
+        // Détermine la zone totale pour dégager le terrain et placer l'herbe
+        int minX = Integer.MAX_VALUE;
+        int maxX = Integer.MIN_VALUE;
+        int minZ = Integer.MAX_VALUE;
+        int maxZ = Integer.MIN_VALUE;
+
+        for (int r = 0; r < rows; r++) {
+            for (int c = 0; c < cols; c++) {
+                int hx = center.getBlockX() + offsetX + c * spacing;
+                int hz = center.getBlockZ() + offsetZ + r * spacing;
+
+                int rotation;
+                if (r == 0) {
+                    rotation = 180; // rangée nord => maisons face au sud
+                } else if (r == rows - 1) {
+                    rotation = 0;   // rangée sud => maisons face au nord
+                } else if (c < cols / 2) {
+                    rotation = 90;  // à gauche => face à l'est
+                } else {
+                    rotation = 270; // à droite => face à l'ouest
+                }
+
+                int[] bounds = computeHouseBounds(hx, hz, houseW, houseD, rotation);
+                minX = Math.min(minX, bounds[0]);
+                maxX = Math.max(maxX, bounds[1]);
+                minZ = Math.min(minZ, bounds[2]);
+                maxZ = Math.max(maxZ, bounds[3]);
+            }
+        }
+
+        // Inclut la place centrale
+        minX = Math.min(minX, center.getBlockX());
+        maxX = Math.max(maxX, center.getBlockX() + 3);
+        minZ = Math.min(minZ, center.getBlockZ());
+        maxZ = Math.max(maxZ, center.getBlockZ() + 3);
+
+        // 1) Prépare la liste de toutes les actions de construction
+        Queue<Runnable> actions = new LinkedList<>();
+
+        // Dégage la zone et ajoute un sol d'herbe
+        actions.addAll(prepareGroundActions(world, minX, maxX, minZ, maxZ, baseY));
+
+        // 2) Ajoute la construction de la place centrale (puits + cloche)
+        actions.addAll(buildWellActions(world, center.clone().add(0,0,0)));
+        actions.add(() -> placeBell(world, center.clone().add(1,1,0)));
+
+        // 3) Génère les maisons en grille autour de la place
 
         for (int r = 0; r < rows; r++) {
             for (int c = 0; c < cols; c++) {
@@ -152,6 +198,12 @@ public final class Village implements CommandExecutor {
 
         // 4) Ajoute un PNJ sur la place
         actions.add(() -> spawnVillager(world, center.clone().add(2,1,1), "Villageois"));
+
+        // Spawners de golem aux extrémités
+        actions.add(createSpawnerAction(world, minX, baseY + 1, minZ, EntityType.IRON_GOLEM));
+        actions.add(createSpawnerAction(world, maxX, baseY + 1, minZ, EntityType.IRON_GOLEM));
+        actions.add(createSpawnerAction(world, minX, baseY + 1, maxZ, EntityType.IRON_GOLEM));
+        actions.add(createSpawnerAction(world, maxX, baseY + 1, maxZ, EntityType.IRON_GOLEM));
 
         // On pourrait enchaîner : marché, arbres, etc. … en ajoutant d'autres actions.
 
@@ -225,11 +277,12 @@ public final class Village implements CommandExecutor {
             }
         }
 
-        // Trois spawners au fond du puits (villageois, marchand, golem)
-        int[][] spawnerPos = {{1,1}, {2,1}, {1,2}};
+        // Quatre spawners : 2 villageois, 2 golems
+        int[][] spawnerPos = {{1,1}, {2,1}, {1,2}, {2,2}};
         EntityType[] types = {
                 EntityType.VILLAGER,
-                EntityType.WANDERING_TRADER,
+                EntityType.VILLAGER,
+                EntityType.IRON_GOLEM,
                 EntityType.IRON_GOLEM
         };
         for (int i = 0; i < spawnerPos.length; i++) {
@@ -619,6 +672,40 @@ public final class Village implements CommandExecutor {
         if (v < 60) return Material.GRAVEL;
         if (v < 85) return Material.DIRT_PATH;
         return Material.COARSE_DIRT;
+    }
+
+    /**
+     * Calcule le rectangle occupé par une maison en fonction de sa rotation.
+     * @return tableau [minX, maxX, minZ, maxZ]
+     */
+    private int[] computeHouseBounds(int ox, int oz, int width, int depth, int angle) {
+        return switch (angle) {
+            case 0 -> new int[]{ox, ox + width - 1, oz, oz + depth - 1};
+            case 90 -> new int[]{ox, ox + depth - 1, oz - width + 1, oz};
+            case 180 -> new int[]{ox - width + 1, ox, oz - depth + 1, oz};
+            case 270 -> new int[]{ox - depth + 1, ox, oz, oz + width - 1};
+            default -> new int[]{ox, ox + width - 1, oz, oz + depth - 1};
+        };
+    }
+
+    /**
+     * Prépare les actions pour nettoyer la zone et placer un sol d'herbe.
+     */
+    private List<Runnable> prepareGroundActions(World w, int minX, int maxX, int minZ, int maxZ, int baseY) {
+        List<Runnable> actions = new ArrayList<>();
+        for (int x = minX; x <= maxX; x++) {
+            for (int z = minZ; z <= maxZ; z++) {
+                final int fx = x;
+                final int fz = z;
+                actions.add(() -> {
+                    for (int h = 1; h <= 10; h++) {
+                        w.getBlockAt(fx, baseY + h, fz).setType(Material.AIR, false);
+                    }
+                    setBlockTracked(w, fx, baseY, fz, Material.GRASS_BLOCK);
+                });
+            }
+        }
+        return actions;
     }
 
     /**
