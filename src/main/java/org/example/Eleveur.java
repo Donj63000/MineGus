@@ -632,7 +632,7 @@ public final class Eleveur implements CommandExecutor, Listener {
          * - Approche simplifiée : pose de SPRUCE_STAIRS en pignon.
          */
         private void buildRoof() {
-            // On va placer des SPRUCE_STAIRS au-dessus du mur, 
+            // On va placer des SPRUCE_STAIRS au-dessus du mur,
             // façon pignon (ex. "2 pentes" simplifiées).
             int roofY = baseY + TOTAL_WALL_HEIGHT + 1;
             for (int dx = 0; dx < width; dx++) {
