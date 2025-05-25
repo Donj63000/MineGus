@@ -145,8 +145,6 @@ public final class Village implements CommandExecutor {
         maxZ = Math.max(maxZ, center.getBlockZ() + 3);
 
         // 1) Prépare la liste de toutes les actions de construction
-        Queue<Runnable> actions = new LinkedList<>();
-
         // Dégage la zone et ajoute un sol d'herbe
         actions.addAll(prepareGroundActions(world, minX, maxX, minZ, maxZ, baseY));
 
