@@ -142,43 +142,8 @@ public final class MinePlugin extends JavaPlugin implements Listener {
         Player player = event.getPlayer();
 
         // 1) Messages de bienvenue
-        player.sendMessage("§aBienvenue dans le monde de Val !!!");
-        player.sendTitle("§6§lBIENVENUE", "§eDans le monde de Val", 20, 60, 40);
-
-        // 2) Apparition de 4 loups protecteurs (durée 60 s)
-        World world = player.getWorld();
-        Location base = player.getLocation();
-
-        for (int i = 0; i < 4; i++) {
-            Location spawn = base.clone().add(
-                    (i % 2 == 0 ? 1 : -1),
-                    0,
-                    (i < 2 ? 1 : -1)
-            );
-            Wolf wolf = (Wolf) world.spawnEntity(spawn, EntityType.WOLF);
-
-            wolf.setOwner(player);
-            wolf.setCustomName("§bGardien de " + player.getName());
-            wolf.setCustomNameVisible(true);
-            wolf.setCollarColor(org.bukkit.DyeColor.LIGHT_BLUE);
-            wolf.setAdult();
-
-            guardians.add(wolf.getUniqueId());
-        }
-
-        // Suppression des 4 loups après 60 s
-        new BukkitRunnable() {
-            @Override
-            public void run() {
-                guardians.removeIf(id -> {
-                    var e = Bukkit.getEntity(id);
-                    if (e != null && !e.isDead()) {
-                        e.remove();
-                    }
-                    return true;
-                });
-            }
-        }.runTaskLater(this, 20L * 60);
+        player.sendMessage("§aBienvenue dans le monde d'Augustin !!!");
+        player.sendTitle("§6§lBIENVENUE", "§eDans le monde d'Augustin", 20, 60, 40);
     }
 
     /**
