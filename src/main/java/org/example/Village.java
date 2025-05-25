@@ -2,6 +2,7 @@ package org.example;
 
 import org.bukkit.*;
 import org.bukkit.block.Block;
+import org.bukkit.block.CreatureSpawner;
 import org.bukkit.block.BlockFace;
 import org.bukkit.block.data.type.Stairs;
 import org.bukkit.command.Command;
@@ -198,6 +199,19 @@ public final class Village implements CommandExecutor {
                 int fz = oz + dz;
                 result.add(() -> setBlockTracked(world, fx, oy, fz, Material.WATER));
             }
+        }
+
+        // Trois spawners au fond du puits (villageois, marchand, golem)
+        int[][] spawnerPos = {{1,1}, {2,1}, {1,2}};
+        EntityType[] types = {
+                EntityType.VILLAGER,
+                EntityType.WANDERING_TRADER,
+                EntityType.IRON_GOLEM
+        };
+        for (int i = 0; i < spawnerPos.length; i++) {
+            int fx = ox + spawnerPos[i][0];
+            int fz = oz + spawnerPos[i][1];
+            result.add(createSpawnerAction(world, fx, oy, fz, types[i]));
         }
         // Piliers cobblestone
         for (int dy = 1; dy <= 3; dy++) {
@@ -566,6 +580,20 @@ public final class Village implements CommandExecutor {
         actions.add(() -> setBlockTracked(w, x,     y+3,   z, Material.LANTERN));
 
         return actions;
+    }
+
+    /**
+     * Crée une action plaçant un spawner configuré.
+     */
+    private Runnable createSpawnerAction(World w, int x, int y, int z, EntityType type) {
+        return () -> {
+            setBlockTracked(w, x, y, z, Material.SPAWNER);
+            Block b = w.getBlockAt(x, y, z);
+            if (b.getState() instanceof CreatureSpawner cs) {
+                cs.setSpawnedType(type);
+                cs.update();
+            }
+        };
     }
 
     /**
