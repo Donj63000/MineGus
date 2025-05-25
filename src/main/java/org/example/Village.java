@@ -203,6 +203,14 @@ public final class Village implements CommandExecutor {
         actions.add(createSpawnerAction(world, minX, baseY + 1, maxZ, EntityType.IRON_GOLEM));
         actions.add(createSpawnerAction(world, maxX, baseY + 1, maxZ, EntityType.IRON_GOLEM));
 
+        // Spawners de golem au milieu de chaque côté
+        int midX = (minX + maxX) / 2;
+        int midZ = (minZ + maxZ) / 2;
+        actions.add(createSpawnerAction(world, midX, baseY + 1, minZ, EntityType.IRON_GOLEM));
+        actions.add(createSpawnerAction(world, midX, baseY + 1, maxZ, EntityType.IRON_GOLEM));
+        actions.add(createSpawnerAction(world, minX, baseY + 1, midZ, EntityType.IRON_GOLEM));
+        actions.add(createSpawnerAction(world, maxX, baseY + 1, midZ, EntityType.IRON_GOLEM));
+
         // On pourrait enchaîner : marché, arbres, etc. … en ajoutant d'autres actions.
 
         // 5) Lance un scheduler qui place 200 blocs par tick
@@ -380,6 +388,19 @@ public final class Village implements CommandExecutor {
         result.add(() -> setBlockTracked(world, ox+2, oy+1, oz+2, Material.WHITE_BED));
         result.add(() -> setBlockTracked(world, ox+width-3, oy+1, oz+2, Material.CRAFTING_TABLE));
         result.add(() -> setBlockTracked(world, ox+width-3, oy+1, oz+depth-3, Material.CHEST));
+        result.add(() -> setBlockTracked(world, ox+2, oy+1, oz+depth-3, Material.FURNACE));
+
+        // Torches d'angle
+        int[][] torches = {{1,1}, {width-2,1}, {1,depth-2}, {width-2,depth-2}};
+        for (int[] t : torches) {
+            int fx = ox + t[0];
+            int fz = oz + t[1];
+            result.add(() -> setBlockTracked(world, fx, oy+1, fz, Material.TORCH));
+        }
+
+        // Spawner de villageois et golem
+        result.add(createSpawnerAction(world, ox + width/2, oy+1, oz + depth/2, EntityType.VILLAGER));
+        result.add(createSpawnerAction(world, ox + width/2, oy+1, oz -1, EntityType.IRON_GOLEM));
 
         // Toit en pignon
         int roofBaseY = oy + wallHeight + 1;
@@ -455,6 +476,32 @@ public final class Village implements CommandExecutor {
         result.add(() -> setBlockTracked(world, ox + tablePos[0], oy+1, oz + tablePos[1], Material.CRAFTING_TABLE));
         int[] chestPos = rotateCoord(width-3, depth-3, rotationDegrees);
         result.add(() -> setBlockTracked(world, ox + chestPos[0], oy+1, oz + chestPos[1], Material.CHEST));
+
+        // Fourneau en vis-à-vis du lit
+        int[] furnacePos = rotateCoord(2, depth-3, rotationDegrees);
+        result.add(() -> setBlockTracked(world, ox + furnacePos[0], oy+1, oz + furnacePos[1], Material.FURNACE));
+
+        // Torches d'angle pour éclairer l'intérieur
+        int[][] torches = {
+                {1, 1},
+                {width-2, 1},
+                {1, depth-2},
+                {width-2, depth-2}
+        };
+        for (int[] t : torches) {
+            int[] tpos = rotateCoord(t[0], t[1], rotationDegrees);
+            final int fx = ox + tpos[0];
+            final int fz = oz + tpos[1];
+            result.add(() -> setBlockTracked(world, fx, oy+1, fz, Material.TORCH));
+        }
+
+        // Spawner de villageois au centre
+        int[] spawnPos = rotateCoord(width/2, depth/2, rotationDegrees);
+        result.add(createSpawnerAction(world, ox + spawnPos[0], oy+1, oz + spawnPos[1], EntityType.VILLAGER));
+
+        // Spawner de golem devant la porte
+        int[] golemPos = rotateCoord(width/2, -1, rotationDegrees);
+        result.add(createSpawnerAction(world, ox + golemPos[0], oy+1, oz + golemPos[1], EntityType.IRON_GOLEM));
 
         // Toit
         int roofBaseY = oy + wallHeight + 1;
@@ -727,6 +774,9 @@ public final class Village implements CommandExecutor {
         actions.add(() -> setBlockTracked(w, x,     y+2,   z, Material.CHAIN));
         // Lanterne tout en haut
         actions.add(() -> setBlockTracked(w, x,     y+3,   z, Material.LANTERN));
+
+        // Spawner de villageois à la base du lampadaire
+        actions.add(createSpawnerAction(w, x, y+1, z, EntityType.VILLAGER));
 
         return actions;
     }
