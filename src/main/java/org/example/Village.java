@@ -1,16 +1,9 @@
 package org.example;
 
-import org.bukkit.ChatColor;
-import org.bukkit.Location;
-import org.bukkit.Material;
-import org.bukkit.World;
+import org.bukkit.*;
+import org.bukkit.block.Block;
 import org.bukkit.block.BlockFace;
-import org.bukkit.block.data.BlockData;
-import org.bukkit.block.data.type.Campfire;
-import org.bukkit.block.data.type.Door;
-import org.bukkit.block.data.type.Furnace;
 import org.bukkit.block.data.type.Stairs;
-import org.bukkit.block.data.type.Sign;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandExecutor;
 import org.bukkit.command.CommandSender;
@@ -18,854 +11,580 @@ import org.bukkit.entity.EntityType;
 import org.bukkit.entity.Player;
 import org.bukkit.entity.Villager;
 import org.bukkit.plugin.java.JavaPlugin;
+import org.bukkit.scheduler.BukkitRunnable;
+
+import java.util.*;
 
 /**
- * Commande /village : génère un village de PNJ très complet,
- * avec plusieurs maisons aux toits finis (blocs pleins), des chemins
- * bien reliés aux maisons, un puits, un champ, des tours de guet,
- * un marché, des arbres customisés, une taverne, un étang décoratif, etc.
+ * Commande /village : génère un village "amélioré" de PNJ,
+ * avec une construction asynchrone (pour éviter le lag) et
+ * diverses améliorations (toits pignons, routes texturées, lampadaires, etc.).
+ *
+ * + Commande "/village undo" possible pour supprimer ce qu'on a construit.
  */
 public final class Village implements CommandExecutor {
 
     private final JavaPlugin plugin;
 
-    // Décalage horizontal entre le centre et les maisons
-    private final int gap = 25;
+    // Ajout du générateur aléatoire pour la méthode pickRoadMaterial
+    private static final Random RNG = new Random();
+
+    /**
+     * On stocke les blocs posés (positions) pour autoriser un /village undo.
+     * Dans une vraie implémentation, on conserverait aussi l'ancien matériau
+     * pour tout restaurer à l'identique. Ici, on simplifie en mettant l'air.
+     */
+    private final List<Location> placedBlocks = new ArrayList<>();
+
+    /**
+     * Configuration (remplace un config.yml).
+     * On pourrait lire un .yml via plugin.getConfig().
+     */
+    private final Map<String,Object> config = new HashMap<>();
 
     public Village(JavaPlugin plugin) {
         this.plugin = plugin;
+
+        // Enregistrement de la commande /village
         if (plugin.getCommand("village") != null) {
             plugin.getCommand("village").setExecutor(this);
         }
+
+        // Petite config manuelle (exemple)
+        config.put("houseWidth", 9);
+        config.put("houseDepth", 9);
+        config.put("roadWidth", 3);
+        config.put("villageRadius", 20);
     }
 
     @Override
-    public boolean onCommand(CommandSender sender,
-                             Command command,
-                             String label,
-                             String[] args) {
-
+    public boolean onCommand(CommandSender sender, Command cmd, String label, String[] args) {
+        if (!cmd.getName().equalsIgnoreCase("village")) {
+            return false;
+        }
         if (!(sender instanceof Player player)) {
-            sender.sendMessage(ChatColor.RED + "Cette commande doit être exécutée par un joueur.");
+            sender.sendMessage(ChatColor.RED + "Seulement pour les joueurs en jeu.");
             return true;
         }
 
-        if (!command.getName().equalsIgnoreCase("village")) {
-            return false;
+        // Sous-commande "undo"
+        if (args.length >= 1 && args[0].equalsIgnoreCase("undo")) {
+            undoVillage();
+            sender.sendMessage(ChatColor.YELLOW + "Village supprimé (blocs mis à AIR).");
+            return true;
         }
 
-        // Génère le village
-        generateVillage(player.getLocation());
-        sender.sendMessage(ChatColor.GREEN + "Village amélioré généré avec succès !");
+        // Sinon, on génère le village
+        Location loc = player.getLocation();
+        generateVillageAsync(loc);
+        sender.sendMessage(ChatColor.GREEN + "Construction du village lancée (asynchrone) !");
         return true;
     }
 
-    /* ----------------------------------------------------------------------
-       Méthode principale : construction du village à partir d'un point central
-    ---------------------------------------------------------------------- */
-    private void generateVillage(Location center) {
+    /**
+     * Méthode asynchrone : on prépare des tasks (Runnable) dans une file,
+     * puis on les exécute par batch de 200, tous les 1 tick,
+     * pour éviter de placer des milliers de blocs dans le même tick.
+     */
+    private void generateVillageAsync(Location center) {
         World world = center.getWorld();
-        int baseX = center.getBlockX();
-        int baseY = center.getBlockY();
-        int baseZ = center.getBlockZ();
+        if (world == null) return;
 
-        // 1) Construit 4 maisons (2 Type A, 2 Type B)
-        //    + récupère les coordonnées de la porte pour les raccorder aux routes
-        // Maison NW (Type A)
-        buildHouseTypeA(world, baseX - gap, baseY, baseZ - gap);
-        int houseNWdoorX = (baseX - gap) + 9 / 2; // la porte se trouve à x = startX + width/2
-        int houseNWdoorZ = (baseZ - gap);        // la porte est sur le mur "z = startZ"
-        // Maison NE (Type A)
-        buildHouseTypeA(world, baseX + gap, baseY, baseZ - gap);
-        int houseNEdoorX = (baseX + gap) + 9 / 2;
-        int houseNEdoorZ = (baseZ - gap);
-        // Maison SW (Type B)
-        buildHouseTypeB(world, baseX - gap, baseY, baseZ + gap);
-        int houseSWdoorX = (baseX - gap) + 7 / 2; // width=7
-        int houseSWdoorZ = (baseZ + gap);
-        // Maison SE (Type B)
-        buildHouseTypeB(world, baseX + gap, baseY, baseZ + gap);
-        int houseSEdoorX = (baseX + gap) + 7 / 2;
-        int houseSEdoorZ = (baseZ + gap);
+        // 1) Prépare la liste de toutes les actions de construction
+        Queue<Runnable> actions = new LinkedList<>();
 
-        // 2) Puits central
-        buildWell(world, baseX, baseY, baseZ);
+        // 2) Ajoute la construction de la place centrale (puits + cloche)
+        actions.addAll(buildWellActions(world, center.clone().add(0,0,0)));
+        actions.add(() -> placeBell(world, center.clone().add(1,1,0)));
 
-        // 3) Ferme, enclos, forge
-        buildFarm(world, baseX - gap - 12, baseY, baseZ - gap + 5);
-        buildFenceEnclosure(world, baseX - gap + 5, baseY, baseZ - gap - 6);
-        buildBlacksmith(world, baseX + gap + 10, baseY, baseZ - gap - 5);
-        // Récupère la coordonnée de la porte du blacksmith (pour un chemin)
-        // Le blacksmith fait 6 blocs de large, la porte se trouve "théoriquement" sur le mur "z = startZ"
-        int blacksmithDoorX = (baseX + gap + 10) + 6 / 2;
-        int blacksmithDoorZ = (baseZ - gap - 5);
+        // 3) Ajoute 2 maisons, l'une orientée "normal" (pas de rotation),
+        //    l'autre "rotated" (ex. rotation 90°).
+        int houseW = (int) config.get("houseWidth");
+        int houseD = (int) config.get("houseDepth");
+        Location houseA = center.clone().add(-15, 0, -10);
+        actions.addAll(buildHouseActions(world, houseA, houseW, houseD, BlockFace.SOUTH));
 
-        // 4) Tours de guet
-        buildWatchTower(world, baseX + gap + 15, baseY, baseZ);
-        buildWatchTower(world, baseX - gap - 15, baseY, baseZ);
+        Location houseB = center.clone().add(10, 0, -12);
+        actions.addAll(buildHouseRotatedActions(world, houseB, houseW, houseD, 90)); // rotation 90°
 
-        // 5) Marché (étals)
-        buildMarketStall(world, baseX + 5, baseY, baseZ + 2);
-        buildMarketStall(world, baseX - 5, baseY, baseZ - 3);
-        buildMarketStall(world, baseX + 2, baseY, baseZ - 6);
-
-        // 6) Taverne
-        buildTavern(world, baseX + gap + 8, baseY, baseZ + gap - 5);
-        // Porte de la taverne
-        int tavernDoorX = (baseX + gap + 8) + 10 / 2;
-        int tavernDoorZ = (baseZ + gap - 5);
-
-        // 7) Étang, jardin de fleurs
-        buildDecorativePond(world, baseX + gap + 20, baseY, baseZ + 8);
-        buildFlowerGarden(world, baseX, baseY, baseZ - gap - 10);
-
-        // 8) Chemins principaux et lampadaires
-        buildRoads(world, baseX, baseY, baseZ, gap);
-
-        // 9) Petits chemins pour relier les portes principales au centre du village
-        //    (on fait un chemin en "L", 3 blocs de large)
-        buildPath(world, baseX, baseZ, houseNWdoorX, houseNWdoorZ, baseY, 1);
-        buildPath(world, baseX, baseZ, houseNEdoorX, houseNEdoorZ, baseY, 1);
-        buildPath(world, baseX, baseZ, houseSWdoorX, houseSWdoorZ, baseY, 1);
-        buildPath(world, baseX, baseZ, houseSEdoorX, houseSEdoorZ, baseY, 1);
-
-        // De même pour la forge et la taverne
-        buildPath(world, baseX, baseZ, blacksmithDoorX, blacksmithDoorZ, baseY, 1);
-        buildPath(world, baseX, baseZ, tavernDoorX, tavernDoorZ, baseY, 1);
-
-        // 10) Arbres customisés
-        buildCustomTree(world, baseX + gap + 5, baseY + 1, baseZ + gap + 5);
-        buildCustomTree(world, baseX - gap - 3, baseY + 1, baseZ + gap + 2);
-        buildCustomTree(world, baseX + gap + 2, baseY + 1, baseZ - gap - 8);
-
-        // 11) Villageois
-        for (int i = 0; i < 6; i++) {
-            Location spawn = center.clone().add(i - 3, 1, 0);
-            Villager villager = (Villager) world.spawnEntity(spawn, EntityType.VILLAGER);
-            villager.setCustomName("Villageois");
-            villager.setCustomNameVisible(true);
-        }
-
-        // 12) Panneaux indicatifs
-        buildSign(world, baseX + 1, baseY + 1, baseZ, BlockFace.EAST, "Bienvenue dans le Village !");
-        buildSign(world, baseX + gap + 9, baseY + 1, baseZ - gap + 5, BlockFace.NORTH, "La Taverne");
-        buildSign(world, baseX - gap, baseY + 1, baseZ - gap - 7, BlockFace.SOUTH, "Ferme");
-    }
-
-    /* ----------------------------------------------------------------------
-       A) Maisons : deux variantes (Type A et Type B) avec toits finis
-    ---------------------------------------------------------------------- */
-    private void buildHouseTypeA(World world, int startX, int startY, int startZ) {
-        buildHouseCommonStructure(
-                world, startX, startY, startZ,
-                9, // width
-                9, // depth
-                2, // floors
-                Material.OAK_LOG,
-                Material.OAK_PLANKS,
-                Material.SPRUCE_PLANKS
+        // 4) Ajoute un chemin texturé
+        //    Ex: on relie le puits (centre) à la maison A
+        actions.addAll(buildRoadActions(
+                world,
+                center.getBlockX(), center.getBlockZ(),
+                houseA.getBlockX(), houseA.getBlockZ(),
+                center.getBlockY(),
+                (int) config.get("roadWidth"))
         );
-    }
 
-    private void buildHouseTypeB(World world, int startX, int startY, int startZ) {
-        buildHouseCommonStructure(
-                world, startX, startY, startZ,
-                7, // width
-                10, // depth
-                2, // floors
-                Material.SPRUCE_LOG,
-                Material.BIRCH_PLANKS,
-                Material.OAK_PLANKS
-        );
+        // 5) Ajoute un lampadaire "chaîne + lanterne" sur le chemin
+        actions.addAll(buildLampPostActions(
+                world,
+                houseA.getBlockX() + 2,
+                center.getBlockY() + 1,
+                houseA.getBlockZ() + 2
+        ));
+
+        // 6) Ajoute un PNJ sur la place
+        actions.add(() -> spawnVillager(world, center.clone().add(2,1,1), "Villageois"));
+
+        // On pourrait enchaîner : marché, arbres, etc. … en ajoutant d'autres actions.
+
+        // 7) Lance un scheduler qui place 200 blocs par tick
+        buildActionsInBatches(actions, 200);
     }
 
     /**
-     * Structure commune : floors étages, coins en cornerLog, murs en wallPlank,
-     * planchers en floorPlank, toit + cheminée, un escalier intérieur, etc.
+     * Exécute les actions par lot (batchSize par tick).
      */
-    private void buildHouseCommonStructure(World world,
-                                           int startX,
-                                           int startY,
-                                           int startZ,
-                                           int width,
-                                           int depth,
-                                           int floors,
-                                           Material cornerLog,
-                                           Material wallPlank,
-                                           Material floorPlank) {
+    private void buildActionsInBatches(Queue<Runnable> actions, int batchSize) {
+        new BukkitRunnable() {
+            @Override
+            public void run() {
+                int count = 0;
+                while (!actions.isEmpty() && count < batchSize) {
+                    Runnable task = actions.poll();
+                    if (task == null) break;
+                    task.run();
+                    count++;
+                }
+                if (actions.isEmpty()) {
+                    // Fini
+                    cancel();
+                }
+            }
+        }.runTaskTimer(plugin, 1L, 1L);
+    }
 
-        int wallHeightPerFloor = 4;
-        int totalHeight = floors * wallHeightPerFloor;
+    /**
+     * Suppression (mise à AIR) de tous les blocs qu'on a posés
+     * pour un "undo" simplifié.
+     */
+    private void undoVillage() {
+        for (Location loc : placedBlocks) {
+            loc.getBlock().setType(Material.AIR, false);
+        }
+        placedBlocks.clear();
+    }
 
-        // 1) Plancher rez-de-chaussée
+    /* ==========================================================
+        EXEMPLES DE FONCTIONS renvoyant des "actions"
+       (liste de Runnables) au lieu de placer tout de suite.
+       On stocke tout dans placedBlocks pour undo.
+     ========================================================== */
+
+    /** Construit un puits simple, renvoie la liste d'actions (Runnables). */
+    private List<Runnable> buildWellActions(World world, Location origin) {
+        List<Runnable> result = new ArrayList<>();
+
+        int ox = origin.getBlockX();
+        int oy = origin.getBlockY();
+        int oz = origin.getBlockZ();
+
+        int size = 4;
+        // Pose de la base (4x4) en Cobblestone
+        for (int dx = 0; dx < size; dx++) {
+            for (int dz = 0; dz < size; dz++) {
+                int fx = ox + dx;
+                int fz = oz + dz;
+                // Chaque bloc => un Runnable
+                result.add(() -> setBlockTracked(world, fx, oy, fz, Material.COBBLESTONE));
+            }
+        }
+        // Eau au centre (2x2)
+        for (int dx = 1; dx <= 2; dx++) {
+            for (int dz = 1; dz <= 2; dz++) {
+                int fx = ox + dx;
+                int fz = oz + dz;
+                result.add(() -> setBlockTracked(world, fx, oy, fz, Material.WATER));
+            }
+        }
+        // Piliers cobblestone
+        for (int dy = 1; dy <= 3; dy++) {
+            final int Y = oy + dy;
+            result.add(() -> setBlockTracked(world, ox,         Y, oz,         Material.COBBLESTONE));
+            result.add(() -> setBlockTracked(world, ox+size-1,  Y, oz,         Material.COBBLESTONE));
+            result.add(() -> setBlockTracked(world, ox,         Y, oz+size-1,  Material.COBBLESTONE));
+            result.add(() -> setBlockTracked(world, ox+size-1,  Y, oz+size-1,  Material.COBBLESTONE));
+        }
+        // Toit (slab) au niveau 4
+        int roofY = oy + 4;
+        for (int dx = 0; dx < size; dx++) {
+            for (int dz = 0; dz < size; dz++) {
+                final int fx = ox + dx;
+                final int fz = oz + dz;
+                result.add(() -> setBlockTracked(world, fx, roofY, fz, Material.COBBLESTONE_SLAB));
+            }
+        }
+        return result;
+    }
+
+    /**
+     * Place une cloche (Bell).
+     */
+    private void placeBell(World world, Location loc) {
+        int x = loc.getBlockX();
+        int y = loc.getBlockY();
+        int z = loc.getBlockZ();
+        setBlockTracked(world, x, y, z, Material.BELL);
+    }
+
+    /**
+     * Construit une maison “classique” (sans rotation).
+     */
+    private List<Runnable> buildHouseActions(World world,
+                                             Location start,
+                                             int width,
+                                             int depth,
+                                             BlockFace frontFace) {
+        List<Runnable> result = new ArrayList<>();
+        int ox = start.getBlockX();
+        int oy = start.getBlockY();
+        int oz = start.getBlockZ();
+
+        int wallHeight = 4; // Hauteur du mur
+
+        // Murs + coins
         for (int x = 0; x < width; x++) {
             for (int z = 0; z < depth; z++) {
-                setBlock(world, startX + x, startY, startZ + z, floorPlank);
-            }
-        }
-
-        // Fondation apparente autour de la maison
-        for (int x = -1; x <= width; x++) {
-            for (int z = -1; z <= depth; z++) {
-                boolean border = (x == -1 || x == width || z == -1 || z == depth);
-                if (border) {
-                    setBlock(world, startX + x, startY, startZ + z, Material.STONE_BRICKS);
-                }
-            }
-        }
-
-        // 2) Murs et planchers intermédiaires
-        for (int floor = 0; floor < floors; floor++) {
-            int floorBaseY = startY + floor * wallHeightPerFloor;
-
-            // Poutres aux 4 coins
-            for (int y = 1; y <= wallHeightPerFloor; y++) {
-                setBlock(world, startX,             floorBaseY + y, startZ,             cornerLog);
-                setBlock(world, startX + width - 1, floorBaseY + y, startZ,             cornerLog);
-                setBlock(world, startX,             floorBaseY + y, startZ + depth - 1, cornerLog);
-                setBlock(world, startX + width - 1, floorBaseY + y, startZ + depth - 1, cornerLog);
-            }
-
-            // Plancher de l'étage suivant (sauf dernier étage)
-            if (floor < floors - 1) {
-                int floorTopY = floorBaseY + wallHeightPerFloor;
-                for (int ix = 0; ix < width; ix++) {
-                    for (int iz = 0; iz < depth; iz++) {
-                        setBlock(world, startX + ix, floorTopY, startZ + iz, floorPlank);
-                    }
-                }
-            }
-
-            // Murs (y compris fenêtres et porte)
-            for (int y = 1; y <= wallHeightPerFloor; y++) {
-                int currentY = floorBaseY + y;
-                for (int ix = 0; ix < width; ix++) {
-                    for (int iz = 0; iz < depth; iz++) {
-                        boolean isEdge = (ix == 0 || ix == width - 1 || iz == 0 || iz == depth - 1);
-                        if (isEdge && !isLogAtCorner(ix, iz, width, depth)) {
-                            boolean isDoor = (floor == 0 && y <= 2 && iz == 0 && ix == width / 2);
-                            boolean isWindowLayer = (y == 2 || y == 3);
-                            boolean frontBackWindow = (iz == 0 || iz == depth - 1) && (ix >= 2 && ix <= width - 3);
-                            boolean sideWindow = (ix == 0 || ix == width - 1) && (iz >= 2 && iz <= depth - 3);
-                            boolean isWindowPosition = isWindowLayer && (frontBackWindow || sideWindow) && !isDoor;
-
-                            if (isDoor) {
-                                // ouverture pour la porte
-                            } else if (isWindowPosition) {
-                                setBlock(world, startX + ix, currentY, startZ + iz, Material.GLASS_PANE);
-                            } else {
-                                setBlock(world, startX + ix, currentY, startZ + iz, wallPlank);
-                            }
-                        }
+                int fx = ox + x;
+                int fz = oz + z;
+                boolean edgeX = (x == 0 || x == width-1);
+                boolean edgeZ = (z == 0 || z == depth-1);
+                if (edgeX || edgeZ) {
+                    for (int y = 0; y < wallHeight; y++) {
+                        int fy = oy + 1 + y;
+                        boolean corner = (edgeX && edgeZ);
+                        Material mat = corner ? Material.OAK_LOG : Material.OAK_PLANKS;
+                        result.add(() -> setBlockTracked(world, fx, fy, fz, mat));
                     }
                 }
             }
         }
 
-        // 3) Porte d'entrée (en bas, face "z=0")
-        placeDoor(world, startX + (width / 2), startY + 1, startZ);
-
-        // 4) Escalier intérieur
-        int stairBaseX = startX + width - 2;
-        int stairBaseZ = startZ + 1;
-        int wallHeightPerFloorMinus1 = wallHeightPerFloor - 1;
-        for (int i = 0; i < wallHeightPerFloorMinus1; i++) {
-            placeStairs(world,
-                    stairBaseX,
-                    startY + 1 + i,
-                    stairBaseZ + i,
-                    Material.OAK_STAIRS,
-                    Stairs.Shape.STRAIGHT,
-                    getFacingSouth());
+        // Sol + lit
+        for (int x = 0; x < width; x++) {
+            for (int z = 0; z < depth; z++) {
+                int fx = ox + x;
+                int fz = oz + z;
+                int fy = oy;
+                result.add(() -> setBlockTracked(world, fx, fy, fz, Material.SPRUCE_PLANKS));
+            }
         }
 
-        // 5) Toit fini + cheminée
-        int roofStartY = startY + totalHeight + 1;
-        buildFinishedRoofWithChimney(world, startX, roofStartY, startZ, width, depth);
+        // Porte (devant => z=0)
+        int doorX = ox + width/2;
+        int doorZ = oz;
+        // on enlève 2 blocs => "trou"
+        result.add(() -> setBlockTracked(world, doorX,   oy+1, doorZ, Material.AIR));
+        result.add(() -> setBlockTracked(world, doorX,   oy+2, doorZ, Material.AIR));
 
-        // 6) Torches
-        setBlock(world, startX + 1, startY + 2, startZ + 1, Material.WALL_TORCH);
-        setBlock(world, startX + width - 2, startY + 2, startZ + depth - 2, Material.WALL_TORCH);
-
-        // 7) Intérieur basique
-        decorateHouseInterior(world, startX, startY, startZ, width, depth);
-    }
-
-    private boolean isLogAtCorner(int x, int z, int width, int depth) {
-        return ((x == 0 && z == 0)
-                || (x == 0 && z == depth - 1)
-                || (x == width - 1 && z == 0)
-                || (x == width - 1 && z == depth - 1));
-    }
-
-    private void decorateHouseInterior(World world,
-                                       int startX,
-                                       int startY,
-                                       int startZ,
-                                       int width,
-                                       int depth) {
         // Lit
-        int bedX = startX + 2;
-        int bedZ = startZ + 2;
-        world.getBlockAt(bedX, startY + 1, bedZ).setType(Material.RED_BED, false);
+        result.add(() -> setBlockTracked(world, ox+2, oy+1, oz+2, Material.WHITE_BED));
 
-        // Coffre
-        int chestX = startX + width - 3;
-        int chestZ = startZ + depth - 3;
-        setBlock(world, chestX, startY + 1, chestZ, Material.CHEST);
+        // Toit en pignon
+        int roofBaseY = oy + wallHeight + 1;
+        result.addAll(buildPignonRoofActions(world, ox, roofBaseY, oz, width, depth));
 
-        // Table de craft
-        int craftX = startX + 2;
-        int craftZ = startZ + depth - 3;
-        setBlock(world, craftX, startY + 1, craftZ, Material.CRAFTING_TABLE);
-
-        // Four et baril pour un intérieur plus complet
-        int furnaceX = startX + width - 3;
-        int furnaceZ = startZ + 2;
-        setBlock(world, furnaceX, startY + 1, furnaceZ, Material.FURNACE);
-
-        int barrelX = startX + 1;
-        int barrelZ = startZ + depth / 2;
-        setBlock(world, barrelX, startY + 1, barrelZ, Material.BARREL);
+        return result;
     }
 
     /**
-     * Construit un toit complet : des escaliers en bordure + blocs pleins
-     * (planches) pour remplir l'intérieur, pour chaque "layer".
+     * Construit une maison en la "tournant" de 90°, 180°, etc.
      */
-    private void buildFinishedRoofWithChimney(World world,
-                                              int startX,
-                                              int startY,
-                                              int startZ,
-                                              int width,
-                                              int depth) {
+    private List<Runnable> buildHouseRotatedActions(World world,
+                                                    Location start,
+                                                    int width,
+                                                    int depth,
+                                                    int rotationDegrees) {
+        List<Runnable> result = new ArrayList<>();
+        int ox = start.getBlockX();
+        int oy = start.getBlockY();
+        int oz = start.getBlockZ();
 
-        // On déborde d'un bloc
-        int roofWidth = width + 2;
-        int roofDepth = depth + 2;
+        int wallHeight = 4;
 
-        // Nombre de couches
-        int roofLayers = Math.max(roofWidth, roofDepth) / 2 + 1;
-
-        for (int layer = 0; layer < roofLayers; layer++) {
-            int x1 = startX - 1 + layer;
-            int z1 = startZ - 1 + layer;
-            int x2 = startX + width - layer;
-            int z2 = startZ + depth - layer;
-            int y = startY + layer;
-
-            if (x1 > x2 || z1 > z2) {
-                break;
+        // Murs
+        for (int dx = 0; dx < width; dx++) {
+            for (int dz = 0; dz < depth; dz++) {
+                boolean edgeX = (dx == 0 || dx == width-1);
+                boolean edgeZ = (dz == 0 || dz == depth-1);
+                if (edgeX || edgeZ) {
+                    for (int h = 0; h < wallHeight; h++) {
+                        final int fy = oy + 1 + h;
+                        Material mat = (edgeX && edgeZ) ? Material.SPRUCE_LOG : Material.BIRCH_PLANKS;
+                        int[] rpos = rotateCoord(dx, dz, rotationDegrees);
+                        final int fx = ox + rpos[0];
+                        final int fz = oz + rpos[1];
+                        result.add(() -> setBlockTracked(world, fx, fy, fz, mat));
+                    }
+                }
             }
+        }
 
-            // Pose des escaliers sur les bords
-            for (int z = z1; z <= z2; z++) {
-                placeStairs(world, x1, y, z, Material.SPRUCE_STAIRS, Stairs.Shape.STRAIGHT, getFacingWest());
-                placeStairs(world, x2, y, z, Material.SPRUCE_STAIRS, Stairs.Shape.STRAIGHT, getFacingEast());
+        // Sol
+        for (int dx = 0; dx < width; dx++) {
+            for (int dz = 0; dz < depth; dz++) {
+                int[] rpos = rotateCoord(dx, dz, rotationDegrees);
+                final int fx = ox + rpos[0];
+                final int fz = oz + rpos[1];
+                result.add(() -> setBlockTracked(world, fx, oy, fz, Material.SPRUCE_PLANKS));
             }
+        }
+
+        // Porte
+        int doorX = width / 2;
+        int doorZ = 0;
+        int[] dpos1 = rotateCoord(doorX, doorZ, rotationDegrees);
+        final int rx1 = ox + dpos1[0];
+        final int rz1 = oz + dpos1[1];
+        result.add(() -> setBlockTracked(world, rx1, oy+1, rz1, Material.AIR));
+        result.add(() -> setBlockTracked(world, rx1, oy+2, rz1, Material.AIR));
+
+        // Toit
+        int roofBaseY = oy + wallHeight + 1;
+        result.addAll(buildPignonRoofActionsRotated(world, ox, oz, roofBaseY, width, depth, rotationDegrees));
+
+        return result;
+    }
+
+    /** Rotation 2D autour de (0,0). (x,z)->(z,-x) si angle=90°. */
+    private int[] rotateCoord(int dx, int dz, int angleDegrees) {
+        switch(angleDegrees) {
+            case 90:
+                return new int[]{ dz, -dx };
+            case 180:
+                return new int[]{ -dx, -dz };
+            case 270:
+                return new int[]{ -dz, dx };
+            default:
+                return new int[]{ dx, dz };
+        }
+    }
+
+    /**
+     * Toit pignon simple (X=large, Z=profondeur), extrémités OUTER corners.
+     */
+    private List<Runnable> buildPignonRoofActions(World w,
+                                                  int startX,
+                                                  int startY,
+                                                  int startZ,
+                                                  int width,
+                                                  int depth) {
+        List<Runnable> actions = new ArrayList<>();
+        int layers = width / 2;
+        for (int layer = 0; layer < layers; layer++) {
+            final int y = startY + layer;
+            int x1 = startX + layer;
+            int x2 = startX + width - 1 - layer;
+            int z1 = startZ;
+            int z2 = startZ + depth - 1;
+
+            // Bord avant
             for (int x = x1; x <= x2; x++) {
-                placeStairs(world, x, y, z1, Material.SPRUCE_STAIRS, Stairs.Shape.STRAIGHT, getFacingNorth());
-                placeStairs(world, x, y, z2, Material.SPRUCE_STAIRS, Stairs.Shape.STRAIGHT, getFacingSouth());
+                boolean leftCorner = (x == x1);
+                boolean rightCorner = (x == x2);
+                final int fx = x, fz = z1;
+                actions.add(() -> placeBorderStair(w, fx, y, fz, BlockFace.NORTH, leftCorner, rightCorner));
             }
-
-            // Remplissage intérieur en planches (pour un toit "plein")
-            // On remplit l'intérieur si x2 > x1+1 et z2 > z1+1
-            for (int xx = x1 + 1; xx <= x2 - 1; xx++) {
-                for (int zz = z1 + 1; zz <= z2 - 1; zz++) {
-                    setBlock(world, xx, y, zz, Material.SPRUCE_PLANKS);
+            // Bord arrière
+            for (int x = x1; x <= x2; x++) {
+                boolean leftCorner = (x == x1);
+                boolean rightCorner = (x == x2);
+                final int fx = x, fz = z2;
+                actions.add(() -> placeBorderStair(w, fx, y, fz, BlockFace.SOUTH, leftCorner, rightCorner));
+            }
+            // Remplissage
+            for (int fx = x1+1; fx <= x2-1; fx++) {
+                for (int fz = z1+1; fz <= z2-1; fz++) {
+                    final int X = fx, Z = fz;
+                    actions.add(() -> setBlockTracked(w, X, y, Z, Material.SPRUCE_PLANKS));
                 }
             }
         }
-
-        // Cheminée
-        int chimneyX = startX + width - 2;
-        int chimneyZ = startZ + depth - 2;
-        int chimneyBaseY = startY + 1;
-        int chimneyHeight = 3;
-        for (int i = 0; i < chimneyHeight; i++) {
-            setBlock(world, chimneyX, chimneyBaseY + i, chimneyZ, Material.BRICKS);
-        }
-        world.getBlockAt(chimneyX, chimneyBaseY + chimneyHeight, chimneyZ).setType(Material.CAMPFIRE, false);
-        BlockData campfireData = world.getBlockAt(chimneyX, chimneyBaseY + chimneyHeight, chimneyZ).getBlockData();
-        if (campfireData instanceof Campfire campfire) {
-            campfire.setLit(true);
-            campfire.setSignalFire(true);
-            world.getBlockAt(chimneyX, chimneyBaseY + chimneyHeight, chimneyZ).setBlockData(campfire);
-        }
+        return actions;
     }
 
-    /* ----------------------------------------------------------------------
-       B) Puits, ferme, enclos, forge, tours de guet, marché, taverne, etc.
-    ---------------------------------------------------------------------- */
+    /**
+     * Variante pignon pour la maison pivotée.
+     */
+    private List<Runnable> buildPignonRoofActionsRotated(World w,
+                                                         int ox, int oz,
+                                                         int startY,
+                                                         int width,
+                                                         int depth,
+                                                         int angleDeg) {
+        List<Runnable> actions = new ArrayList<>();
+        int layers = width / 2;
+        for (int layer = 0; layer < layers; layer++) {
+            final int Y = startY + layer;
+            int x1 = layer;
+            int x2 = width - 1 - layer;
+            int z1 = 0;
+            int z2 = depth - 1;
 
-    private void buildWell(World world, int centerX, int centerY, int centerZ) {
-        // ... (identique à la version précédente)
-        int wellSize = 4;
-        for (int x = 0; x < wellSize; x++) {
-            for (int z = 0; z < wellSize; z++) {
-                setBlock(world, centerX + x - 1, centerY, centerZ + z - 1, Material.COBBLESTONE);
+            // Avant
+            for (int x = x1; x <= x2; x++) {
+                boolean leftCorner = (x == x1);
+                boolean rightCorner = (x == x2);
+                int[] rpos = rotateCoord(x, z1, angleDeg);
+                final int fx = ox + rpos[0];
+                final int fz = oz + rpos[1];
+                BlockFace face = getRotatedFace(BlockFace.NORTH, angleDeg);
+                actions.add(() -> placeBorderStair(w, fx, Y, fz, face, leftCorner, rightCorner));
             }
-        }
-        for (int x = 0; x < 2; x++) {
-            for (int z = 0; z < 2; z++) {
-                setBlock(world, centerX + x, centerY, centerZ + z, Material.WATER);
+            // Arrière
+            for (int x = x1; x <= x2; x++) {
+                boolean leftCorner = (x == x1);
+                boolean rightCorner = (x == x2);
+                int[] rpos = rotateCoord(x, z2, angleDeg);
+                final int fx = ox + rpos[0];
+                final int fz = oz + rpos[1];
+                BlockFace face = getRotatedFace(BlockFace.SOUTH, angleDeg);
+                actions.add(() -> placeBorderStair(w, fx, Y, fz, face, leftCorner, rightCorner));
             }
-        }
-        for (int dy = 1; dy <= 3; dy++) {
-            setBlock(world, centerX - 1, centerY + dy, centerZ - 1, Material.COBBLESTONE);
-            setBlock(world, centerX + 2, centerY + dy, centerZ - 1, Material.COBBLESTONE);
-            setBlock(world, centerX - 1, centerY + dy, centerZ + 2, Material.COBBLESTONE);
-            setBlock(world, centerX + 2, centerY + dy, centerZ + 2, Material.COBBLESTONE);
-        }
-        for (int x = -1; x <= 2; x++) {
-            for (int z = -1; z <= 2; z++) {
-                setBlock(world, centerX + x, centerY + 4, centerZ + z, Material.COBBLESTONE_SLAB);
-            }
-        }
-    }
-
-    private void buildFarm(World world, int startX, int startY, int startZ) {
-        // ... (inchangé)
-        int farmWidth = 6;
-        int farmDepth = 6;
-        // Clôture
-        for (int x = 0; x <= farmWidth; x++) {
-            setBlock(world, startX + x, startY + 1, startZ, Material.OAK_FENCE);
-            setBlock(world, startX + x, startY + 1, startZ + farmDepth, Material.OAK_FENCE);
-        }
-        for (int z = 0; z <= farmDepth; z++) {
-            setBlock(world, startX, startY + 1, startZ + z, Material.OAK_FENCE);
-            setBlock(world, startX + farmWidth, startY + 1, startZ + z, Material.OAK_FENCE);
-        }
-        // Terre + eau
-        for (int x = 1; x < farmWidth; x++) {
-            for (int z = 1; z < farmDepth; z++) {
-                setBlock(world, startX + x, startY, startZ + z, Material.DIRT);
-            }
-        }
-        int waterRow = startZ + farmDepth / 2;
-        for (int x = 1; x < farmWidth; x++) {
-            setBlock(world, startX + x, startY, waterRow, Material.WATER);
-        }
-        // Farmland + cultures
-        for (int x = 1; x < farmWidth; x++) {
-            for (int z = 1; z < farmDepth; z++) {
-                if (z != farmDepth / 2) {
-                    world.getBlockAt(startX + x, startY, startZ + z).setType(Material.FARMLAND, false);
-                    if ((x + z) % 2 == 0) {
-                        setBlock(world, startX + x, startY + 1, startZ + z, Material.WHEAT);
-                    } else {
-                        setBlock(world, startX + x, startY + 1, startZ + z, Material.CARROTS);
-                    }
+            // Remplissage
+            for (int xx = x1+1; xx <= x2-1; xx++) {
+                for (int zz = z1+1; zz <= z2-1; zz++) {
+                    int[] rpos = rotateCoord(xx, zz, angleDeg);
+                    final int fx = ox + rpos[0];
+                    final int fz = oz + rpos[1];
+                    final int X = fx, Z = fz, Yf = Y;
+                    actions.add(() -> setBlockTracked(w, X, Yf, Z, Material.SPRUCE_PLANKS));
                 }
             }
         }
+        return actions;
     }
 
-    private void buildFenceEnclosure(World world, int startX, int startY, int startZ) {
-        // ... (inchangé)
-        int enclosureWidth = 8;
-        int enclosureDepth = 5;
-        for (int x = 0; x <= enclosureWidth; x++) {
-            setBlock(world, startX + x, startY + 1, startZ, Material.OAK_FENCE);
-            setBlock(world, startX + x, startY + 1, startZ + enclosureDepth, Material.OAK_FENCE);
+    /**
+     * Place un escalier + OUTER_LEFT/RIGHT en coin.
+     */
+    private void placeBorderStair(World w,
+                                  int x,
+                                  int y,
+                                  int z,
+                                  BlockFace facing,
+                                  boolean cornerLeft,
+                                  boolean cornerRight) {
+        setBlockTracked(w, x, y, z, Material.SPRUCE_STAIRS);
+        Block b = w.getBlockAt(x,y,z);
+        if (b.getType() != Material.SPRUCE_STAIRS) return;
+
+        Stairs s = (Stairs) b.getBlockData();
+        s.setFacing(facing);
+        if (cornerLeft) {
+            s.setShape(Stairs.Shape.OUTER_LEFT);
         }
-        for (int z = 0; z <= enclosureDepth; z++) {
-            setBlock(world, startX, startY + 1, startZ + z, Material.OAK_FENCE);
-            setBlock(world, startX + enclosureWidth, startY + 1, startZ + z, Material.OAK_FENCE);
+        if (cornerRight) {
+            s.setShape(Stairs.Shape.OUTER_RIGHT);
         }
-        world.getBlockAt(startX + enclosureWidth / 2, startY + 1, startZ).setType(Material.OAK_FENCE_GATE);
-        for (int i = 0; i < 3; i++) {
-            Location spawn = new Location(world, startX + 2 + i, startY + 1, startZ + 2);
-            world.spawnEntity(spawn, EntityType.SHEEP);
-        }
+        b.setBlockData(s, false);
     }
 
-    private void buildBlacksmith(World world, int startX, int startY, int startZ) {
-        // ... (inchangé)
-        int smithWidth = 6;
-        int smithDepth = 5;
-        int height = 4;
-        for (int x = 0; x < smithWidth; x++) {
-            for (int z = 0; z < smithDepth; z++) {
-                setBlock(world, startX + x, startY, startZ + z, Material.COBBLESTONE);
-            }
-        }
-        for (int y = 1; y <= height; y++) {
-            for (int x = 0; x < smithWidth; x++) {
-                setBlock(world, startX + x, startY + y, startZ + smithDepth - 1, Material.OAK_PLANKS);
-            }
-            for (int z = 0; z < smithDepth; z++) {
-                setBlock(world, startX, startY + y, startZ + z, Material.OAK_PLANKS);
-            }
-        }
-        for (int x = -1; x <= smithWidth; x++) {
-            for (int z = -1; z <= smithDepth; z++) {
-                setBlock(world, startX + x, startY + height + 1, startZ + z, Material.COBBLESTONE_SLAB);
-            }
-        }
-
-        // Fenêtres
-        int wx = startX + smithWidth / 2;
-        int wz = startZ + smithDepth / 2;
-        setBlock(world, wx, startY + 2, startZ, Material.GLASS_PANE);
-        setBlock(world, wx, startY + 2, startZ + smithDepth - 1, Material.GLASS_PANE);
-        setBlock(world, startX, startY + 2, wz, Material.GLASS_PANE);
-        setBlock(world, startX + smithWidth - 1, startY + 2, wz, Material.GLASS_PANE);
-        world.getBlockAt(startX + smithWidth - 2, startY + 1, startZ + smithDepth - 2).setType(Material.FURNACE);
-        BlockData furnaceData = world.getBlockAt(startX + smithWidth - 2, startY + 1, startZ + smithDepth - 2).getBlockData();
-        if (furnaceData instanceof Furnace furnace) {
-            furnace.setFacing(getFacingNorth());
-            world.getBlockAt(startX + smithWidth - 2, startY + 1, startZ + smithDepth - 2).setBlockData(furnace);
-        }
-        setBlock(world, startX + smithWidth - 1, startY + 1, startZ + smithDepth - 2, Material.ANVIL);
+    /** Gère la rotation du facing (ex. N->E->S->W). */
+    private BlockFace getRotatedFace(BlockFace original, int angleDeg) {
+        List<BlockFace> cycle = Arrays.asList(
+                BlockFace.NORTH, BlockFace.EAST, BlockFace.SOUTH, BlockFace.WEST
+        );
+        int idx = cycle.indexOf(original);
+        if (idx < 0) return original;
+        int steps = angleDeg / 90;
+        int newIdx = (idx + steps) % 4;
+        return cycle.get((newIdx + 4) % 4);
     }
 
-    private void buildWatchTower(World world, int startX, int startY, int startZ) {
-        // ... (inchangé)
-        int towerHeight = 8;
-        int towerSide = 5;
-        for (int x = 0; x < towerSide; x++) {
-            for (int z = 0; z < towerSide; z++) {
-                setBlock(world, startX + x, startY, startZ + z, Material.COBBLESTONE);
+    /**
+     * Routes texturées : 60% GRAVEL, 25% DIRT_PATH, 15% COARSE_DIRT.
+     * On fait un simple chemin en L.
+     */
+    private List<Runnable> buildRoadActions(World w,
+                                            int x0, int z0,
+                                            int x1, int z1,
+                                            int baseY,
+                                            int halfWidth) {
+        List<Runnable> actions = new ArrayList<>();
+
+        int dx = (x1 >= x0) ? 1 : -1;
+        int cx = x0;
+        while (cx != x1) {
+            for (int woff = -halfWidth; woff <= halfWidth; woff++) {
+                final int fx = cx;
+                final int fz = z0 + woff;
+                actions.add(() -> setBlockTracked(w, fx, baseY, fz, pickRoadMaterial(RNG)));
             }
+            cx += dx;
         }
-        for (int y = 1; y <= towerHeight; y++) {
-            for (int x = 0; x < towerSide; x++) {
-                for (int z = 0; z < towerSide; z++) {
-                    if (x == 0 || x == towerSide - 1 || z == 0 || z == towerSide - 1) {
-                        setBlock(world, startX + x, startY + y, startZ + z, Material.COBBLESTONE);
-                    }
-                }
+
+        int dz = (z1 >= z0) ? 1 : -1;
+        int cz = z0;
+        while (cz != z1) {
+            for (int woff = -halfWidth; woff <= halfWidth; woff++) {
+                final int fx = x1 + woff;
+                final int fz = cz;
+                actions.add(() -> setBlockTracked(w, fx, baseY, fz, pickRoadMaterial(RNG)));
             }
+            cz += dz;
         }
-        setBlock(world, startX + towerSide / 2, startY + 1, startZ, Material.AIR);
-        setBlock(world, startX + towerSide / 2, startY + 2, startZ, Material.AIR);
-        placeDoor(world, startX + towerSide / 2, startY + 1, startZ);
-        int topY = startY + towerHeight;
-        for (int x = 0; x < towerSide; x++) {
-            for (int z = 0; z < towerSide; z++) {
-                setBlock(world, startX + x, topY, startZ + z, Material.SPRUCE_PLANKS);
-            }
+
+        // Dernière ligne
+        for (int woff = -halfWidth; woff <= halfWidth; woff++) {
+            final int fx = x1 + woff;
+            final int fz = z1;
+            actions.add(() -> setBlockTracked(w, fx, baseY, fz, pickRoadMaterial(RNG)));
         }
-        for (int x = 0; x < towerSide; x++) {
-            for (int z = 0; z < towerSide; z++) {
-                if (x == 0 || x == towerSide - 1 || z == 0 || z == towerSide - 1) {
-                    setBlock(world, startX + x, topY + 1, startZ + z, Material.COBBLESTONE_WALL);
-                }
-            }
-        }
-        for (int y = 1; y <= towerHeight - 1; y++) {
-            world.getBlockAt(startX + 1, startY + y, startZ + 2).setType(Material.LADDER, false);
-        }
+        return actions;
     }
 
-    private void buildMarketStall(World world, int startX, int startY, int startZ) {
-        // ... (inchangé)
-        int stallWidth = 4;
-        int stallDepth = 3;
-        for (int x = 0; x < stallWidth; x++) {
-            for (int z = 0; z < stallDepth; z++) {
-                setBlock(world, startX + x, startY, startZ + z, Material.OAK_PLANKS);
-            }
-        }
-        setBlock(world, startX,               startY + 1, startZ,               Material.OAK_FENCE);
-        setBlock(world, startX,               startY + 1, startZ + stallDepth - 1, Material.OAK_FENCE);
-        setBlock(world, startX + stallWidth - 1, startY + 1, startZ,               Material.OAK_FENCE);
-        setBlock(world, startX + stallWidth - 1, startY + 1, startZ + stallDepth - 1, Material.OAK_FENCE);
-
-        Material[] pattern = { Material.WHITE_WOOL, Material.RED_WOOL };
-        for (int x = 0; x < stallWidth; x++) {
-            for (int z = 0; z < stallDepth; z++) {
-                int colorIndex = (x + z) % 2;
-                setBlock(world, startX + x, startY + 2, startZ + z, pattern[colorIndex]);
-            }
-        }
-
-        Location vendorLoc = new Location(world, startX + stallWidth / 2, startY + 1, startZ + stallDepth / 2);
-        Villager v = (Villager) world.spawnEntity(vendorLoc, EntityType.VILLAGER);
-        v.setCustomName("Marchand");
-        v.setCustomNameVisible(true);
+    private Material pickRoadMaterial(Random r) {
+        int v = r.nextInt(100);
+        if (v < 60) return Material.GRAVEL;
+        if (v < 85) return Material.DIRT_PATH;
+        return Material.COARSE_DIRT;
     }
 
-    private void buildTavern(World world, int startX, int startY, int startZ) {
-        // ... (inchangé)
-        int tavernWidth = 10;
-        int tavernDepth = 8;
-        int wallHeight = 5;
-        for (int x = 0; x < tavernWidth; x++) {
-            for (int z = 0; z < tavernDepth; z++) {
-                setBlock(world, startX + x, startY, startZ + z, Material.COBBLESTONE);
-            }
-        }
-        for (int y = 1; y <= wallHeight; y++) {
-            for (int x = 0; x < tavernWidth; x++) {
-                for (int z = 0; z < tavernDepth; z++) {
-                    boolean isEdge = (x == 0 || x == tavernWidth - 1 || z == 0 || z == tavernDepth - 1);
-                    if (isEdge) {
-                        setBlock(world, startX + x, startY + y, startZ + z, Material.OAK_PLANKS);
-                    }
-                }
-            }
+    /**
+     * Lampadaire : base = Polished Andesite Wall (ou fallback),
+     * puis 2 chaînes + 1 lanterne (hauteur totale = 3).
+     */
+    private List<Runnable> buildLampPostActions(World w, int x, int y, int z) {
+        List<Runnable> actions = new ArrayList<>();
+
+        // Fallback si la version < 1.16 ne possède pas POLISHED_ANDESITE_WALL
+        Material wallMat = Material.matchMaterial("POLISHED_ANDESITE_WALL");
+        if (wallMat == null) {
+            wallMat = Material.COBBLESTONE_WALL; // fallback
         }
 
-        // Fenêtres simples
-        int midX = startX + tavernWidth / 2;
-        int midZ = startZ + tavernDepth / 2;
-        for (int x = 2; x <= tavernWidth - 3; x += 3) {
-            setBlock(world, startX + x, startY + 2, startZ, Material.GLASS_PANE);
-            setBlock(world, startX + x, startY + 2, startZ + tavernDepth - 1, Material.GLASS_PANE);
-        }
-        for (int z = 2; z <= tavernDepth - 3; z += 3) {
-            setBlock(world, startX, startY + 2, startZ + z, Material.GLASS_PANE);
-            setBlock(world, startX + tavernWidth - 1, startY + 2, startZ + z, Material.GLASS_PANE);
-        }
-        int roofStartY = startY + wallHeight + 1;
-        buildFinishedRoofWithChimney(world, startX, roofStartY, startZ, tavernWidth, tavernDepth);
+        // Base
+        Material finalWallMat = wallMat;
+        actions.add(() -> setBlockTracked(w, x,     y,     z, finalWallMat));
+        // 2 maillons de chaîne
+        actions.add(() -> setBlockTracked(w, x,     y+1,   z, Material.CHAIN));
+        actions.add(() -> setBlockTracked(w, x,     y+2,   z, Material.CHAIN));
+        // Lanterne tout en haut
+        actions.add(() -> setBlockTracked(w, x,     y+3,   z, Material.LANTERN));
 
-        // Porte (ouverture élargie)
-        setBlock(world, startX + tavernWidth / 2, startY + 1, startZ, Material.AIR);
-        setBlock(world, startX + tavernWidth / 2, startY + 2, startZ, Material.AIR);
-        placeDoor(world, startX + tavernWidth / 2, startY + 1, startZ);
-
-        // Décor intérieur (comptoir, baril, tables)
-        for (int i = 0; i < 3; i++) {
-            setBlock(world, startX + 2 + i, startY + 1, startZ + 2, Material.OAK_FENCE);
-            setBlock(world, startX + 2 + i, startY + 2, startZ + 2, Material.SPRUCE_TRAPDOOR);
-        }
-        setBlock(world, startX + 3, startY + 1, startZ + 1, Material.BARREL);
-        for (int i = 0; i < 2; i++) {
-            setBlock(world, startX + 6 + i * 2, startY + 1, startZ + 3, Material.OAK_FENCE);
-            setBlock(world, startX + 6 + i * 2, startY + 2, startZ + 3, Material.SPRUCE_PRESSURE_PLATE);
-        }
-        setBlock(world, startX + 1, startY + 3, startZ + 1, Material.WALL_TORCH);
-        setBlock(world, startX + tavernWidth - 2, startY + 3, startZ + tavernDepth - 2, Material.WALL_TORCH);
+        return actions;
     }
 
-    private void buildDecorativePond(World world, int centerX, int centerY, int centerZ) {
-        // ... (inchangé)
-        int radius = 4;
-        for (int x = -radius; x <= radius; x++) {
-            for (int z = -radius; z <= radius; z++) {
-                double dist = Math.sqrt(x * x + z * z);
-                if (dist <= radius) {
-                    setBlock(world, centerX + x, centerY, centerZ + z, Material.WATER);
-                }
-            }
-        }
-        for (int x = -radius - 1; x <= radius + 1; x++) {
-            for (int z = -radius - 1; z <= radius + 1; z++) {
-                double dist = Math.sqrt(x * x + z * z);
-                if (dist > radius && dist < radius + 2) {
-                    if ((x + z) % 3 == 0) {
-                        setBlock(world, centerX + x, centerY + 1, centerZ + z, Material.ROSE_BUSH);
-                    } else if ((x + z) % 3 == 1) {
-                        setBlock(world, centerX + x, centerY + 1, centerZ + z, Material.TALL_GRASS);
-                    }
-                }
-            }
-        }
+    /**
+     * Fait spawn un PNJ villageois (ex: un vendeur ou habitant).
+     */
+    private void spawnVillager(World w, Location loc, String name) {
+        w.getChunkAt(loc).load();
+        Villager vil = (Villager) w.spawnEntity(loc, EntityType.VILLAGER);
+        vil.setCustomName(name);
+        vil.setCustomNameVisible(true);
+        vil.setProfession(Villager.Profession.NONE);
     }
 
-    private void buildFlowerGarden(World world, int startX, int startY, int startZ) {
-        // ... (inchangé)
-        int gardenWidth = 6;
-        int gardenDepth = 6;
-        for (int x = 0; x < gardenWidth; x++) {
-            for (int z = 0; z < gardenDepth; z++) {
-                setBlock(world, startX + x, startY, startZ + z, Material.GRASS_BLOCK);
-            }
-        }
-        Material[] flowers = {
-                Material.DANDELION,
-                Material.POPPY,
-                Material.BLUE_ORCHID,
-                Material.ALLIUM,
-                Material.AZURE_BLUET,
-                Material.ORANGE_TULIP,
-                Material.PINK_TULIP
-        };
-        for (int x = 0; x < gardenWidth; x++) {
-            for (int z = 0; z < gardenDepth; z++) {
-                if ((x + z) % 2 == 0) {
-                    int index = (x * z) % flowers.length;
-                    setBlock(world, startX + x, startY + 1, startZ + z, flowers[index]);
-                }
-            }
-        }
-    }
-
-    private void buildRoads(World world, int baseX, int baseY, int baseZ, int gap) {
-        // ... (inchangé) chemin 3 blocs de large en croix
-        int halfWidth = 1;
-        for (int dx = -gap; dx <= gap; dx++) {
-            for (int w = -halfWidth; w <= halfWidth; w++) {
-                setBlock(world, baseX + dx, baseY, baseZ + w, Material.GRAVEL);
-            }
-        }
-        for (int dz = -gap; dz <= gap; dz++) {
-            for (int w = -halfWidth; w <= halfWidth; w++) {
-                setBlock(world, baseX + w, baseY, baseZ + dz, Material.GRAVEL);
-            }
-        }
-
-        // Lampadaires
-        for (int dx = -gap; dx <= gap; dx += 6) {
-            for (int w = -halfWidth; w <= halfWidth; w++) {
-                buildLampPost(world, baseX + dx, baseY + 1, baseZ + w);
-            }
-        }
-        for (int dz = -gap; dz <= gap; dz += 6) {
-            for (int w = -halfWidth; w <= halfWidth; w++) {
-                buildLampPost(world, baseX + w, baseY + 1, baseZ + dz);
-            }
-        }
-    }
-
-    /* ----------------------------------------------------------------------
-       C) Chemin d'accès "en L" entre le centre (x0,z0) et la porte (x1,z1)
-    ---------------------------------------------------------------------- */
-    private void buildPath(World world,
-                           int x0, int z0,
-                           int x1, int z1,
-                           int baseY,
-                           int halfWidth) {
-        // On va créer un chemin "en L" : on bouge en X, puis en Z.
-        // Et on le fait large de (2*halfWidth + 1).
-        int dx = (x1 > x0) ? 1 : -1;
-        if (x1 == x0) dx = 0;
-
-        // 1) On avance en X jusqu'à x1
-        int currentX = x0;
-        while (currentX != x1) {
-            for (int w = -halfWidth; w <= halfWidth; w++) {
-                setBlock(world, currentX, baseY, z0 + w, Material.GRAVEL);
-            }
-            currentX += dx;
-        }
-
-        // 2) On avance en Z jusqu'à z1
-        int dz = (z1 > z0) ? 1 : -1;
-        if (z1 == z0) dz = 0;
-        int currentZ = z0;
-        while (currentZ != z1) {
-            for (int w = -halfWidth; w <= halfWidth; w++) {
-                setBlock(world, x1 + w, baseY, currentZ, Material.GRAVEL);
-            }
-            currentZ += dz;
-        }
-        // Et on place enfin un bloc GRAVEL à la porte
-        for (int w = -halfWidth; w <= halfWidth; w++) {
-            setBlock(world, x1 + w, baseY, z1, Material.GRAVEL);
-        }
-    }
-
-    /* ----------------------------------------------------------------------
-       D) Arbre customisé et panneaux
-    ---------------------------------------------------------------------- */
-    private void buildCustomTree(World world, int x, int y, int z) {
-        // ... (inchangé)
-        for (int i = 0; i < 4; i++) {
-            setBlock(world, x, y + i, z, Material.OAK_LOG);
-        }
-        int leavesStart = y + 3;
-        for (int dx = -1; dx <= 1; dx++) {
-            for (int dz = -1; dz <= 1; dz++) {
-                setBlock(world, x + dx, leavesStart,     z + dz, Material.OAK_LEAVES);
-                setBlock(world, x + dx, leavesStart + 1, z + dz, Material.OAK_LEAVES);
-            }
-        }
-    }
-
-    private void buildSign(World world,
-                           int x,
-                           int y,
-                           int z,
-                           BlockFace facing,
-                           String text) {
-        // ... (inchangé)
-        Location loc = new Location(world, x, y, z);
-        loc.getBlock().setType(Material.OAK_WALL_SIGN, false);
-        BlockData data = loc.getBlock().getBlockData();
-        if (data instanceof Sign signData) {
-            signData.setRotation(facing);
-            loc.getBlock().setBlockData(signData, false);
-        }
-        org.bukkit.block.Sign state = (org.bukkit.block.Sign) loc.getBlock().getState();
-        state.setLine(0, text);
-        state.update(false, false);
-    }
-
-    /* ----------------------------------------------------------------------
-       Méthodes de placement utilitaires
-    ---------------------------------------------------------------------- */
-
-    /** Place un bloc de manière immédiate, sans effet de physique. */
-    private void setBlock(World w, int x, int y, int z, Material mat) {
-        w.getBlockAt(x, y, z).setType(mat, false);
-    }
-
-    /** Place une porte orientée vers le sud. */
-    private void placeDoor(World world, int x, int y, int z) {
-        Location bottom = new Location(world, x, y, z);
-        Location top = new Location(world, x, y + 1, z);
-
-        bottom.getBlock().setType(Material.OAK_DOOR, false);
-        BlockData doorDataBottom = bottom.getBlock().getBlockData();
-        if (doorDataBottom instanceof Door door) {
-            door.setHalf(Door.Half.BOTTOM);
-            door.setFacing(BlockFace.SOUTH);
-            bottom.getBlock().setBlockData(door, false);
-        }
-
-        top.getBlock().setType(Material.OAK_DOOR, false);
-        BlockData doorDataTop = top.getBlock().getBlockData();
-        if (doorDataTop instanceof Door door) {
-            door.setHalf(Door.Half.TOP);
-            door.setFacing(BlockFace.SOUTH);
-            top.getBlock().setBlockData(door, false);
-        }
-    }
-
-    /** Place des escaliers (Stairs) avec la bonne orientation. */
-    private void placeStairs(World world,
-                             int x,
-                             int y,
-                             int z,
-                             Material material,
-                             Stairs.Shape shape,
-                             BlockFace facing) {
-        Location loc = new Location(world, x, y, z);
-        loc.getBlock().setType(material, false);
-
-        BlockData data = loc.getBlock().getBlockData();
-        if (data instanceof Stairs stairs) {
-            stairs.setShape(shape);
-            stairs.setFacing(facing);
-            loc.getBlock().setBlockData(stairs, false);
-        }
-    }
-
-    /** Construit un lampadaire simple. */
-    private void buildLampPost(World world, int x, int y, int z) {
-        setBlock(world, x, y,     z, Material.OAK_FENCE);
-        setBlock(world, x, y + 1, z, Material.OAK_FENCE);
-        setBlock(world, x, y + 2, z, Material.OAK_FENCE);
-        setBlock(world, x, y + 3, z, Material.OAK_FENCE);
-        setBlock(world, x, y + 4, z, Material.LANTERN);
-    }
-
-    // Orientations utilitaires
-    private BlockFace getFacingNorth() {
-        return BlockFace.NORTH;
-    }
-    private BlockFace getFacingSouth() {
-        return BlockFace.SOUTH;
-    }
-    private BlockFace getFacingEast() {
-        return BlockFace.EAST;
-    }
-    private BlockFace getFacingWest() {
-        return BlockFace.WEST;
+    /**
+     * Place un bloc et l'enregistre dans placedBlocks.
+     */
+    private void setBlockTracked(World w, int x, int y, int z, Material mat) {
+        Block b = w.getBlockAt(x, y, z);
+        b.setType(mat, false);
+        placedBlocks.add(b.getLocation());
     }
 }
