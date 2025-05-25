@@ -144,6 +144,28 @@ public final class Village implements CommandExecutor {
         minZ = Math.min(minZ, center.getBlockZ());
         maxZ = Math.max(maxZ, center.getBlockZ() + 3);
 
+        int zoneSize = 20;
+        int gap = 5;
+        int areaWidth = maxX - minX + 1;
+        int areaLength = maxZ - minZ + 1;
+        int northX = minX + (areaWidth - zoneSize) / 2;
+        int northZ = minZ - gap - zoneSize;
+        int southX = northX;
+        int southZ = maxZ + gap + 1;
+        int westX = minX - gap - zoneSize;
+        int westZ = minZ + (areaLength - zoneSize) / 2;
+        int eastX = maxX + gap + 1;
+        int eastZ = westZ;
+        minX = Math.min(minX, westX);
+        maxX = Math.max(maxX, eastX + zoneSize - 1);
+        minZ = Math.min(minZ, northZ);
+        maxZ = Math.max(maxZ, southZ + zoneSize - 1);
+        int wallThickness = 3;
+        int wallMinX = minX - wallThickness;
+        int wallMaxX = maxX + wallThickness;
+        int wallMinZ = minZ - wallThickness;
+        int wallMaxZ = maxZ + wallThickness;
+
         // 1) Prépare la liste de toutes les actions de construction
         // Dégage la zone et ajoute un sol d'herbe
         actions.addAll(prepareGroundActions(world, minX, maxX, minZ, maxZ, baseY));
@@ -202,6 +224,7 @@ public final class Village implements CommandExecutor {
         actions.add(createSpawnerAction(world, maxX, baseY + 1, minZ, EntityType.IRON_GOLEM));
         actions.add(createSpawnerAction(world, minX, baseY + 1, maxZ, EntityType.IRON_GOLEM));
         actions.add(createSpawnerAction(world, maxX, baseY + 1, maxZ, EntityType.IRON_GOLEM));
+        actions.addAll(buildWallActions(world, wallMinX, wallMaxX, wallMinZ, wallMaxZ, baseY));
 
         // Spawners de golem au milieu de chaque côté
         int midX = (minX + maxX) / 2;
@@ -215,6 +238,16 @@ public final class Village implements CommandExecutor {
 
         // 5) Lance un scheduler qui place 200 blocs par tick
         buildActionsInBatches(actions, 200);
+        new BukkitRunnable() {
+            @Override
+            public void run() {
+                MinePlugin mp = (MinePlugin) plugin;
+                mp.getMineur().createMine(new Location(world, northX, baseY, northZ), zoneSize, zoneSize);
+                mp.getAgriculture().createField(new Location(world, southX, baseY, southZ), zoneSize, zoneSize);
+                mp.getForet().createForestArea(new Location(world, eastX, baseY, eastZ), zoneSize, zoneSize);
+                mp.getEleveur().createRanch(new Location(world, westX, baseY, westZ), zoneSize, zoneSize);
+            }
+        }.runTaskLater(plugin, 200L);
     }
 
     /**
@@ -792,10 +825,63 @@ public final class Village implements CommandExecutor {
                 cs.setSpawnedType(type);
                 cs.update();
             }
+    private Runnable createSpawnerAction(World w, int x, int y, int z, EntityType type) {
+        return () -> {
+            setBlockTracked(w, x, y, z, Material.SPAWNER);
+            Block b = w.getBlockAt(x, y, z);
+            if (b.getState() instanceof CreatureSpawner cs) {
+                cs.setSpawnedType(type);
+                cs.update();
+            }
         };
     }
 
     /**
+     * Construit une muraille autour du village.
+     */
+        List<Runnable> actions = new ArrayList<>();
+        int thickness = 3;
+        int height = 5;
+        int outerMinX = minX - thickness;
+        int outerMaxX = maxX + thickness;
+        int outerMinZ = minZ - thickness;
+        int outerMaxZ = maxZ + thickness;
+        int entranceX = (minX + maxX) / 2;
+        int entranceZ = outerMaxZ;
+        for (int x = outerMinX; x <= outerMaxX; x++) {
+            for (int z = outerMinZ; z <= outerMaxZ; z++) {
+                boolean onWall = x <= minX || x >= maxX || z <= minZ || z >= maxZ;
+                if (!onWall) continue;
+                if (z == entranceZ && x >= entranceX - 1 && x <= entranceX + 1) continue;
+                for (int y = 1; y <= height; y++) {
+                    final int fx = x, fy = baseY + y, fz = z;
+                    actions.add(() -> setBlockTracked(w, fx, fy, fz, Material.STONE_BRICKS));
+                }
+                final int topY = baseY + height;
+                final int fx2 = x, fz2 = z;
+                actions.add(() -> setBlockTracked(w, fx2, topY, fz2, Material.STONE_BRICK_SLAB));
+            }
+        }
+        for (int x = outerMinX; x <= outerMaxX; x++) {
+            for (int z = outerMinZ; z <= outerMaxZ; z++) {
+                boolean outerEdge = x == outerMinX || x == outerMaxX || z == outerMinZ || z == outerMaxZ;
+                if (!outerEdge) continue;
+                if (z == entranceZ && x >= entranceX - 1 && x <= entranceX + 1) continue;
+                if ((x + z) % 2 == 0) {
+                    final int fy = baseY + height + 1;
+                    final int fx = x, fz = z;
+                    actions.add(() -> setBlockTracked(w, fx, fy, fz, Material.STONE_BRICK_WALL));
+                    if ((x + z) % 4 == 0) {
+                        actions.add(() -> setBlockTracked(w, fx, fy + 1, fz, Material.TORCH));
+                    }
+                }
+            }
+        }
+        actions.add(createSpawnerAction(w, entranceX, baseY + 1, entranceZ - 1, EntityType.IRON_GOLEM));
+        return actions;
+    }
+    /**
+
      * Fait spawn un PNJ villageois (ex: un vendeur ou habitant).
      */
     private void spawnVillager(World w, Location loc, String name) {

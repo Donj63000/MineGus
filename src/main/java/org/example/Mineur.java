@@ -318,6 +318,12 @@ public class Mineur implements CommandExecutor, Listener {
         plugin.getLogger().info("Mineur : " + loaded + " session(s) rechargée(s).");
     }
 
+    public void createMine(Location origin, int width, int length) {
+        MiningSession session = new MiningSession(plugin, origin, width, length);
+        sessions.add(session);
+        saveAllSessions();
+    }
+
     public void stopAllSessions() {
         for (MiningSession s : sessions) {
             s.stopSession();

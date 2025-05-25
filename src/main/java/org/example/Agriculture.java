@@ -292,6 +292,13 @@ public final class Agriculture implements CommandExecutor, Listener {
         }
         plugin.getLogger().info("[Agriculture] Restauré " + loaded + " champ(s).");
     }
+    public void createField(Location origin, int width, int length) {
+        FieldSession fs = new FieldSession(plugin, origin, width, length);
+        fs.start();
+        sessions.add(fs);
+        saveAllSessions();
+    }
+
 
     public void stopAllSessions() {
         for (FieldSession fs : sessions) {

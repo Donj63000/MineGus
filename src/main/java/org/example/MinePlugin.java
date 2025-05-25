@@ -65,6 +65,12 @@ public final class MinePlugin extends JavaPlugin implements Listener {
      */
     private Armure armure;
 
+    public Mineur getMineur() { return mineur; }
+    public Agriculture getAgriculture() { return agriculture; }
+    public Foret getForet() { return foret; }
+    public Eleveur getEleveur() { return eleveur; }
+
+
     @Override
     public void onEnable() {
         getLogger().info("MinePlugin chargé !");
