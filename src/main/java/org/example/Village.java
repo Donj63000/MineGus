@@ -55,7 +55,8 @@ public final class Village implements CommandExecutor {
         config.put("houseWidth", 9);
         config.put("houseDepth", 9);
         config.put("roadWidth", 3);
-        config.put("villageRadius", 20);
+        // Espacement entre chaque maison pour la grille
+        config.put("houseSpacing", 15);
     }
 
     @Override
@@ -98,28 +99,55 @@ public final class Village implements CommandExecutor {
         actions.addAll(buildWellActions(world, center.clone().add(0,0,0)));
         actions.add(() -> placeBell(world, center.clone().add(1,1,0)));
 
-        // 3) Génère 12 maisons autour du centre et leurs routes
+        // 3) Génère les maisons en grille autour de la place
         int houseW = (int) config.get("houseWidth");
         int houseD = (int) config.get("houseDepth");
-        int radius = (int) config.get("villageRadius");
+        int spacing = (int) config.get("houseSpacing");
         int roads = (int) config.get("roadWidth");
 
-        for (int i = 0; i < 12; i++) {
-            double angle = 2 * Math.PI * i / 12;
-            int hx = center.getBlockX() + (int) (Math.cos(angle) * radius);
-            int hz = center.getBlockZ() + (int) (Math.sin(angle) * radius);
-            int quadrant = (int) Math.floor((angle + Math.PI) / (Math.PI / 2));
-            int rotation = (quadrant * 90) % 360;
+        int rows = 3;
+        int cols = 4;
+        int offsetX = -((cols - 1) * spacing) / 2;
+        int offsetZ = -((rows - 1) * spacing) / 2;
 
-            Location houseLoc = new Location(world, hx, center.getBlockY(), hz);
-            actions.addAll(buildHouseRotatedActions(world, houseLoc, houseW, houseD, rotation));
-            actions.addAll(buildRoadActions(
-                    world,
-                    center.getBlockX(), center.getBlockZ(),
-                    hx, hz,
-                    center.getBlockY(),
-                    roads
-            ));
+        for (int r = 0; r < rows; r++) {
+            for (int c = 0; c < cols; c++) {
+                int hx = center.getBlockX() + offsetX + c * spacing;
+                int hz = center.getBlockZ() + offsetZ + r * spacing;
+
+                int rotation;
+                if (r == 0) {
+                    rotation = 180; // rangée nord => maisons face au sud
+                } else if (r == rows - 1) {
+                    rotation = 0;   // rangée sud => maisons face au nord
+                } else if (c < cols / 2) {
+                    rotation = 90;  // à gauche => face à l'est
+                } else {
+                    rotation = 270; // à droite => face à l'ouest
+                }
+
+                Location houseLoc = new Location(world, hx, center.getBlockY(), hz);
+                actions.addAll(buildHouseRotatedActions(world, houseLoc, houseW, houseD, rotation));
+                actions.addAll(buildRoadActions(
+                        world,
+                        center.getBlockX(), center.getBlockZ(),
+                        hx, hz,
+                        center.getBlockY(),
+                        roads
+                ));
+
+                // Lampadaire devant chaque maison
+                int lampX = hx;
+                int lampZ = hz;
+                switch (rotation) {
+                    case 0 -> lampZ -= houseD / 2 + 1;
+                    case 180 -> lampZ += houseD / 2 + 1;
+                    case 90 -> lampX -= houseW / 2 + 1;
+                    case 270 -> lampX += houseW / 2 + 1;
+                }
+                int lampY = center.getBlockY() + 1;
+                actions.addAll(buildLampPostActions(world, lampX, lampY, lampZ));
+            }
         }
 
         // 4) Ajoute un PNJ sur la place
