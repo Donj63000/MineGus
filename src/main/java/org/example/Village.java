@@ -98,40 +98,36 @@ public final class Village implements CommandExecutor {
         actions.addAll(buildWellActions(world, center.clone().add(0,0,0)));
         actions.add(() -> placeBell(world, center.clone().add(1,1,0)));
 
-        // 3) Ajoute 2 maisons, l'une orientée "normal" (pas de rotation),
-        //    l'autre "rotated" (ex. rotation 90°).
+        // 3) Génère 12 maisons autour du centre et leurs routes
         int houseW = (int) config.get("houseWidth");
         int houseD = (int) config.get("houseDepth");
-        Location houseA = center.clone().add(-15, 0, -10);
-        actions.addAll(buildHouseActions(world, houseA, houseW, houseD, BlockFace.SOUTH));
+        int radius = (int) config.get("villageRadius");
+        int roads = (int) config.get("roadWidth");
 
-        Location houseB = center.clone().add(10, 0, -12);
-        actions.addAll(buildHouseRotatedActions(world, houseB, houseW, houseD, 90)); // rotation 90°
+        for (int i = 0; i < 12; i++) {
+            double angle = 2 * Math.PI * i / 12;
+            int hx = center.getBlockX() + (int) (Math.cos(angle) * radius);
+            int hz = center.getBlockZ() + (int) (Math.sin(angle) * radius);
+            int quadrant = (int) Math.floor((angle + Math.PI) / (Math.PI / 2));
+            int rotation = (quadrant * 90) % 360;
 
-        // 4) Ajoute un chemin texturé
-        //    Ex: on relie le puits (centre) à la maison A
-        actions.addAll(buildRoadActions(
-                world,
-                center.getBlockX(), center.getBlockZ(),
-                houseA.getBlockX(), houseA.getBlockZ(),
-                center.getBlockY(),
-                (int) config.get("roadWidth"))
-        );
+            Location houseLoc = new Location(world, hx, center.getBlockY(), hz);
+            actions.addAll(buildHouseRotatedActions(world, houseLoc, houseW, houseD, rotation));
+            actions.addAll(buildRoadActions(
+                    world,
+                    center.getBlockX(), center.getBlockZ(),
+                    hx, hz,
+                    center.getBlockY(),
+                    roads
+            ));
+        }
 
-        // 5) Ajoute un lampadaire "chaîne + lanterne" sur le chemin
-        actions.addAll(buildLampPostActions(
-                world,
-                houseA.getBlockX() + 2,
-                center.getBlockY() + 1,
-                houseA.getBlockZ() + 2
-        ));
-
-        // 6) Ajoute un PNJ sur la place
+        // 4) Ajoute un PNJ sur la place
         actions.add(() -> spawnVillager(world, center.clone().add(2,1,1), "Villageois"));
 
         // On pourrait enchaîner : marché, arbres, etc. … en ajoutant d'autres actions.
 
-        // 7) Lance un scheduler qui place 200 blocs par tick
+        // 5) Lance un scheduler qui place 200 blocs par tick
         buildActionsInBatches(actions, 200);
     }
 
@@ -258,7 +254,7 @@ public final class Village implements CommandExecutor {
 
         int wallHeight = 4; // Hauteur du mur
 
-        // Murs + coins
+        // Murs + coins avec fenêtres
         for (int x = 0; x < width; x++) {
             for (int z = 0; z < depth; z++) {
                 int fx = ox + x;
@@ -270,7 +266,16 @@ public final class Village implements CommandExecutor {
                         int fy = oy + 1 + y;
                         boolean corner = (edgeX && edgeZ);
                         Material mat = corner ? Material.OAK_LOG : Material.OAK_PLANKS;
-                        result.add(() -> setBlockTracked(world, fx, fy, fz, mat));
+
+                        // Fenêtres simples au milieu des murs
+                        boolean windowLayer = (y == 1);
+                        boolean frontBack = edgeZ && !corner && (x == 2 || x == width-3);
+                        boolean sides = edgeX && !corner && (z == 2 || z == depth-3);
+                        if (windowLayer && (frontBack || sides)) {
+                            result.add(() -> setBlockTracked(world, fx, fy, fz, Material.GLASS_PANE));
+                        } else {
+                            result.add(() -> setBlockTracked(world, fx, fy, fz, mat));
+                        }
                     }
                 }
             }
@@ -289,12 +294,13 @@ public final class Village implements CommandExecutor {
         // Porte (devant => z=0)
         int doorX = ox + width/2;
         int doorZ = oz;
-        // on enlève 2 blocs => "trou"
-        result.add(() -> setBlockTracked(world, doorX,   oy+1, doorZ, Material.AIR));
-        result.add(() -> setBlockTracked(world, doorX,   oy+2, doorZ, Material.AIR));
+        result.add(() -> setBlockTracked(world, doorX, oy+1, doorZ, Material.OAK_DOOR));
+        result.add(() -> setBlockTracked(world, doorX, oy+2, doorZ, Material.OAK_DOOR));
 
-        // Lit
+        // Mobilier basique
         result.add(() -> setBlockTracked(world, ox+2, oy+1, oz+2, Material.WHITE_BED));
+        result.add(() -> setBlockTracked(world, ox+width-3, oy+1, oz+2, Material.CRAFTING_TABLE));
+        result.add(() -> setBlockTracked(world, ox+width-3, oy+1, oz+depth-3, Material.CHEST));
 
         // Toit en pignon
         int roofBaseY = oy + wallHeight + 1;
@@ -318,7 +324,7 @@ public final class Village implements CommandExecutor {
 
         int wallHeight = 4;
 
-        // Murs
+        // Murs avec fenêtres
         for (int dx = 0; dx < width; dx++) {
             for (int dz = 0; dz < depth; dz++) {
                 boolean edgeX = (dx == 0 || dx == width-1);
@@ -330,7 +336,15 @@ public final class Village implements CommandExecutor {
                         int[] rpos = rotateCoord(dx, dz, rotationDegrees);
                         final int fx = ox + rpos[0];
                         final int fz = oz + rpos[1];
-                        result.add(() -> setBlockTracked(world, fx, fy, fz, mat));
+
+                        boolean windowLayer = (h == 1);
+                        boolean frontBack = edgeZ && !edgeX && (dx == 2 || dx == width-3);
+                        boolean sides = edgeX && !edgeZ && (dz == 2 || dz == depth-3);
+                        if (windowLayer && (frontBack || sides)) {
+                            result.add(() -> setBlockTracked(world, fx, fy, fz, Material.GLASS_PANE));
+                        } else {
+                            result.add(() -> setBlockTracked(world, fx, fy, fz, mat));
+                        }
                     }
                 }
             }
@@ -352,8 +366,16 @@ public final class Village implements CommandExecutor {
         int[] dpos1 = rotateCoord(doorX, doorZ, rotationDegrees);
         final int rx1 = ox + dpos1[0];
         final int rz1 = oz + dpos1[1];
-        result.add(() -> setBlockTracked(world, rx1, oy+1, rz1, Material.AIR));
-        result.add(() -> setBlockTracked(world, rx1, oy+2, rz1, Material.AIR));
+        result.add(() -> setBlockTracked(world, rx1, oy+1, rz1, Material.OAK_DOOR));
+        result.add(() -> setBlockTracked(world, rx1, oy+2, rz1, Material.OAK_DOOR));
+
+        // Mobilier
+        int[] bedPos = rotateCoord(2, 2, rotationDegrees);
+        result.add(() -> setBlockTracked(world, ox + bedPos[0], oy+1, oz + bedPos[1], Material.WHITE_BED));
+        int[] tablePos = rotateCoord(width-3, 2, rotationDegrees);
+        result.add(() -> setBlockTracked(world, ox + tablePos[0], oy+1, oz + tablePos[1], Material.CRAFTING_TABLE));
+        int[] chestPos = rotateCoord(width-3, depth-3, rotationDegrees);
+        result.add(() -> setBlockTracked(world, ox + chestPos[0], oy+1, oz + chestPos[1], Material.CHEST));
 
         // Toit
         int roofBaseY = oy + wallHeight + 1;
@@ -521,13 +543,18 @@ public final class Village implements CommandExecutor {
 
         int dx = (x1 >= x0) ? 1 : -1;
         int cx = x0;
+        int step = 0;
         while (cx != x1) {
             for (int woff = -halfWidth; woff <= halfWidth; woff++) {
                 final int fx = cx;
                 final int fz = z0 + woff;
                 actions.add(() -> setBlockTracked(w, fx, baseY, fz, pickRoadMaterial(RNG)));
+                if (woff == 0 && step % 4 == 0) {
+                    actions.add(() -> setBlockTracked(w, fx, baseY + 1, fz, Material.TORCH));
+                }
             }
             cx += dx;
+            step++;
         }
 
         int dz = (z1 >= z0) ? 1 : -1;
@@ -537,8 +564,12 @@ public final class Village implements CommandExecutor {
                 final int fx = x1 + woff;
                 final int fz = cz;
                 actions.add(() -> setBlockTracked(w, fx, baseY, fz, pickRoadMaterial(RNG)));
+                if (woff == 0 && step % 4 == 0) {
+                    actions.add(() -> setBlockTracked(w, fx, baseY + 1, fz, Material.TORCH));
+                }
             }
             cz += dz;
+            step++;
         }
 
         // Dernière ligne
@@ -546,6 +577,11 @@ public final class Village implements CommandExecutor {
             final int fx = x1 + woff;
             final int fz = z1;
             actions.add(() -> setBlockTracked(w, fx, baseY, fz, pickRoadMaterial(RNG)));
+            if (woff == 0 && step % 4 == 0) {
+                final int tx = fx;
+                final int tz = fz;
+                actions.add(() -> setBlockTracked(w, tx, baseY + 1, tz, Material.TORCH));
+            }
         }
         return actions;
     }
