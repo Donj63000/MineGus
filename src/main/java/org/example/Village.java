@@ -41,7 +41,7 @@ public final class Village implements CommandExecutor {
      * Configuration (remplace un config.yml).
      * On pourrait lire un .yml via plugin.getConfig().
      */
-    private final Map<String,Object> config = new HashMap<>();
+    private final Map<String, Object> config = new HashMap<>();
 
     public Village(JavaPlugin plugin) {
         this.plugin = plugin;
@@ -144,6 +144,7 @@ public final class Village implements CommandExecutor {
         minZ = Math.min(minZ, center.getBlockZ());
         maxZ = Math.max(maxZ, center.getBlockZ() + 3);
 
+        // Préparation pour la muraille et les zones extérieures (mine, champs, forêt, ranch)
         int zoneSize = 20;
         int gap = 5;
         int areaWidth = maxX - minX + 1;
@@ -160,22 +161,22 @@ public final class Village implements CommandExecutor {
         maxX = Math.max(maxX, eastX + zoneSize - 1);
         minZ = Math.min(minZ, northZ);
         maxZ = Math.max(maxZ, southZ + zoneSize - 1);
+
+        // Épaisseur du mur
         int wallThickness = 3;
         int wallMinX = minX - wallThickness;
         int wallMaxX = maxX + wallThickness;
         int wallMinZ = minZ - wallThickness;
         int wallMaxZ = maxZ + wallThickness;
 
-        // 1) Prépare la liste de toutes les actions de construction
-        // Dégage la zone et ajoute un sol d'herbe
+        // 1) Prépare les actions pour nettoyer le terrain et poser de l'herbe
         actions.addAll(prepareGroundActions(world, minX, maxX, minZ, maxZ, baseY));
 
         // 2) Ajoute la construction de la place centrale (puits + cloche)
-        actions.addAll(buildWellActions(world, center.clone().add(0,0,0)));
-        actions.add(() -> placeBell(world, center.clone().add(1,1,0)));
+        actions.addAll(buildWellActions(world, center.clone().add(0, 0, 0)));
+        actions.add(() -> placeBell(world, center.clone().add(1, 1, 0)));
 
         // 3) Génère les maisons en grille autour de la place
-
         for (int r = 0; r < rows; r++) {
             for (int c = 0; c < cols; c++) {
                 int hx = center.getBlockX() + offsetX + c * spacing;
@@ -217,13 +218,15 @@ public final class Village implements CommandExecutor {
         }
 
         // 4) Ajoute un PNJ sur la place
-        actions.add(() -> spawnVillager(world, center.clone().add(2,1,1), "Villageois"));
+        actions.add(() -> spawnVillager(world, center.clone().add(2, 1, 1), "Villageois"));
 
         // Spawners de golem aux extrémités
         actions.add(createSpawnerAction(world, minX, baseY + 1, minZ, EntityType.IRON_GOLEM));
         actions.add(createSpawnerAction(world, maxX, baseY + 1, minZ, EntityType.IRON_GOLEM));
         actions.add(createSpawnerAction(world, minX, baseY + 1, maxZ, EntityType.IRON_GOLEM));
         actions.add(createSpawnerAction(world, maxX, baseY + 1, maxZ, EntityType.IRON_GOLEM));
+
+        // Muraille autour du village
         actions.addAll(buildWallActions(world, wallMinX, wallMaxX, wallMinZ, wallMaxZ, baseY));
 
         // Spawners de golem au milieu de chaque côté
@@ -234,10 +237,10 @@ public final class Village implements CommandExecutor {
         actions.add(createSpawnerAction(world, minX, baseY + 1, midZ, EntityType.IRON_GOLEM));
         actions.add(createSpawnerAction(world, maxX, baseY + 1, midZ, EntityType.IRON_GOLEM));
 
-        // On pourrait enchaîner : marché, arbres, etc. … en ajoutant d'autres actions.
-
         // 5) Lance un scheduler qui place 200 blocs par tick
         buildActionsInBatches(actions, 200);
+
+        // Après un délai, on lance la création des zones de mine, champs, forêt, élevage...
         new BukkitRunnable() {
             @Override
             public void run() {
@@ -283,13 +286,16 @@ public final class Village implements CommandExecutor {
         placedBlocks.clear();
     }
 
-    /* ==========================================================
-        EXEMPLES DE FONCTIONS renvoyant des "actions"
-       (liste de Runnables) au lieu de placer tout de suite.
-       On stocke tout dans placedBlocks pour undo.
-     ========================================================== */
 
-    /** Construit un puits simple, renvoie la liste d'actions (Runnables). */
+    /* ==========================================================
+       EXEMPLES DE FONCTIONS renvoyant des "actions" (Runnables)
+       pour tout construire de manière asynchrone
+       + stockage pour undo.
+       ========================================================== */
+
+    /**
+     * Construit un puits simple, renvoie la liste d'actions (Runnables).
+     */
     private List<Runnable> buildWellActions(World world, Location origin) {
         List<Runnable> result = new ArrayList<>();
 
@@ -317,7 +323,7 @@ public final class Village implements CommandExecutor {
         }
 
         // Quatre spawners : 2 villageois, 2 golems
-        int[][] spawnerPos = {{1,1}, {2,1}, {1,2}, {2,2}};
+        int[][] spawnerPos = {{1, 1}, {2, 1}, {1, 2}, {2, 2}};
         EntityType[] types = {
                 EntityType.VILLAGER,
                 EntityType.VILLAGER,
@@ -327,15 +333,16 @@ public final class Village implements CommandExecutor {
         for (int i = 0; i < spawnerPos.length; i++) {
             int fx = ox + spawnerPos[i][0];
             int fz = oz + spawnerPos[i][1];
-            result.add(createSpawnerAction(world, fx, oy, fz, types[i]));
+            EntityType type = types[i];
+            result.add(createSpawnerAction(world, fx, oy, fz, type));
         }
         // Piliers cobblestone
         for (int dy = 1; dy <= 3; dy++) {
             final int Y = oy + dy;
             result.add(() -> setBlockTracked(world, ox,         Y, oz,         Material.COBBLESTONE));
-            result.add(() -> setBlockTracked(world, ox+size-1,  Y, oz,         Material.COBBLESTONE));
-            result.add(() -> setBlockTracked(world, ox,         Y, oz+size-1,  Material.COBBLESTONE));
-            result.add(() -> setBlockTracked(world, ox+size-1,  Y, oz+size-1,  Material.COBBLESTONE));
+            result.add(() -> setBlockTracked(world, ox + size - 1, Y, oz,         Material.COBBLESTONE));
+            result.add(() -> setBlockTracked(world, ox,         Y, oz + size - 1, Material.COBBLESTONE));
+            result.add(() -> setBlockTracked(world, ox + size - 1, Y, oz + size - 1, Material.COBBLESTONE));
         }
         // Toit (slab) au niveau 4
         int roofY = oy + 4;
@@ -360,7 +367,8 @@ public final class Village implements CommandExecutor {
     }
 
     /**
-     * Construit une maison “classique” (sans rotation).
+     * Construit une maison “classique” (non tournée).
+     * Variante de démonstration (non utilisée directement dans la grille).
      */
     private List<Runnable> buildHouseActions(World world,
                                              Location start,
@@ -379,8 +387,8 @@ public final class Village implements CommandExecutor {
             for (int z = 0; z < depth; z++) {
                 int fx = ox + x;
                 int fz = oz + z;
-                boolean edgeX = (x == 0 || x == width-1);
-                boolean edgeZ = (z == 0 || z == depth-1);
+                boolean edgeX = (x == 0 || x == width - 1);
+                boolean edgeZ = (z == 0 || z == depth - 1);
                 if (edgeX || edgeZ) {
                     for (int y = 0; y < wallHeight; y++) {
                         int fy = oy + 1 + y;
@@ -389,8 +397,8 @@ public final class Village implements CommandExecutor {
 
                         // Fenêtres simples au milieu des murs
                         boolean windowLayer = (y == 1);
-                        boolean frontBack = edgeZ && !corner && (x == 2 || x == width-3);
-                        boolean sides = edgeX && !corner && (z == 2 || z == depth-3);
+                        boolean frontBack = edgeZ && !corner && (x == 2 || x == width - 3);
+                        boolean sides = edgeX && !corner && (z == 2 || z == depth - 3);
                         if (windowLayer && (frontBack || sides)) {
                             result.add(() -> setBlockTracked(world, fx, fy, fz, Material.GLASS_PANE));
                         } else {
@@ -412,28 +420,28 @@ public final class Village implements CommandExecutor {
         }
 
         // Porte (devant => z=0)
-        int doorX = ox + width/2;
+        int doorX = ox + width / 2;
         int doorZ = oz;
-        result.add(() -> setBlockTracked(world, doorX, oy+1, doorZ, Material.OAK_DOOR));
-        result.add(() -> setBlockTracked(world, doorX, oy+2, doorZ, Material.OAK_DOOR));
+        result.add(() -> setBlockTracked(world, doorX, oy + 1, doorZ, Material.OAK_DOOR));
+        result.add(() -> setBlockTracked(world, doorX, oy + 2, doorZ, Material.OAK_DOOR));
 
         // Mobilier basique
-        result.add(() -> setBlockTracked(world, ox+2, oy+1, oz+2, Material.WHITE_BED));
-        result.add(() -> setBlockTracked(world, ox+width-3, oy+1, oz+2, Material.CRAFTING_TABLE));
-        result.add(() -> setBlockTracked(world, ox+width-3, oy+1, oz+depth-3, Material.CHEST));
-        result.add(() -> setBlockTracked(world, ox+2, oy+1, oz+depth-3, Material.FURNACE));
+        result.add(() -> setBlockTracked(world, ox + 2, oy + 1, oz + 2, Material.WHITE_BED));
+        result.add(() -> setBlockTracked(world, ox + width - 3, oy + 1, oz + 2, Material.CRAFTING_TABLE));
+        result.add(() -> setBlockTracked(world, ox + width - 3, oy + 1, oz + depth - 3, Material.CHEST));
+        result.add(() -> setBlockTracked(world, ox + 2, oy + 1, oz + depth - 3, Material.FURNACE));
 
         // Torches d'angle
-        int[][] torches = {{1,1}, {width-2,1}, {1,depth-2}, {width-2,depth-2}};
+        int[][] torches = {{1, 1}, {width - 2, 1}, {1, depth - 2}, {width - 2, depth - 2}};
         for (int[] t : torches) {
             int fx = ox + t[0];
             int fz = oz + t[1];
-            result.add(() -> setBlockTracked(world, fx, oy+1, fz, Material.TORCH));
+            result.add(() -> setBlockTracked(world, fx, oy + 1, fz, Material.TORCH));
         }
 
         // Spawner de villageois et golem
-        result.add(createSpawnerAction(world, ox + width/2, oy+1, oz + depth/2, EntityType.VILLAGER));
-        result.add(createSpawnerAction(world, ox + width/2, oy+1, oz -1, EntityType.IRON_GOLEM));
+        result.add(createSpawnerAction(world, ox + width / 2, oy + 1, oz + depth / 2, EntityType.VILLAGER));
+        result.add(createSpawnerAction(world, ox + width / 2, oy + 1, oz - 1, EntityType.IRON_GOLEM));
 
         // Toit en pignon
         int roofBaseY = oy + wallHeight + 1;
@@ -443,7 +451,7 @@ public final class Village implements CommandExecutor {
     }
 
     /**
-     * Construit une maison en la "tournant" de 90°, 180°, etc.
+     * Construit une maison “tournée” (90°, 180°, 270°).
      */
     private List<Runnable> buildHouseRotatedActions(World world,
                                                     Location start,
@@ -460,8 +468,8 @@ public final class Village implements CommandExecutor {
         // Murs avec fenêtres
         for (int dx = 0; dx < width; dx++) {
             for (int dz = 0; dz < depth; dz++) {
-                boolean edgeX = (dx == 0 || dx == width-1);
-                boolean edgeZ = (dz == 0 || dz == depth-1);
+                boolean edgeX = (dx == 0 || dx == width - 1);
+                boolean edgeZ = (dz == 0 || dz == depth - 1);
                 if (edgeX || edgeZ) {
                     for (int h = 0; h < wallHeight; h++) {
                         final int fy = oy + 1 + h;
@@ -471,8 +479,9 @@ public final class Village implements CommandExecutor {
                         final int fz = oz + rpos[1];
 
                         boolean windowLayer = (h == 1);
-                        boolean frontBack = edgeZ && !edgeX && (dx == 2 || dx == width-3);
-                        boolean sides = edgeX && !edgeZ && (dz == 2 || dz == depth-3);
+                        boolean frontBack = edgeZ && !edgeX && (dx == 2 || dx == width - 3);
+                        boolean sides = edgeX && !edgeZ && (dz == 2 || dz == depth - 3);
+
                         if (windowLayer && (frontBack || sides)) {
                             result.add(() -> setBlockTracked(world, fx, fy, fz, Material.GLASS_PANE));
                         } else {
@@ -499,61 +508,64 @@ public final class Village implements CommandExecutor {
         int[] dpos1 = rotateCoord(doorX, doorZ, rotationDegrees);
         final int rx1 = ox + dpos1[0];
         final int rz1 = oz + dpos1[1];
-        result.add(() -> setBlockTracked(world, rx1, oy+1, rz1, Material.OAK_DOOR));
-        result.add(() -> setBlockTracked(world, rx1, oy+2, rz1, Material.OAK_DOOR));
+        result.add(() -> setBlockTracked(world, rx1, oy + 1, rz1, Material.OAK_DOOR));
+        result.add(() -> setBlockTracked(world, rx1, oy + 2, rz1, Material.OAK_DOOR));
 
         // Mobilier
         int[] bedPos = rotateCoord(2, 2, rotationDegrees);
-        result.add(() -> setBlockTracked(world, ox + bedPos[0], oy+1, oz + bedPos[1], Material.WHITE_BED));
-        int[] tablePos = rotateCoord(width-3, 2, rotationDegrees);
-        result.add(() -> setBlockTracked(world, ox + tablePos[0], oy+1, oz + tablePos[1], Material.CRAFTING_TABLE));
-        int[] chestPos = rotateCoord(width-3, depth-3, rotationDegrees);
-        result.add(() -> setBlockTracked(world, ox + chestPos[0], oy+1, oz + chestPos[1], Material.CHEST));
+        result.add(() -> setBlockTracked(world, ox + bedPos[0], oy + 1, oz + bedPos[1], Material.WHITE_BED));
 
-        // Fourneau en vis-à-vis du lit
-        int[] furnacePos = rotateCoord(2, depth-3, rotationDegrees);
-        result.add(() -> setBlockTracked(world, ox + furnacePos[0], oy+1, oz + furnacePos[1], Material.FURNACE));
+        int[] tablePos = rotateCoord(width - 3, 2, rotationDegrees);
+        result.add(() -> setBlockTracked(world, ox + tablePos[0], oy + 1, oz + tablePos[1], Material.CRAFTING_TABLE));
+
+        int[] chestPos = rotateCoord(width - 3, depth - 3, rotationDegrees);
+        result.add(() -> setBlockTracked(world, ox + chestPos[0], oy + 1, oz + chestPos[1], Material.CHEST));
+
+        int[] furnacePos = rotateCoord(2, depth - 3, rotationDegrees);
+        result.add(() -> setBlockTracked(world, ox + furnacePos[0], oy + 1, oz + furnacePos[1], Material.FURNACE));
 
         // Torches d'angle pour éclairer l'intérieur
         int[][] torches = {
                 {1, 1},
-                {width-2, 1},
-                {1, depth-2},
-                {width-2, depth-2}
+                {width - 2, 1},
+                {1, depth - 2},
+                {width - 2, depth - 2}
         };
         for (int[] t : torches) {
             int[] tpos = rotateCoord(t[0], t[1], rotationDegrees);
             final int fx = ox + tpos[0];
             final int fz = oz + tpos[1];
-            result.add(() -> setBlockTracked(world, fx, oy+1, fz, Material.TORCH));
+            result.add(() -> setBlockTracked(world, fx, oy + 1, fz, Material.TORCH));
         }
 
         // Spawner de villageois au centre
-        int[] spawnPos = rotateCoord(width/2, depth/2, rotationDegrees);
-        result.add(createSpawnerAction(world, ox + spawnPos[0], oy+1, oz + spawnPos[1], EntityType.VILLAGER));
+        int[] spawnPos = rotateCoord(width / 2, depth / 2, rotationDegrees);
+        result.add(createSpawnerAction(world, ox + spawnPos[0], oy + 1, oz + spawnPos[1], EntityType.VILLAGER));
 
         // Spawner de golem devant la porte
-        int[] golemPos = rotateCoord(width/2, -1, rotationDegrees);
-        result.add(createSpawnerAction(world, ox + golemPos[0], oy+1, oz + golemPos[1], EntityType.IRON_GOLEM));
+        int[] golemPos = rotateCoord(width / 2, -1, rotationDegrees);
+        result.add(createSpawnerAction(world, ox + golemPos[0], oy + 1, oz + golemPos[1], EntityType.IRON_GOLEM));
 
-        // Toit
+        // Toit pignon “pivoté”
         int roofBaseY = oy + wallHeight + 1;
         result.addAll(buildPignonRoofActionsRotated(world, ox, oz, roofBaseY, width, depth, rotationDegrees));
 
         return result;
     }
 
-    /** Rotation 2D autour de (0,0). (x,z)->(z,-x) si angle=90°. */
+    /**
+     * Rotation 2D autour de (0,0). (x,z)->(z,-x) si angle=90°.
+     */
     private int[] rotateCoord(int dx, int dz, int angleDegrees) {
-        switch(angleDegrees) {
+        switch (angleDegrees) {
             case 90:
-                return new int[]{ dz, -dx };
+                return new int[]{dz, -dx};
             case 180:
-                return new int[]{ -dx, -dz };
+                return new int[]{-dx, -dz};
             case 270:
-                return new int[]{ -dz, dx };
+                return new int[]{-dz, dx};
             default:
-                return new int[]{ dx, dz };
+                return new int[]{dx, dz};
         }
     }
 
@@ -568,6 +580,7 @@ public final class Village implements CommandExecutor {
                                                   int depth) {
         List<Runnable> actions = new ArrayList<>();
         int layers = width / 2;
+
         for (int layer = 0; layer < layers; layer++) {
             final int y = startY + layer;
             int x1 = startX + layer;
@@ -590,8 +603,8 @@ public final class Village implements CommandExecutor {
                 actions.add(() -> placeBorderStair(w, fx, y, fz, BlockFace.SOUTH, leftCorner, rightCorner));
             }
             // Remplissage
-            for (int fx = x1+1; fx <= x2-1; fx++) {
-                for (int fz = z1+1; fz <= z2-1; fz++) {
+            for (int fx = x1 + 1; fx <= x2 - 1; fx++) {
+                for (int fz = z1 + 1; fz <= z2 - 1; fz++) {
                     final int X = fx, Z = fz;
                     actions.add(() -> setBlockTracked(w, X, y, Z, Material.SPRUCE_PLANKS));
                 }
@@ -611,6 +624,7 @@ public final class Village implements CommandExecutor {
                                                          int angleDeg) {
         List<Runnable> actions = new ArrayList<>();
         int layers = width / 2;
+
         for (int layer = 0; layer < layers; layer++) {
             final int Y = startY + layer;
             int x1 = layer;
@@ -639,8 +653,8 @@ public final class Village implements CommandExecutor {
                 actions.add(() -> placeBorderStair(w, fx, Y, fz, face, leftCorner, rightCorner));
             }
             // Remplissage
-            for (int xx = x1+1; xx <= x2-1; xx++) {
-                for (int zz = z1+1; zz <= z2-1; zz++) {
+            for (int xx = x1 + 1; xx <= x2 - 1; xx++) {
+                for (int zz = z1 + 1; zz <= z2 - 1; zz++) {
                     int[] rpos = rotateCoord(xx, zz, angleDeg);
                     final int fx = ox + rpos[0];
                     final int fz = oz + rpos[1];
@@ -663,7 +677,7 @@ public final class Village implements CommandExecutor {
                                   boolean cornerLeft,
                                   boolean cornerRight) {
         setBlockTracked(w, x, y, z, Material.SPRUCE_STAIRS);
-        Block b = w.getBlockAt(x,y,z);
+        Block b = w.getBlockAt(x, y, z);
         if (b.getType() != Material.SPRUCE_STAIRS) return;
 
         Stairs s = (Stairs) b.getBlockData();
@@ -677,7 +691,9 @@ public final class Village implements CommandExecutor {
         b.setBlockData(s, false);
     }
 
-    /** Gère la rotation du facing (ex. N->E->S->W). */
+    /**
+     * Gère la rotation du facing (ex. N->E->S->W).
+     */
     private BlockFace getRotatedFace(BlockFace original, int angleDeg) {
         List<BlockFace> cycle = Arrays.asList(
                 BlockFace.NORTH, BlockFace.EAST, BlockFace.SOUTH, BlockFace.WEST
@@ -691,7 +707,7 @@ public final class Village implements CommandExecutor {
 
     /**
      * Routes texturées : 60% GRAVEL, 25% DIRT_PATH, 15% COARSE_DIRT.
-     * On fait un simple chemin en L.
+     * On fait un simple chemin en L depuis (x0,z0) vers (x1,z1).
      */
     private List<Runnable> buildRoadActions(World w,
                                             int x0, int z0,
@@ -703,6 +719,8 @@ public final class Village implements CommandExecutor {
         int dx = (x1 >= x0) ? 1 : -1;
         int cx = x0;
         int step = 0;
+
+        // Chemin en X
         while (cx != x1) {
             for (int woff = -halfWidth; woff <= halfWidth; woff++) {
                 final int fx = cx;
@@ -716,6 +734,7 @@ public final class Village implements CommandExecutor {
             step++;
         }
 
+        // Chemin en Z
         int dz = (z1 >= z0) ? 1 : -1;
         int cz = z0;
         while (cz != z1) {
@@ -745,6 +764,9 @@ public final class Village implements CommandExecutor {
         return actions;
     }
 
+    /**
+     * Renvoie un matériau aléatoire pour la route (Gravel / Path / Coarse Dirt).
+     */
     private Material pickRoadMaterial(Random r) {
         int v = r.nextInt(100);
         if (v < 60) return Material.GRAVEL;
@@ -776,9 +798,11 @@ public final class Village implements CommandExecutor {
                 final int fx = x;
                 final int fz = z;
                 actions.add(() -> {
+                    // On vide 10 blocs de hauteur au-dessus
                     for (int h = 1; h <= 10; h++) {
                         w.getBlockAt(fx, baseY + h, fz).setType(Material.AIR, false);
                     }
+                    // On place un bloc d'herbe au sol
                     setBlockTracked(w, fx, baseY, fz, Material.GRASS_BLOCK);
                 });
             }
@@ -799,32 +823,25 @@ public final class Village implements CommandExecutor {
             wallMat = Material.COBBLESTONE_WALL; // fallback
         }
 
-        // Base
         Material finalWallMat = wallMat;
-        actions.add(() -> setBlockTracked(w, x,     y,     z, finalWallMat));
+        // Base
+        actions.add(() -> setBlockTracked(w, x, y, z, finalWallMat));
         // 2 maillons de chaîne
-        actions.add(() -> setBlockTracked(w, x,     y+1,   z, Material.CHAIN));
-        actions.add(() -> setBlockTracked(w, x,     y+2,   z, Material.CHAIN));
+        actions.add(() -> setBlockTracked(w, x, y + 1, z, Material.CHAIN));
+        actions.add(() -> setBlockTracked(w, x, y + 2, z, Material.CHAIN));
         // Lanterne tout en haut
-        actions.add(() -> setBlockTracked(w, x,     y+3,   z, Material.LANTERN));
+        actions.add(() -> setBlockTracked(w, x, y + 3, z, Material.LANTERN));
 
         // Spawner de villageois à la base du lampadaire
-        actions.add(createSpawnerAction(w, x, y+1, z, EntityType.VILLAGER));
+        actions.add(createSpawnerAction(w, x, y + 1, z, EntityType.VILLAGER));
 
         return actions;
     }
 
     /**
      * Crée une action plaçant un spawner configuré.
+     * (Version unique et corrigée)
      */
-    private Runnable createSpawnerAction(World w, int x, int y, int z, EntityType type) {
-        return () -> {
-            setBlockTracked(w, x, y, z, Material.SPAWNER);
-            Block b = w.getBlockAt(x, y, z);
-            if (b.getState() instanceof CreatureSpawner cs) {
-                cs.setSpawnedType(type);
-                cs.update();
-            }
     private Runnable createSpawnerAction(World w, int x, int y, int z, EntityType type) {
         return () -> {
             setBlockTracked(w, x, y, z, Material.SPAWNER);
@@ -839,49 +856,76 @@ public final class Village implements CommandExecutor {
     /**
      * Construit une muraille autour du village.
      */
+    private List<Runnable> buildWallActions(World w, int minX, int maxX, int minZ, int maxZ, int baseY) {
         List<Runnable> actions = new ArrayList<>();
+
         int thickness = 3;
         int height = 5;
         int outerMinX = minX - thickness;
         int outerMaxX = maxX + thickness;
         int outerMinZ = minZ - thickness;
         int outerMaxZ = maxZ + thickness;
+
+        // On définit une "entrée" (porte dans la muraille) côté Z max par exemple
         int entranceX = (minX + maxX) / 2;
         int entranceZ = outerMaxZ;
+
+        // On construit les murs (stone bricks) + dalle sur le dessus
         for (int x = outerMinX; x <= outerMaxX; x++) {
             for (int z = outerMinZ; z <= outerMaxZ; z++) {
-                boolean onWall = x <= minX || x >= maxX || z <= minZ || z >= maxZ;
+                boolean onWall = (x <= minX || x >= maxX || z <= minZ || z >= maxZ);
                 if (!onWall) continue;
-                if (z == entranceZ && x >= entranceX - 1 && x <= entranceX + 1) continue;
+
+                // On laisse un passage (porte)
+                if (z == entranceZ && x >= entranceX - 1 && x <= entranceX + 1) {
+                    continue;
+                }
+
+                // On monte un mur de 5 blocs de haut
                 for (int y = 1; y <= height; y++) {
                     final int fx = x, fy = baseY + y, fz = z;
                     actions.add(() -> setBlockTracked(w, fx, fy, fz, Material.STONE_BRICKS));
                 }
+                // On place une dalle tout en haut
                 final int topY = baseY + height;
                 final int fx2 = x, fz2 = z;
                 actions.add(() -> setBlockTracked(w, fx2, topY, fz2, Material.STONE_BRICK_SLAB));
             }
         }
+
+        // On peut accessoiriser l'extérieur (murs décoratifs, torches, etc.)
+        // Par exemple, ajouter des "créneaux" ou des torches
         for (int x = outerMinX; x <= outerMaxX; x++) {
             for (int z = outerMinZ; z <= outerMaxZ; z++) {
-                boolean outerEdge = x == outerMinX || x == outerMaxX || z == outerMinZ || z == outerMaxZ;
+                boolean outerEdge = (x == outerMinX || x == outerMaxX || z == outerMinZ || z == outerMaxZ);
                 if (!outerEdge) continue;
-                if (z == entranceZ && x >= entranceX - 1 && x <= entranceX + 1) continue;
+
+                // Même exception pour la porte
+                if (z == entranceZ && x >= entranceX - 1 && x <= entranceX + 1) {
+                    continue;
+                }
+
+                // On place un mur décoratif un bloc plus haut + torche un bloc au-dessus
                 if ((x + z) % 2 == 0) {
-                    final int fy = baseY + height + 1;
                     final int fx = x, fz = z;
+                    final int fy = baseY + height + 1;
                     actions.add(() -> setBlockTracked(w, fx, fy, fz, Material.STONE_BRICK_WALL));
+
+                    // Une torche une fois sur deux
                     if ((x + z) % 4 == 0) {
                         actions.add(() -> setBlockTracked(w, fx, fy + 1, fz, Material.TORCH));
                     }
                 }
             }
         }
+
+        // On place un spawner de golem à l'entrée
         actions.add(createSpawnerAction(w, entranceX, baseY + 1, entranceZ - 1, EntityType.IRON_GOLEM));
+
         return actions;
     }
-    /**
 
+    /**
      * Fait spawn un PNJ villageois (ex: un vendeur ou habitant).
      */
     private void spawnVillager(World w, Location loc, String name) {
