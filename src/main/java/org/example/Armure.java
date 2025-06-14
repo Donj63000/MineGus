@@ -240,7 +240,7 @@ public final class Armure implements CommandExecutor, Listener {
                 wolf.setOwner(player);
                 wolf.setCustomName(ChatColor.RED + "Garde du Roi");
                 wolf.setAdult();
-                wolf.getAttribute(Attribute.ARMOR).setBaseValue(40.0);
+                wolf.getAttribute(Attribute.GENERIC_ARMOR).setBaseValue(40.0);
                 wolf.setHealth(40.0);
                 wolf.setCollarColor(DyeColor.RED);
 
