@@ -110,8 +110,8 @@ public final class Armure implements CommandExecutor, Listener {
             meta.setDisplayName(customName);
 
             // Enchantements normalisés
-            meta.addEnchant(Enchantment.PROTECTION, 4, true);
-            meta.addEnchant(Enchantment.DENSITY, 3, true); // Unbreaking
+            meta.addEnchant(Enchantment.PROTECTION_ENVIRONMENTAL, 4, true);
+            meta.addEnchant(Enchantment.DURABILITY, 3, true); // Unbreaking
             meta.addEnchant(Enchantment.MENDING, 1, true);
 
             item.setItemMeta(meta);
