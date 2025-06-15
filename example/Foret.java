@@ -34,6 +34,7 @@ public final class Foret implements CommandExecutor, Listener {
     private static final String FORET_SELECTOR_NAME = ChatColor.GOLD + "Sélecteur de forêt";
     private static final int    MAILLAGE_SAPLINGS   = 6;   // espacement
     private static final int    FOREST_HEIGHT       = 24;  // y‑max
+    // 26 piles de 64 => on garde toujours un emplacement vide
     private static final int    MAX_PER_CHEST       = 26 * 64;
 
     private static final List<Material> SAPLINGS = List.of(
@@ -481,7 +482,7 @@ public final class Foret implements CommandExecutor, Listener {
                 while (!stored && tries < chests.size()) {
                     Chest c = (Chest) cycle.next().getState();
                     tries++;
-                    if (!isFull(c) && c.getInventory().getViewers().size() < MAX_PER_CHEST) {
+                    if (hasSpace(c.getInventory(), it)) {
                         c.getInventory().addItem(it);
                         stored = true;
                     }
@@ -493,9 +494,24 @@ public final class Foret implements CommandExecutor, Listener {
             }
         }
 
-        private static boolean isFull(Chest c) {
-            return Arrays.stream(c.getInventory().getStorageContents())
-                    .allMatch(Objects::nonNull);
+        /**
+         * Calcule la place restante et vérifie qu'il reste moins de
+         * {@link #MAX_PER_CHEST} items après l'ajout (26 piles de 64).
+         */
+        private static boolean hasSpace(Inventory inv, ItemStack item) {
+            int current = Arrays.stream(inv.getStorageContents())
+                    .filter(Objects::nonNull)
+                    .mapToInt(ItemStack::getAmount)
+                    .sum();
+            if (current + item.getAmount() > MAX_PER_CHEST) return false;
+
+            if (inv.firstEmpty() != -1) return true;
+            for (ItemStack stack : inv.getStorageContents()) {
+                if (stack != null && stack.isSimilar(item) && stack.getAmount() < stack.getMaxStackSize()) {
+                    return true;
+                }
+            }
+            return false;
         }
 
         private static final int MAX_RACK_HEIGHT = 6;
