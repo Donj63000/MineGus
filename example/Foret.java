@@ -265,6 +265,8 @@ public final class Foret implements CommandExecutor, Listener {
         private Villager forester;
         private final List<IronGolem> golems = new ArrayList<>();
         private BukkitRunnable loop;
+        private Chunk loadedChunk;
+        private Location jobSite;
 
         ForestSession(World w, Location origin, int width, int length) {
             this.w = w;
@@ -277,6 +279,8 @@ public final class Foret implements CommandExecutor, Listener {
 
         /* ---------- cycle de vie ---------- */
         void start() {
+            loadedChunk = w.getChunkAt(x0 + width / 2, z0 + length / 2);
+            loadedChunk.setForceLoaded(true);
             buildFrameGround();
             placeSaplings();
             createChests();
@@ -288,6 +292,7 @@ public final class Foret implements CommandExecutor, Listener {
             if (loop != null) loop.cancel();
             if (forester != null) forester.remove();
             golems.forEach(Entity::remove);
+            if (loadedChunk != null) loadedChunk.setForceLoaded(false);
         }
 
         /* ---------- helpers structure ---------- */
@@ -336,8 +341,9 @@ public final class Foret implements CommandExecutor, Listener {
 
         /* ---------- entités ---------- */
         private void spawnEntities() {
-            forester = (Villager) w.spawnEntity(
-                    new Location(w, x0 + width / 2.0, y0 + 1, z0 + length / 2.0),
+            jobSite = new Location(w, x0 + width / 2.0, y0, z0 + length / 2.0);
+            w.getBlockAt(jobSite).setType(Material.FLETCHING_TABLE);
+            forester = (Villager) w.spawnEntity(jobSite.clone().add(0.5, 1, 0.5),
                     EntityType.VILLAGER);
             forester.setCustomName("Forestier");
             forester.setCustomNameVisible(true);
@@ -375,6 +381,16 @@ public final class Foret implements CommandExecutor, Listener {
                 public void run() {
                     if (forester == null || forester.isDead()) spawnEntities();
                     golems.removeIf(Entity::isDead);
+
+                    if (forester != null) {
+                        double d2 = forester.getLocation().distanceSquared(jobSite.clone().add(0.5,1,0.5));
+                        if (d2 > 36) {
+                            forester.setAI(false);
+                            forester.teleport(jobSite.clone().add(0.5, 1, 0.5));
+                        } else if (!forester.hasAI()) {
+                            forester.setAI(true);
+                        }
+                    }
 
                     if (!bfs.isEmpty() || replant != null) {
                         processHarvest();
@@ -420,7 +436,18 @@ public final class Foret implements CommandExecutor, Listener {
                 Collection<ItemStack> drops = b.getDrops();
                 b.setType(Material.AIR);
 
-                deposit(new ArrayList<>(drops));
+                List<ItemStack> list = new ArrayList<>();
+                int bone = 0;
+                for (ItemStack it : drops) {
+                    if (it.getType().name().endsWith("_LEAVES")) {
+                        bone += it.getAmount() / 8;
+                    } else {
+                        list.add(it);
+                    }
+                }
+                if (bone > 0) list.add(new ItemStack(Material.BONE_MEAL, bone));
+
+                deposit(list);
                 if (forester != null && !forester.isDead())
                     forester.teleport(b.getLocation().add(0.5, 1, 0.5));
             } else if (replant != null) {
@@ -454,18 +481,34 @@ public final class Foret implements CommandExecutor, Listener {
                 while (!stored && tries < chests.size()) {
                     Chest c = (Chest) cycle.next().getState();
                     tries++;
-                    if (c.getInventory().firstEmpty() != -1
-                            && c.getInventory().getViewers().size() < MAX_PER_CHEST) {
+                    if (!isFull(c) && c.getInventory().getViewers().size() < MAX_PER_CHEST) {
                         c.getInventory().addItem(it);
                         stored = true;
                     }
                 }
-                if (!stored) { // débordement : nouveau coffre
-                    int nx = x0 + width + 3, nz = z0 - 2;
-                    set(nx, y0, nz, Material.CHEST);
-                    Block nb = w.getBlockAt(nx, y0, nz);
-                    chests.add(nb);
-                    ((Chest) nb.getState()).getInventory().addItem(it);
+                if (!stored) {
+                    expandStorageRack();
+                    ((Chest) chests.get(chests.size() - 1).getState()).getInventory().addItem(it);
+                }
+            }
+        }
+
+        private static boolean isFull(Chest c) {
+            return Arrays.stream(c.getInventory().getStorageContents())
+                    .allMatch(Objects::nonNull);
+        }
+
+        private static final int MAX_RACK_HEIGHT = 6;
+
+        private void expandStorageRack() {
+            Block base = chests.get(0);
+            int x = base.getX(), z = base.getZ();
+            for (int dy = 1; dy <= MAX_RACK_HEIGHT; dy++) {
+                Block target = w.getBlockAt(x, base.getY() + dy, z);
+                if (target.getType() == Material.AIR) {
+                    target.setType(Material.CHEST);
+                    chests.add(target);
+                    return;
                 }
             }
         }
