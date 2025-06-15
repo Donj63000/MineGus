@@ -35,6 +35,8 @@ public final class Foret implements CommandExecutor, Listener {
     private static final int    MAILLAGE_SAPLINGS   = 6;   // espacement
     private static final int    FOREST_HEIGHT       = 24;  // y‑max
     private static final int    MAX_PER_CHEST       = 26 * 64;
+    private static final int    MAX_QUEUE          = 2048;
+    private static final int    MAX_NODES_PER_TICK = 20;
 
     private static final List<Material> SAPLINGS = List.of(
             Material.OAK_SAPLING, Material.BIRCH_SAPLING, Material.SPRUCE_SAPLING,
@@ -428,10 +430,14 @@ public final class Foret implements CommandExecutor, Listener {
                     q.add(b.getRelative(d[0], d[1], d[2]));
                 }
             }
+            if (bfs.size() > MAX_QUEUE) {
+                plugin.getLogger().warning("[Foret] File d'attente > " + MAX_QUEUE);
+            }
         }
 
         private void processHarvest() {
-            if (!bfs.isEmpty()) {
+            int processed = 0;
+            while (processed < MAX_NODES_PER_TICK && !bfs.isEmpty()) {
                 Block b = bfs.poll();
                 Collection<ItemStack> drops = b.getDrops();
                 b.setType(Material.AIR);
@@ -450,7 +456,10 @@ public final class Foret implements CommandExecutor, Listener {
                 deposit(list);
                 if (forester != null && !forester.isDead())
                     forester.teleport(b.getLocation().add(0.5, 1, 0.5));
-            } else if (replant != null) {
+                processed++;
+            }
+
+            if (bfs.isEmpty() && replant != null) {
                 replant.setType(randomSapling());
                 replant = null;
             }
