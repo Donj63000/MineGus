@@ -13,14 +13,14 @@ Ce mod est actuellement en bêta et continuera d'évoluer. Il est développé pa
 
 1. Clonez ce dépôt puis placez-vous à la racine du projet.
 2. Exécutez `mvn clean package`.
-   - Le fichier `target/MinePlugin.jar` est alors généré.
+   - Le fichier `target/MineGus-1.1-SNAPSHOT.jar` est alors généré.
    - Vous pouvez aussi lancer `mvn clean package -P export-to-server` pour copier automatiquement l'artefact dans le dossier `plugins` défini dans `pom.xml`.
 
 ## Installation du plugin (.jar)
 
-1. Récupérez le fichier `MinePlugin.jar` (généré à l'étape précédente ou fourni dans les releases).
+1. Récupérez le fichier `MineGus-1.1-SNAPSHOT.jar` (généré à l'étape précédente ou fourni dans les releases).
 2. Copiez ce fichier dans le dossier `plugins/` de votre serveur Paper.
-   - Exemple : `/home/user/paper/plugins/MinePlugin.jar`.
+   - Exemple : `/home/user/paper/plugins/MineGus-1.1-SNAPSHOT.jar`.
 3. Lancez ou redémarrez le serveur.
 4. Vérifiez la présence du plugin à l'aide de la commande `/plugins`.
 5. Lors du premier démarrage, un dossier `plugins/MinePlugin/` est créé pour stocker les données et configurations.
