@@ -1,46 +1,61 @@
-<!-- MockBukkit 1.20 R4 (2.46.0) + Paper 1.20.6 -->
-<project …>
-<properties>
-<java.version>17</java.version>
-<paper.api.version>1.20.6-R0.1-SNAPSHOT</paper.api.version>
-</properties>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
 
-<repositories>
-<repository>
-    <id>papermc</id>
-    <url>https://repo.papermc.io/repository/maven-public/</url>
-</repository>
-<repository>
-    <id>central</id>
-    <url>https://repo1.maven.org/maven2/</url>
-</repository>
-</repositories>
+    <groupId>org.example</groupId>
+    <artifactId>MineGus</artifactId>
+    <version>1.1-SNAPSHOT</version>
 
-<dependencies>
-<!-- Paper -->
-<dependency>
-    <groupId>io.papermc.paper</groupId>
-    <artifactId>paper-api</artifactId>
-    <version>${paper.api.version}</version>
-    <scope>provided</scope>
-</dependency>
+    <properties>
+        <java.version>17</java.version>
+        <paper.api.version>1.20.4-R0.1-SNAPSHOT</paper.api.version>
+    </properties>
 
-<!-- JUnit 5 -->
-<dependency>
-    <groupId>org.junit.jupiter</groupId>
-    <artifactId>junit-jupiter</artifactId>
-    <version>5.10.2</version>
-    <scope>test</scope>
-</dependency>
+    <repositories>
+        <repository>
+            <id>papermc</id>
+            <url>https://repo.papermc.io/repository/maven-public/</url>
+        </repository>
+    </repositories>
 
-<!-- MockBukkit R4 -->
-<dependency>
-    <groupId>io.github.seeseemelk.mockbukkit</groupId>
-    <artifactId>mockbukkit-v1_20_R4</artifactId>
-    <version>2.46.0</version>
-    <scope>test</scope>
-</dependency>
-</dependencies>
+    <dependencies>
+        <dependency>
+            <groupId>io.papermc.paper</groupId>
+            <artifactId>paper-api</artifactId>
+            <version>${paper.api.version}</version>
+            <scope>provided</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <version>5.10.2</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.github.seeseemelk.mockbukkit</groupId>
+            <artifactId>mockbukkit-v1_20_R3</artifactId>
+            <version>2.46.0</version>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
 
-        <!-- build/plugins identiques à ton fichier -->
-        </project>
+    <build>
+        <finalName>MineGus-${project.version}</finalName>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <version>3.10.1</version>
+                <configuration>
+                    <source>${java.version}</source>
+                    <target>${java.version}</target>
+                </configuration>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <version>3.0.0-M5</version>
+            </plugin>
+        </plugins>
+    </build>
+</project>
