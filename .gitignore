@@ -1,2 +1,5 @@
 /MinePlugin.jar
 /target/
+
+*.iml
+.idea/
