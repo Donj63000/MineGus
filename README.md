@@ -2,6 +2,7 @@
 
 Ce dépôt contient un plugin Paper pour Minecraft 1.21.x permettant d'automatiser diverses tâches (minage, agriculture, forêt, élevage, etc.).
 Ce mod est actuellement en bêta et continuera d'évoluer. Il est développé par un seul développeur amateur qui prend son temps. Pour l'instant, il est surtout destiné aux petits serveurs entre amis.
+Ce plugin est expérimental et n'est pas stable.
 
 ## Prérequis
 
