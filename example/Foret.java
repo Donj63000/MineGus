@@ -1,10 +1,6 @@
 package org.example;
 
-import org.bukkit.Bukkit;
-import org.bukkit.ChatColor;
-import org.bukkit.Location;
-import org.bukkit.Material;
-import org.bukkit.World;
+import org.bukkit.*;
 import org.bukkit.block.Block;
 import org.bukkit.block.Chest;
 import org.bukkit.command.Command;
@@ -12,17 +8,15 @@ import org.bukkit.command.CommandExecutor;
 import org.bukkit.command.CommandSender;
 import org.bukkit.configuration.ConfigurationSection;
 import org.bukkit.configuration.file.YamlConfiguration;
-import org.bukkit.entity.EntityType;
-import org.bukkit.entity.Player;
-import org.bukkit.entity.Villager;
+import org.bukkit.entity.*;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
 import org.bukkit.event.block.BlockBreakEvent;
 import org.bukkit.event.player.PlayerInteractEvent;
 import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.ItemStack;
-import org.bukkit.inventory.meta.ItemMeta;
 import org.bukkit.inventory.MerchantRecipe;
+import org.bukkit.inventory.meta.ItemMeta;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.bukkit.scheduler.BukkitRunnable;
 
@@ -31,728 +25,515 @@ import java.io.IOException;
 import java.util.*;
 
 /**
- * Commande /foret :
- *  1) Le joueur reçoit un bâton "Sélecteur de forêt".
- *  2) Il clique 2 blocs (à la même hauteur) pour définir la zone.
- *  3) Le plugin crée une session forestière (cadre, coffres, PNJ "Forestier", 2 golems).
- *  4) Les arbres poussent (en vanilla). Dès qu'un sapling se transforme en LOG/LEAVES, on le récolte (BFS).
- *  5) On replante automatiquement un sapling à l'emplacement d'origine.
- *  6) Si tous les coffres sont cassés, la forêt n'est plus active (PNJ et golems disparaissent).
- *  7) Persistance complète dans forests.yml (y compris la file BFS).
+ * /foret : micro‑forêt automatisée (cadre, saplings, PNJ, golems, récolte BFS…).
+ * Version juin 2025 : maillage ajustable, coffres dynamiques et API rétro‑compatible.
  */
 public final class Foret implements CommandExecutor, Listener {
 
+    /* ══════════════════════ CONSTANTES ══════════════════════ */
     private static final String FORET_SELECTOR_NAME = ChatColor.GOLD + "Sélecteur de forêt";
+    private static final int    MAILLAGE_SAPLINGS   = 6;   // espacement
+    private static final int    FOREST_HEIGHT       = 24;  // y‑max
+    private static final int    MAX_PER_CHEST       = 26 * 64;
+
+    private static final List<Material> SAPLINGS = List.of(
+            Material.OAK_SAPLING, Material.BIRCH_SAPLING, Material.SPRUCE_SAPLING,
+            Material.JUNGLE_SAPLING, Material.ACACIA_SAPLING, Material.DARK_OAK_SAPLING
+    );
+    /* ════════════════════════════════════════════════════════ */
 
     private final JavaPlugin plugin;
 
-    // Liste de toutes les sessions actives
+    /* sélection par joueur */
+    private final Map<UUID, Selection> selections = new HashMap<>();
+
+    /* sessions actives */
     private final List<ForestSession> sessions = new ArrayList<>();
 
-    // Fichier forests.yml (persistance)
+    /* persistance */
     private final File forestsFile;
     private final YamlConfiguration forestsYaml;
 
-    // Sélections en cours : joueur -> 2 corners
-    private final Map<UUID, Selection> selections = new HashMap<>();
-
+    /* ───────────────────── constructeur ───────────────────── */
     public Foret(JavaPlugin plugin) {
         this.plugin = plugin;
 
-        // Lier la commande /foret
-        if (plugin.getCommand("foret") != null) {
-            plugin.getCommand("foret").setExecutor(this);
-        }
-
-        // Enregistrer l'écoute des events (clic, blockbreak)
+        Objects.requireNonNull(plugin.getCommand("foret")).setExecutor(this);
         Bukkit.getPluginManager().registerEvents(this, plugin);
 
-        // Charger/ouvrir forests.yml
-        this.forestsFile = new File(plugin.getDataFolder(), "forests.yml");
-        this.forestsYaml = YamlConfiguration.loadConfiguration(forestsFile);
+        forestsFile = new File(plugin.getDataFolder(), "forests.yml");
+        forestsYaml = YamlConfiguration.loadConfiguration(forestsFile);
     }
 
-    /* ========================================================= */
-    /*                GESTION DE LA COMMANDE /foret              */
-    /* ========================================================= */
+    /* ══════════════════ COMMANDE /foret ══════════════════ */
     @Override
-    public boolean onCommand(CommandSender sender, Command cmd, String label, String[] args) {
-        if (!(sender instanceof Player player)) {
+    public boolean onCommand(CommandSender sender, Command cmd,
+                             String lbl, String[] args) {
+
+        if (!(sender instanceof Player p)) {
             sender.sendMessage(ChatColor.RED + "Commande réservée aux joueurs.");
             return true;
         }
 
-        if (!cmd.getName().equalsIgnoreCase("foret")) {
-            return false;
-        }
-
-        // Donne le bâton spécial
-        giveForetSelector(player);
-
-        // Initialise la sélection
-        selections.put(player.getUniqueId(), new Selection());
-
-        player.sendMessage(ChatColor.GREEN + "Tu as reçu le bâton de sélection de forêt !");
-        player.sendMessage(ChatColor.YELLOW + "Clique 2 blocs (même hauteur) avec ce bâton pour définir la zone.");
+        giveSelector(p);
+        selections.put(p.getUniqueId(), new Selection());
+        p.sendMessage(ChatColor.GREEN + "Sélectionne deux blocs (même Y) avec le bâton.");
         return true;
     }
 
-    /**
-     * Donne un bâton nommé "Sélecteur de forêt" au joueur.
-     */
-    private void giveForetSelector(Player player) {
-        ItemStack stick = new ItemStack(Material.STICK, 1);
-        ItemMeta meta = stick.getItemMeta();
-        if (meta != null) {
-            meta.setDisplayName(FORET_SELECTOR_NAME);
-            stick.setItemMeta(meta);
-        }
-        player.getInventory().addItem(stick);
+    private void giveSelector(Player p) {
+        ItemStack stick = new ItemStack(Material.STICK);
+        ItemMeta m = stick.getItemMeta();
+        m.setDisplayName(FORET_SELECTOR_NAME);
+        stick.setItemMeta(m);
+        p.getInventory().addItem(stick);
     }
 
-    /* ========================================================= */
-    /*         ÉCOUTE DES CLICS (PlayerInteractEvent)            */
-    /* ========================================================= */
+    /* ═════════════════════ EVENTS ═════════════════════ */
+
     @EventHandler
-    public void onPlayerInteract(PlayerInteractEvent event) {
-        if (event.getAction() != org.bukkit.event.block.Action.LEFT_CLICK_BLOCK
-                && event.getAction() != org.bukkit.event.block.Action.RIGHT_CLICK_BLOCK) {
+    public void onPlayerInteract(PlayerInteractEvent e) {
+        if (e.getClickedBlock() == null) return;
+        ItemStack item = e.getItem();
+        if (item == null || !item.hasItemMeta()
+                || !FORET_SELECTOR_NAME.equals(item.getItemMeta().getDisplayName()))
             return;
-        }
 
-        Player player = event.getPlayer();
-        ItemStack inHand = event.getItem();
-        Block clicked = event.getClickedBlock();
+        e.setCancelled(true);                                   // pas de casse/pose
 
-        // Vérifie bâton "Sélecteur de forêt"
-        if (inHand == null || inHand.getType() != Material.STICK) {
-            return;
-        }
-        if (!inHand.hasItemMeta()) {
-            return;
-        }
-        if (!FORET_SELECTOR_NAME.equals(inHand.getItemMeta().getDisplayName())) {
-            return;
-        }
-        if (clicked == null) {
-            return;
-        }
-
-        // Empêcher l'action par défaut
-        event.setCancelled(true);
-
-        // Récupère la sélection du joueur
-        Selection sel = selections.get(player.getUniqueId());
+        Player     p   = e.getPlayer();
+        Selection  sel = selections.get(p.getUniqueId());
         if (sel == null) {
-            player.sendMessage(ChatColor.RED + "Refais /foret pour obtenir le bâton de sélection !");
+            p.sendMessage(ChatColor.RED + "Refais /foret pour commencer une sélection.");
             return;
         }
 
-        // coin1 ou coin2 ?
         if (sel.corner1 == null) {
-            sel.corner1 = clicked;
-            player.sendMessage(ChatColor.AQUA + "Coin 1 sélectionné : " + coords(clicked));
+            sel.corner1 = e.getClickedBlock();
+            p.sendMessage(ChatColor.AQUA + "Coin 1 : " + coord(sel.corner1));
         } else if (sel.corner2 == null) {
-            sel.corner2 = clicked;
-            player.sendMessage(ChatColor.AQUA + "Coin 2 sélectionné : " + coords(clicked));
-
-            // On valide
-            validateSelection(player, sel);
+            sel.corner2 = e.getClickedBlock();
+            p.sendMessage(ChatColor.AQUA + "Coin 2 : " + coord(sel.corner2));
+            validateAndCreate(p, sel);
         } else {
-            // Redéfinir corner1
-            sel.corner1 = clicked;
+            sel.corner1 = e.getClickedBlock();
             sel.corner2 = null;
-            player.sendMessage(ChatColor.AQUA + "Coin 1 redéfini : " + coords(clicked));
+            p.sendMessage(ChatColor.AQUA + "Coin 1 redéfini : " + coord(sel.corner1));
         }
     }
 
-    private String coords(Block b) {
-        return "(" + b.getX() + ", " + b.getY() + ", " + b.getZ() + ")";
-    }
-
-    /**
-     * Vérifie que corner1 et corner2 ont la même Y,
-     * puis crée la ForestSession correspondante.
-     */
-    private void validateSelection(Player player, Selection sel) {
-        if (sel.corner1 == null || sel.corner2 == null) {
-            return;
-        }
-        Block c1 = sel.corner1;
-        Block c2 = sel.corner2;
-
-        if (c1.getY() != c2.getY()) {
-            player.sendMessage(ChatColor.RED + "Les deux blocs doivent être à la même hauteur (Y) !");
-            sel.corner2 = null;
-            return;
-        }
-
-        // Détermine la zone
-        World w = c1.getWorld();
-        int y = c1.getY();
-        int x1 = c1.getX(), x2 = c2.getX();
-        int z1 = c1.getZ(), z2 = c2.getZ();
-
-        int minX = Math.min(x1, x2);
-        int maxX = Math.max(x1, x2);
-        int minZ = Math.min(z1, z2);
-        int maxZ = Math.max(z1, z2);
-
-        int width  = (maxX - minX) + 1;
-        int length = (maxZ - minZ) + 1;
-
-        Location origin = new Location(w, minX, y, minZ);
-
-        // Crée la session
-        ForestSession fs = new ForestSession(plugin, origin, width, length);
-        fs.start();
-        sessions.add(fs);
-
-        player.sendMessage(ChatColor.GREEN + "Forêt créée (" + width + "×" + length + ") !");
-        saveAllSessions();
-
-        // Nettoie la sélection
-        selections.remove(player.getUniqueId());
-    }
-
-    /* ========================================================= */
-    /*      GESTION DU CASSAGE DE BLOCS (BlockBreakEvent)        */
-    /* ========================================================= */
     @EventHandler
-    public void onBlockBreak(BlockBreakEvent event) {
-        Block block = event.getBlock();
-
-        // S'il s'agit d'un coffre d'une session, on le retire
+    public void onBlockBreak(BlockBreakEvent e) {
+        Block b = e.getBlock();
         for (ForestSession fs : new ArrayList<>(sessions)) {
-            if (fs.isChestBlock(block)) {
-                fs.removeChest(block);
-                // S'il n'y a plus de coffres => on arrête la session
-                if (!fs.hasChests()) {
-                    fs.stop();
-                    sessions.remove(fs);
-                    saveAllSessions();
-                }
-                break;
+
+            if (fs.isProtectedStructure(b)) {           // cadre/lanternes/coffres
+                e.setCancelled(true);
+                return;
+            }
+
+            if (fs.removeChestIfMatch(b) && !fs.hasChests()) {
+                fs.stop();
+                sessions.remove(fs);
+                saveSessions();                         // persistance
             }
         }
     }
 
-    /* ========================================================= */
-    /*                      PERSISTANCE                          */
-    /* ========================================================= */
-    public void saveAllSessions() {
+    /* ═════════════════ VALIDATION ZONE ═════════════════ */
+    private void validateAndCreate(Player p, Selection sel) {
+
+        if (sel.corner1.getY() != sel.corner2.getY()) {
+            p.sendMessage(ChatColor.RED + "Les deux blocs doivent avoir la même hauteur (Y).");
+            sel.corner2 = null;
+            return;
+        }
+
+        World w  = sel.corner1.getWorld();
+        int   y  = sel.corner1.getY();
+        int   x1 = sel.corner1.getX(), x2 = sel.corner2.getX();
+        int   z1 = sel.corner1.getZ(), z2 = sel.corner2.getZ();
+        int   minX = Math.min(x1, x2), maxX = Math.max(x1, x2);
+        int   minZ = Math.min(z1, z2), maxZ = Math.max(z1, z2);
+
+        ForestSession fs = new ForestSession(
+                w, new Location(w, minX, y, minZ),
+                maxX - minX + 1, maxZ - minZ + 1);
+
+        fs.start();
+        sessions.add(fs);
+        saveSessions();
+
+        p.sendMessage(ChatColor.GREEN + "Forêt créée ! (" + fs.width + "×" + fs.length + ")");
+        selections.remove(p.getUniqueId());
+    }
+
+    /* ══════════════════ PERSISTENCE (interne) ══════════════════ */
+    private void saveSessions() {
         forestsYaml.set("forests", null);
         int i = 0;
-        for (ForestSession fs : sessions) {
-            forestsYaml.createSection("forests." + i, fs.toMap());
-            i++;
-        }
+        for (ForestSession fs : sessions)
+            forestsYaml.createSection("forests." + i++, fs.serialize());
+
         try {
             forestsYaml.save(forestsFile);
-        } catch (IOException e) {
-            e.printStackTrace();
-            plugin.getLogger().severe("[Foret] Impossible de sauvegarder forests.yml !");
+        } catch (IOException ex) {
+            plugin.getLogger().severe("[Foret] Erreur de sauvegarde forests.yml");
+            ex.printStackTrace();
         }
     }
 
-    public void loadSavedSessions() {
+    private void loadSessions() {
         ConfigurationSection root = forestsYaml.getConfigurationSection("forests");
         if (root == null) return;
 
-        int loaded = 0;
+        int restored = 0;
         for (String key : root.getKeys(false)) {
             ConfigurationSection sec = root.getConfigurationSection(key);
             if (sec == null) continue;
 
-            // Monde
-            String worldUID = sec.getString("world", "");
-            World w = Bukkit.getWorld(UUID.fromString(worldUID));
-            if (w == null) {
-                plugin.getLogger().warning("[Foret] Monde introuvable : " + worldUID);
-                continue;
-            }
+            World w = Bukkit.getWorld(UUID.fromString(sec.getString("world", "")));
+            if (w == null) continue;
 
-            int bx = sec.getInt("x");
-            int by = sec.getInt("y");
-            int bz = sec.getInt("z");
-            int width  = sec.getInt("width");
-            int length = sec.getInt("length");
+            int x = sec.getInt("x"), y = sec.getInt("y"), z = sec.getInt("z");
+            int width = sec.getInt("width"), length = sec.getInt("length");
 
-            // Création
-            Location origin = new Location(w, bx, by, bz);
-            clearZone(origin, width, length,
-                    List.of("Forestier", "Golem Forestier"));
+            ForestSession fs = new ForestSession(
+                    w, new Location(w, x, y, z), width, length);
 
-            ForestSession fs = new ForestSession(plugin, origin, width, length);
-
-            // BFS (harvestQueue)
-            List<String> harvestList = sec.getStringList("harvestQueue");
-            if (!harvestList.isEmpty()) {
-                for (String coords : harvestList) {
-                    String[] c = coords.split(",");
+            // file BFS éventuelle
+            List<String> list = sec.getStringList("harvestQueue");
+            if (!list.isEmpty()) {
+                for (String s : list) {
+                    String[] c = s.split(",");
                     if (c.length == 3) {
-                        try {
-                            int hx = Integer.parseInt(c[0]);
-                            int hy = Integer.parseInt(c[1]);
-                            int hz = Integer.parseInt(c[2]);
-                            Block b = w.getBlockAt(hx, hy, hz);
-                            fs.harvestQueue.add(b);
-                        } catch (NumberFormatException ignored) { }
+                        Block b = w.getBlockAt(
+                                Integer.parseInt(c[0]),
+                                Integer.parseInt(c[1]),
+                                Integer.parseInt(c[2]));
+                        fs.bfs.add(b);
                     }
                 }
             }
-
             // replantLocation
             if (sec.contains("replantLocation")) {
                 List<Integer> rl = sec.getIntegerList("replantLocation");
-                if (rl.size() == 3) {
-                    int rx = rl.get(0);
-                    int ry = rl.get(1);
-                    int rz = rl.get(2);
-                    fs.replantLocation = w.getBlockAt(rx, ry, rz);
-                }
+                if (rl.size() == 3)
+                    fs.replant = w.getBlockAt(rl.get(0), rl.get(1), rl.get(2));
             }
-
-            Bukkit.getScheduler().runTaskLater(plugin, fs::start, 20L);
+            fs.start();                       // relance async (après chargement)
             sessions.add(fs);
-            loaded++;
+            restored++;
         }
-        plugin.getLogger().info("[Foret] Restauré " + loaded + " forêt(s).");
+        plugin.getLogger().info("[Foret] " + restored + " forêt(s) restaurée(s).");
     }
 
-    public void createForestArea(Location origin, int width, int length) {
-        ForestSession fs = new ForestSession(plugin, origin, width, length);
-        fs.start();
-        sessions.add(fs);
-        saveAllSessions();
+    /* ══════════════════ API PUBLIQUE (wrappers rétro‑compatibles) ══════════════════ */
+
+    /** Gardé public pour MinePlugin.onEnable() (rétro‑compat). */
+    public void loadSavedSessions() {
+        loadSessions();
     }
 
+    /** Gardé public pour MinePlugin.onDisable(). */
+    public void saveAllSessions() {
+        saveSessions();
+    }
+
+    /** Appelé par MinePlugin.onDisable() pour arrêter proprement. */
     public void stopAllForests() {
-        for (ForestSession fs : sessions) {
-            fs.stop();
-        }
+        sessions.forEach(ForestSession::stop);
         sessions.clear();
     }
 
-    private void clearZone(Location origin, int width, int length, List<String> names) {
-        World w = origin.getWorld();
-        int minX = origin.getBlockX() - 2;
-        int maxX = origin.getBlockX() + width + 2;
-        int minZ = origin.getBlockZ() - 2;
-        int maxZ = origin.getBlockZ() + length + 2;
+    /* ══════════════════ CLASSE SESSION ══════════════════ */
+    private final class ForestSession {
 
-        // Charge les chunks autour de la zone
-        int minChunkX = minX >> 4;
-        int maxChunkX = maxX >> 4;
-        int minChunkZ = minZ >> 4;
-        int maxChunkZ = maxZ >> 4;
-        for (int cx = minChunkX; cx <= maxChunkX; cx++) {
-            for (int cz = minChunkZ; cz <= maxChunkZ; cz++) {
-                w.getChunkAt(cx, cz).load();
-            }
-        }
+        private static final Material FRAME = Material.OAK_LOG;
+        private static final Material LIGHT = Material.SEA_LANTERN;
 
-        w.getEntities().forEach(e -> {
-            String name = ChatColor.stripColor(e.getCustomName());
-            if (name == null || !names.contains(name)) return;
+        private final World w;
+        private final int x0, y0, z0, width, length;
 
-            Location l = e.getLocation();
-            int x = l.getBlockX();
-            int z = l.getBlockZ();
-            if (x >= minX && x <= maxX && z >= minZ && z <= maxZ) {
-                e.remove();
-            }
-        });
-    }
-
-    /* ========================================================= */
-    /*  CLASSE INTERNE ForestSession : zone, BFS, PNJ, etc.      */
-    /* ========================================================= */
-    public static final class ForestSession {
-        private static final int CHESTS_PER_CORNER = 6;
-        private static final Material FRAME_BLOCK  = Material.OAK_LOG;
-        private static final Material LIGHT_BLOCK  = Material.SEA_LANTERN;
-        private static final int FOREST_HEIGHT     = 20;
-
-        private static final List<Material> SAPLINGS = Arrays.asList(
-                Material.OAK_SAPLING,
-                Material.BIRCH_SAPLING,
-                Material.SPRUCE_SAPLING,
-                Material.JUNGLE_SAPLING,
-                Material.ACACIA_SAPLING,
-                Material.DARK_OAK_SAPLING
-        );
-
-        private final JavaPlugin plugin;
-        private final World world;
-        private final int baseX, baseY, baseZ, width, length;
-
-        // PNJ + golems
-        private Villager forester;
-        private final List<Golem> golems = new ArrayList<>();
-        private BukkitRunnable forestTask;
-
-        // Coffres
-        private final List<Block> chestBlocks = new ArrayList<>();
-        private int depositIndex = 0;
-
-        // Spots de saplings
+        /* structures & logique */
+        private final List<Block> chests = new ArrayList<>();
         private final List<Block> saplingSpots = new ArrayList<>();
-        private int spotIndex = 0;
+        private final Queue<Block> bfs = new LinkedList<>();
+        private Block replant = null;
 
-        // BFS
-        private final Queue<Block> harvestQueue = new LinkedList<>();
-        private Block replantLocation = null;
+        /* entités */
+        private Villager forester;
+        private final List<IronGolem> golems = new ArrayList<>();
+        private BukkitRunnable loop;
 
-        public ForestSession(JavaPlugin plugin, Location origin, int width, int length) {
-            this.plugin = plugin;
-            this.world  = origin.getWorld();
-            this.baseX  = origin.getBlockX();
-            this.baseY  = origin.getBlockY();
-            this.baseZ  = origin.getBlockZ();
-            this.width  = width;
+        ForestSession(World w, Location origin, int width, int length) {
+            this.w = w;
+            this.x0 = origin.getBlockX();
+            this.y0 = origin.getBlockY();
+            this.z0 = origin.getBlockZ();
+            this.width = width;
             this.length = length;
         }
 
-        public void start() {
-            buildFrame();
-            buildGround();
-            buildTreesGrid();
-            buildChests();
-
-            spawnOrRespawnForester();
-            spawnOrRespawnGolems();
-
-            runForestLoop();
+        /* ---------- cycle de vie ---------- */
+        void start() {
+            buildFrameGround();
+            placeSaplings();
+            createChests();
+            spawnEntities();
+            startLoop();
         }
 
-        public void stop() {
-            if (forestTask != null) {
-                forestTask.cancel();
-                forestTask = null;
-            }
-            // Retire PNJ
-            if (forester != null && !forester.isDead()) {
-                forester.remove();
-            }
-            // Retire golems
-            for (Golem g : golems) {
-                g.remove();
-            }
-            golems.clear();
+        void stop() {
+            if (loop != null) loop.cancel();
+            if (forester != null) forester.remove();
+            golems.forEach(Entity::remove);
         }
 
-        /* --------------------- Construction --------------------- */
-        private void buildFrame() {
+        /* ---------- helpers structure ---------- */
+        private void buildFrameGround() {
             for (int dx = -1; dx <= width; dx++) {
-                setBlock(baseX + dx, baseY, baseZ - 1, FRAME_BLOCK);
-                setBlock(baseX + dx, baseY, baseZ + length, FRAME_BLOCK);
+                set(x0 + dx, y0, z0 - 1, FRAME);
+                set(x0 + dx, y0, z0 + length, FRAME);
             }
             for (int dz = -1; dz <= length; dz++) {
-                setBlock(baseX - 1, baseY, baseZ + dz, FRAME_BLOCK);
-                setBlock(baseX + width, baseY, baseZ + dz, FRAME_BLOCK);
+                set(x0 - 1, y0, z0 + dz, FRAME);
+                set(x0 + width, y0, z0 + dz, FRAME);
             }
+            for (int dx = 0; dx < width; dx++)
+                for (int dz = 0; dz < length; dz++)
+                    set(x0 + dx, y0, z0 + dz, Material.GRASS_BLOCK);
         }
-        private void buildGround() {
-            for (int dx = 0; dx < width; dx++) {
-                for (int dz = 0; dz < length; dz++) {
-                    setBlock(baseX + dx, baseY, baseZ + dz, Material.GRASS_BLOCK);
-                }
-            }
-        }
-        private void buildTreesGrid() {
-            // On place un sapling tous les 6 blocs, + lantern au milieu
-            for (int dx = 0; dx < width; dx++) {
-                for (int dz = 0; dz < length; dz++) {
-                    int x = baseX + dx;
-                    int z = baseZ + dz;
-                    if (dx % 6 == 0 && dz % 6 == 0) {
-                        Material sap = randomSapling();
-                        setBlock(x, baseY + 1, z, sap);
-                        saplingSpots.add(world.getBlockAt(x, baseY + 1, z));
-                    }
-                    else if (dx % 6 == 3 && dz % 6 == 3) {
-                        setBlock(x, baseY + 1, z, LIGHT_BLOCK);
+
+        private void placeSaplings() {
+            Random R = new Random();
+            for (int dx = 0; dx < width; dx += MAILLAGE_SAPLINGS) {
+                for (int dz = 0; dz < length; dz += MAILLAGE_SAPLINGS) {
+                    int ox = Math.max(0, Math.min(width - 1, dx + R.nextInt(3) - 1));
+                    int oz = Math.max(0, Math.min(length - 1, dz + R.nextInt(3) - 1));
+                    Block spot = w.getBlockAt(x0 + ox, y0 + 1, z0 + oz);
+                    spot.setType(randomSapling());
+                    saplingSpots.add(spot);
+                    // petite lanterne au centre de maille
+                    if (MAILLAGE_SAPLINGS >= 5 && ox + 2 < width && oz + 2 < length) {
+                        set(x0 + ox + 2, y0 + 1, z0 + oz + 2, LIGHT);
                     }
                 }
-            }
-        }
-        private Material randomSapling() {
-            return SAPLINGS.get(new Random().nextInt(SAPLINGS.size()));
-        }
-        private void buildChests() {
-            createChests(new Location(world, baseX - 2,      baseY, baseZ - 2),       true);
-            createChests(new Location(world, baseX + width + 1, baseY, baseZ - 2),    false);
-            createChests(new Location(world, baseX - 2,      baseY, baseZ + length + 1), true);
-            createChests(new Location(world, baseX + width + 1, baseY, baseZ + length + 1), false);
-        }
-        private void createChests(Location start, boolean positiveX) {
-            for (int i = 0; i < CHESTS_PER_CORNER; i++) {
-                Location loc = start.clone().add(positiveX ? i : -i, 0, 0);
-                setBlock(loc, Material.CHEST);
-                chestBlocks.add(loc.getBlock());
             }
         }
 
-        /* --------------------- PNJ + Golems --------------------- */
-        private void spawnOrRespawnForester() {
-            if (forester != null && !forester.isDead()) return;
-            Location center = new Location(world,
-                    baseX + width / 2.0,
-                    baseY + 1,
-                    baseZ + length / 2.0);
-            forester = (Villager) world.spawnEntity(center, EntityType.VILLAGER);
+        private void createChests() {
+            makeDoubleChest(x0 + width + 1, z0 - 2);
+            makeDoubleChest(x0 - 2, z0 + length + 1);
+        }
+
+        private void makeDoubleChest(int x, int z) {
+            set(x, y0, z, Material.CHEST);
+            set(x + 1, y0, z, Material.CHEST);
+            chests.add(w.getBlockAt(x, y0, z));
+            chests.add(w.getBlockAt(x + 1, y0, z));
+        }
+
+        /* ---------- entités ---------- */
+        private void spawnEntities() {
+            forester = (Villager) w.spawnEntity(
+                    new Location(w, x0 + width / 2.0, y0 + 1, z0 + length / 2.0),
+                    EntityType.VILLAGER);
             forester.setCustomName("Forestier");
             forester.setCustomNameVisible(true);
             forester.setProfession(Villager.Profession.FLETCHER);
             forester.setVillagerLevel(5);
-            setupTrades(forester);
-        }
+            forester.setInvulnerable(true);
+            forester.setRecipes(List.of(createTrade()));
 
-        /**
-         * Configure les échanges du forestier :
-         * 32 lingots de fer permettent d'obtenir 64 bûches de chêne.
-         */
-        private void setupTrades(Villager v) {
-            List<MerchantRecipe> recipes = new ArrayList<>();
-            recipes.add(createRecipe(Material.IRON_INGOT, 32,
-                    new ItemStack(Material.OAK_LOG, 64)));
-            v.setRecipes(recipes);
-        }
-
-        private MerchantRecipe createRecipe(Material matInput, int amount, ItemStack output) {
-            MerchantRecipe recipe = new MerchantRecipe(output, 9999999);
-            recipe.addIngredient(new ItemStack(matInput, amount));
-            recipe.setExperienceReward(false);
-            return recipe;
-        }
-        private void spawnOrRespawnGolems() {
-            golems.removeIf(g -> g.getGolem().isDead());
-            while (golems.size() < 2) {
-                Location c = new Location(world,
-                        baseX + width / 2.0,
-                        baseY,
-                        baseZ + length / 2.0).add(golems.size()*2.0 - 1.0, 0, -1.5);
-
-                double radius = Math.max(1.0,
-                        Math.min(width, length) / 2.0 - 1.0);
-
-                Golem g = new Golem(plugin, c, radius);
-                g.getGolem().setCustomName("Golem Forestier");
+            int wanted = Math.max(2, (width * length) / 512);
+            for (int i = 0; i < wanted; i++) {
+                Location l = new Location(w,
+                        x0 + width / 2.0 + (i % 2 == 0 ? 2 : -2),
+                        y0,
+                        z0 + length / 2.0 + (i < 2 ? 2 : -2));
+                IronGolem g = (IronGolem) w.spawnEntity(l, EntityType.IRON_GOLEM);
+                g.setPlayerCreated(true);
+                g.setCustomName("Golem Forestier");
                 golems.add(g);
             }
         }
 
-        /* --------------------- Boucle 1 bloc/s --------------------- */
-        private void runForestLoop() {
-            forestTask = new BukkitRunnable() {
+        private MerchantRecipe createTrade() {
+            MerchantRecipe r = new MerchantRecipe(new ItemStack(Material.OAK_LOG, 64), 9999999);
+            r.addIngredient(new ItemStack(Material.IRON_INGOT, 32));
+            r.setExperienceReward(false);
+            return r;
+        }
+
+        /* ---------- boucle 1 tick / s ---------- */
+        private void startLoop() {
+            loop = new BukkitRunnable() {
+                int idx = 0;
+
                 @Override
                 public void run() {
-                    // PNJ
-                    if (forester == null || forester.isDead()) {
-                        spawnOrRespawnForester();
-                    }
-                    keepForesterInArea();
+                    if (forester == null || forester.isDead()) spawnEntities();
+                    golems.removeIf(Entity::isDead);
 
-                    // Golems
-                    spawnOrRespawnGolems();
-
-                    // BFS en cours ou replantage en attente ?
-                    if (!harvestQueue.isEmpty() || replantLocation != null) {
-                        harvestNextBlock();
+                    if (!bfs.isEmpty() || replant != null) {
+                        processHarvest();
                         return;
                     }
 
-                    // Sinon, on check un sapling
                     if (saplingSpots.isEmpty()) return;
-                    Block saplingBlock = saplingSpots.get(spotIndex);
-                    spotIndex = (spotIndex + 1) % saplingSpots.size();
+                    Block check = saplingSpots.get(idx);
+                    idx = (idx + 1) % saplingSpots.size();
 
-                    // Si ce bloc est devenu LOG ou LEAVES => BFS
-                    Material mat = saplingBlock.getType();
-                    if (isLogOrLeaves(mat)) {
-                        replantLocation = saplingBlock; // on stocke pour replanter
-                        buildHarvestQueue(saplingBlock);
+                    if (isLogOrLeaves(check.getType())) {
+                        replant = check;
+                        buildBFS(check);
                     }
                 }
             };
-            forestTask.runTaskTimer(plugin, 20L, 20L);
+            loop.runTaskTimer(plugin, 20, 20);
         }
 
-        private void keepForesterInArea() {
-            if (forester == null) return;
-            Location loc = forester.getLocation();
-            double fx = loc.getX(), fy = loc.getY(), fz = loc.getZ();
-            double minX = baseX, maxX = baseX + width;
-            double minZ = baseZ, maxZ = baseZ + length;
-            double minY = baseY, maxY = baseY + FOREST_HEIGHT;
+        /* ---------- BFS récolte ---------- */
+        private void buildBFS(Block start) {
+            bfs.clear();
+            Queue<Block> q = new LinkedList<>();
+            Set<Block> seen = new HashSet<>();
+            q.add(start);
 
-            // S'il sort de la zone, on le ramène au centre
-            if (fx < minX || fx > maxX || fz < minZ || fz > maxZ || fy < minY || fy > maxY) {
-                Location center = new Location(world,
-                        baseX + width/2.0,
-                        baseY + 1.0,
-                        baseZ + length/2.0);
-                forester.teleport(center);
+            while (!q.isEmpty()) {
+                Block b = q.poll();
+                if (!seen.add(b)) continue;
+                if (!isLogOrLeaves(b.getType()) || !inBounds(b.getLocation())) continue;
+                bfs.add(b);
+                for (int[] d : new int[][]{{1, 0, 0}, {-1, 0, 0},
+                        {0, 1, 0}, {0, -1, 0},
+                        {0, 0, 1}, {0, 0, -1}}) {
+                    q.add(b.getRelative(d[0], d[1], d[2]));
+                }
             }
         }
 
-        /* --------------------- BFS --------------------- */
-        private void buildHarvestQueue(Block start) {
-            harvestQueue.clear();
-            Set<Block> visited = new HashSet<>();
-            Queue<Block> toVisit = new LinkedList<>();
-            toVisit.add(start);
+        private void processHarvest() {
+            if (!bfs.isEmpty()) {
+                Block b = bfs.poll();
+                Collection<ItemStack> drops = b.getDrops();
+                b.setType(Material.AIR);
 
-            final int MAX_RADIUS = 50;
+                deposit(new ArrayList<>(drops));
+                if (forester != null && !forester.isDead())
+                    forester.teleport(b.getLocation().add(0.5, 1, 0.5));
+            } else if (replant != null) {
+                replant.setType(randomSapling());
+                replant = null;
+            }
+        }
 
-            while (!toVisit.isEmpty()) {
-                Block current = toVisit.poll();
-                if (current == null) continue;
-                if (!visited.add(current)) continue;
+        /* ---------- util ---------- */
+        boolean isProtectedStructure(Block b) {
+            Material m = b.getType();
+            return (m == FRAME || m == LIGHT) && inBounds(b.getLocation())
+                    || chests.contains(b);
+        }
 
-                Material mat = current.getType();
-                if (!isLogOrLeaves(mat)) continue;
-                if (!inBounds(current.getLocation())) continue;
+        boolean removeChestIfMatch(Block b) {
+            return chests.remove(b);
+        }
 
-                // On l'ajoute à la récolte
-                harvestQueue.add(current);
+        boolean hasChests() {
+            return !chests.isEmpty();
+        }
 
-                // Parcourt les 6 directions
-                Location loc = current.getLocation();
-                int dx = loc.getBlockX() - start.getX();
-                int dy = loc.getBlockY() - start.getY();
-                int dz = loc.getBlockZ() - start.getZ();
-                // Limite de sécurité
-                if (Math.abs(dx) > MAX_RADIUS || Math.abs(dy) > MAX_RADIUS || Math.abs(dz) > MAX_RADIUS) {
-                    continue;
-                }
+        private void deposit(List<ItemStack> items) {
+            if (items.isEmpty()) return;
 
-                // Ajoute voisins
-                for (int[] dir : new int[][]{{1,0,0},{-1,0,0},{0,1,0},{0,-1,0},{0,0,1},{0,0,-1}}) {
-                    Block nb = current.getRelative(dir[0], dir[1], dir[2]);
-                    if (!visited.contains(nb)) {
-                        toVisit.add(nb);
+            Iterator<Block> cycle = Iterators.cycle(chests);
+            for (ItemStack it : items) {
+                boolean stored = false;
+                int tries = 0;
+                while (!stored && tries < chests.size()) {
+                    Chest c = (Chest) cycle.next().getState();
+                    tries++;
+                    if (c.getInventory().firstEmpty() != -1
+                            && c.getInventory().getViewers().size() < MAX_PER_CHEST) {
+                        c.getInventory().addItem(it);
+                        stored = true;
                     }
                 }
+                if (!stored) { // débordement : nouveau coffre
+                    int nx = x0 + width + 3, nz = z0 - 2;
+                    set(nx, y0, nz, Material.CHEST);
+                    Block nb = w.getBlockAt(nx, y0, nz);
+                    chests.add(nb);
+                    ((Chest) nb.getState()).getInventory().addItem(it);
+                }
             }
         }
-        private boolean inBounds(Location loc) {
-            int x = loc.getBlockX();
-            int y = loc.getBlockY();
-            int z = loc.getBlockZ();
-            if (x < baseX || x >= baseX + width) return false;
-            if (z < baseZ || z >= baseZ + length) return false;
-            // On limite la hauteur
-            if (y < baseY || y > baseY + FOREST_HEIGHT) return false;
-            return true;
+
+        private boolean inBounds(Location l) {
+            int x = l.getBlockX(), y = l.getBlockY(), z = l.getBlockZ();
+            return x >= x0 && x < x0 + width
+                    && z >= z0 && z < z0 + length
+                    && y >= y0 && y <= y0 + FOREST_HEIGHT;
         }
+
+        private Material randomSapling() {
+            return SAPLINGS.get(new Random().nextInt(SAPLINGS.size()));
+        }
+
         private boolean isLogOrLeaves(Material m) {
-            return m.name().endsWith("_LOG") || m.name().endsWith("_LEAVES");
+            String n = m.name();
+            return n.endsWith("_LOG") || n.endsWith("_LEAVES");
         }
 
-        /**
-         * Récolte un bloc par tick.
-         * Quand BFS est fini => replant.
-         */
-        private void harvestNextBlock() {
-            Block block = harvestQueue.poll();
-            if (block == null) {
-                // BFS terminé => replant
-                if (replantLocation != null) {
-                    // On replante un nouveau sapling
-                    replantLocation.setType(randomSapling());
-                    replantLocation = null;
-                }
-                return;
-            }
-
-            // Téléporte le PNJ forestier au-dessus
-            if (forester != null && !forester.isDead()) {
-                forester.teleport(block.getLocation().add(0.5, 1.0, 0.5));
-            }
-
-            // Casse le bloc
-            Collection<ItemStack> drops = block.getDrops();
-            block.setType(Material.AIR);
-
-            // Stocke les items en coffre
-            deposit(new ArrayList<>(drops));
+        private void set(int x, int y, int z, Material mat) {
+            w.getBlockAt(x, y, z).setType(mat, false);
         }
 
-        /**
-         * Ajoute les items dans un coffre (round-robin).
-         */
-        private void deposit(List<ItemStack> drops) {
-            if (drops.isEmpty() || chestBlocks.isEmpty()) return;
-            Block chestBlock = chestBlocks.get(depositIndex % chestBlocks.size());
-            depositIndex++;
-
-            if (chestBlock.getType() == Material.CHEST) {
-                Chest c = (Chest) chestBlock.getState();
-                Inventory inv = c.getInventory();
-                for (ItemStack it : drops) {
-                    inv.addItem(it);
-                }
-            }
-        }
-
-        /* --------------------- Coffres cassés --------------------- */
-        public boolean isChestBlock(Block b) {
-            return chestBlocks.contains(b);
-        }
-
-        public void removeChest(Block b) {
-            chestBlocks.remove(b);
-        }
-
-        public boolean hasChests() {
-            return !chestBlocks.isEmpty();
-        }
-
-        /* --------------------- Persistance: toMap() --------------------- */
-        public Map<String, Object> toMap() {
+        /* ---------- sérialisation ---------- */
+        Map<String, Object> serialize() {
             Map<String, Object> map = new LinkedHashMap<>();
-            map.put("world", world.getUID().toString());
-            map.put("x", baseX);
-            map.put("y", baseY);
-            map.put("z", baseZ);
+            map.put("world", w.getUID().toString());
+            map.put("x", x0);
+            map.put("y", y0);
+            map.put("z", z0);
             map.put("width", width);
             map.put("length", length);
 
-            // BFS en cours
-            if (!harvestQueue.isEmpty()) {
+            if (!bfs.isEmpty()) {
                 List<String> list = new ArrayList<>();
-                for (Block b : harvestQueue) {
-                    list.add(b.getX() + "," + b.getY() + "," + b.getZ());
-                }
+                bfs.forEach(b -> list.add(b.getX() + "," + b.getY() + "," + b.getZ()));
                 map.put("harvestQueue", list);
             }
-            // replantLocation
-            if (replantLocation != null) {
-                map.put("replantLocation", Arrays.asList(
-                        replantLocation.getX(),
-                        replantLocation.getY(),
-                        replantLocation.getZ()
-                ));
+            if (replant != null) {
+                map.put("replantLocation",
+                        List.of(replant.getX(), replant.getY(), replant.getZ()));
             }
             return map;
         }
-
-        /* --------------------- Outils internes --------------------- */
-        private void setBlock(int x, int y, int z, Material mat) {
-            world.getBlockAt(x, y, z).setType(mat, false);
-        }
-        private void setBlock(Location loc, Material mat) {
-            setBlock(loc.getBlockX(), loc.getBlockY(), loc.getBlockZ(), mat);
-        }
     }
 
-    /* ========================================================= */
-    /*        CLASSE interne Selection (2 coins cliqués)         */
-    /* ========================================================= */
-    private static class Selection {
-        private Block corner1;
-        private Block corner2;
+    /* ══════════════════ OUTILS GÉNÉRAUX ══════════════════ */
+    private static String coord(Block b) { return b.getX() + "," + b.getY() + "," + b.getZ(); }
+
+    private static final class Selection { Block corner1, corner2; }
+}
+
+/* ===========================================================================
+   Utility minimal – équivalent de Guava Iterators.cycle()
+   =========================================================================== */
+final class Iterators {
+    static <T> Iterator<T> cycle(List<T> list) {
+        return new Iterator<>() {
+            int i = 0;
+
+            public boolean hasNext() { return !list.isEmpty(); }
+
+            public T next() {
+                T t = list.get(i);
+                i = (i + 1) % list.size();
+                return t;
+            }
+        };
     }
 }
