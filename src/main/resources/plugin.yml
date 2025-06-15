@@ -1,7 +1,7 @@
 name: MinePlugin
 version: ${project.version}
 main: org.example.MinePlugin
-api-version: "1.20"          # version reconnue par Spigot/Paper
+api-version: "1.21"          # version reconnue par Spigot/Paper
 
 commands:
   army:
