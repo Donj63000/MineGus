@@ -106,4 +106,8 @@ Les différentes fonctionnalités sauvegardent leurs informations dans le dossie
 - Le fichier `plugin.yml` décrivant les commandes est situé dans `src/main/resources`.
 - Des notes et idées supplémentaires sont regroupées dans `docs/IDEES.md`.
 
+## Licence
+
+Ce projet est distribué sous la licence MIT. Consultez le fichier `LICENSE` pour plus de détails.
+
 Bon jeu !
