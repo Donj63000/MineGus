@@ -1,90 +1,46 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<project xmlns="http://maven.apache.org/POM/4.0.0"
-         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-         xsi:schemaLocation="
-           http://maven.apache.org/POM/4.0.0
-           https://maven.apache.org/xsd/maven-4.0.0.xsd">
+<!-- MockBukkit 1.20 R4 (2.46.0) + Paper 1.20.6 -->
+<project …>
+<properties>
+<java.version>17</java.version>
+<paper.api.version>1.20.6-R0.1-SNAPSHOT</paper.api.version>
+</properties>
 
-    <modelVersion>4.0.0</modelVersion>
+<repositories>
+<repository>
+    <id>papermc</id>
+    <url>https://repo.papermc.io/repository/maven-public/</url>
+</repository>
+<repository>
+    <id>central</id>
+    <url>https://repo1.maven.org/maven2/</url>
+</repository>
+</repositories>
 
-    <!-- ————————————————— IDENTITÉ ————————————————— -->
-    <groupId>org.example</groupId>
-    <artifactId>MineGus</artifactId>
-    <version>1.1-SNAPSHOT</version>
-    <name>MineGus</name>
-    <description>Plugin MineGus 2.0 (mineur, champs, forêt, village…)</description>
-    <packaging>jar</packaging>
+<dependencies>
+<!-- Paper -->
+<dependency>
+    <groupId>io.papermc.paper</groupId>
+    <artifactId>paper-api</artifactId>
+    <version>${paper.api.version}</version>
+    <scope>provided</scope>
+</dependency>
 
-    <!-- ———————————————— PROPRIÉTÉS ———————————————— -->
-    <properties>
-        <java.version>17</java.version>
-        <!-- *** Version Paper officielle *** -->
-        <paper.api.version>1.21-R0.1-SNAPSHOT</paper.api.version>
-        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-        <maven.compiler.release>${java.version}</maven.compiler.release>
-    </properties>
+<!-- JUnit 5 -->
+<dependency>
+    <groupId>org.junit.jupiter</groupId>
+    <artifactId>junit-jupiter</artifactId>
+    <version>5.10.2</version>
+    <scope>test</scope>
+</dependency>
 
-    <!-- ————————————————— DÉPÔTS MAVEN ————————————————— -->
-    <repositories>
-        <repository>
-            <id>papermc</id>
-            <url>https://repo.papermc.io/repository/maven-public/</url>
-        </repository>
-    </repositories>
+<!-- MockBukkit R4 -->
+<dependency>
+    <groupId>io.github.seeseemelk.mockbukkit</groupId>
+    <artifactId>mockbukkit-v1_20_R4</artifactId>
+    <version>2.46.0</version>
+    <scope>test</scope>
+</dependency>
+</dependencies>
 
-    <!-- ————————————————— DÉPENDANCES ————————————————— -->
-    <dependencies>
-        <dependency>
-            <groupId>io.papermc.paper</groupId>
-            <artifactId>paper-api</artifactId>
-            <version>${paper.api.version}</version>
-            <scope>provided</scope>
-        </dependency>
-        <dependency>
-            <groupId>org.junit.jupiter</groupId>
-            <artifactId>junit-jupiter</artifactId>
-            <version>5.10.2</version>
-            <scope>test</scope>
-        </dependency>
-        <dependency>
-            <groupId>be.seeseemelk</groupId>
-            <artifactId>mockbukkit-v1.20</artifactId>
-            <version>2.37.0</version>
-            <scope>test</scope>
-        </dependency>
-    </dependencies>
-
-    <!-- ————————————————— BUILD ————————————————— -->
-    <build>
-        <resources>
-            <resource>
-                <directory>src/main/resources</directory>
-            </resource>
-        </resources>
-
-        <plugins>
-            <plugin>
-                <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-compiler-plugin</artifactId>
-                <version>3.11.0</version>
-                <configuration>
-                    <release>${maven.compiler.release}</release>
-                </configuration>
-            </plugin>
-
-            <plugin>
-                <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-jar-plugin</artifactId>
-                <version>3.3.0</version>
-                <configuration>
-                    <finalName>${project.artifactId}-${project.version}</finalName>
-                </configuration>
-            </plugin>
-            <plugin>
-                <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-surefire-plugin</artifactId>
-                <version>3.1.2</version>
-            </plugin>
-        </plugins>
-    </build>
-</project>
+        <!-- build/plugins identiques à ton fichier -->
+        </project>
