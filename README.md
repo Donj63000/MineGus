@@ -25,12 +25,14 @@ Ce mod est actuellement en bêta et continuera d'évoluer. Il est développé pa
 4. Vérifiez la présence du plugin à l'aide de la commande `/plugins`.
 5. Lors du premier démarrage, un dossier `plugins/MinePlugin/` est créé pour stocker les données et configurations.
 
-## Utilisation du plugin
+## Mode en jeu
 
-Une fois le plugin chargé, vous pouvez vérifier son fonctionnement :
-1. Connectez-vous à votre serveur Minecraft.
-2. Exécutez la commande `/ping` ; le plugin devrait répondre « Pong ! ».
-3. Les autres commandes ci-dessous permettent d'automatiser différentes tâches.
+Une fois le plugin installé et le serveur relancé :
+1. Connectez-vous avec les droits d’opérateur.
+2. Tapez `/ping` pour confirmer que MinePlugin est actif.
+3. Utilisez ensuite les commandes listées plus bas pour créer vos premières zones automatisées.
+4. Pour arrêter une zone (mine, champ, forêt ou ranch), retirez tous les coffres associés.
+5. Les données sont sauvegardées dans `plugins/MinePlugin/` et restaurées au redémarrage.
 
 ## Commandes disponibles
 
