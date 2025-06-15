@@ -51,9 +51,9 @@
             <scope>test</scope>
         </dependency>
         <dependency>
-            <groupId>com.github.seeseemelk</groupId>
-            <artifactId>MockBukkit-v1.20</artifactId>
-            <version>2.37.0</version>
+            <groupId>io.github.seeseemelk.mockbukkit</groupId>
+            <artifactId>mockbukkit-v1_20_R3</artifactId>
+            <version>2.46.0</version>
             <scope>test</scope>
         </dependency>
     </dependencies>
