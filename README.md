@@ -104,5 +104,6 @@ Les différentes fonctionnalités sauvegardent leurs informations dans le dossie
 
 - Les sources Java se trouvent dans `src/main/java`.
 - Le fichier `plugin.yml` décrivant les commandes est situé dans `src/main/resources`.
+- Des notes et idées supplémentaires sont regroupées dans `docs/IDEES.md`.
 
 Bon jeu !
