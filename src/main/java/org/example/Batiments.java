@@ -132,17 +132,23 @@ public final class Batiments {
         };
         int px = ox + door[0] + porchFront[0];
         int pz = oz + door[1] + porchFront[1];
-        for (int dx = 0; dx <= 1; dx++)
+        for (int dx = 0; dx <= 1; dx++) {
+            final int ddx = dx;
             for (int dz = 0; dz <= 1; dz++) {
-                res.add(() -> ctx.setBlockTracked(w, px + dx, oy, pz + dz, Material.OAK_SLAB));
-                res.add(() -> ctx.setBlockTracked(w, px + dx, oy - 1, pz + dz, foundationMat));
+                final int ddz = dz;
+                res.add(() -> ctx.setBlockTracked(w, px + ddx, oy, pz + ddz, Material.OAK_SLAB));
+                res.add(() -> ctx.setBlockTracked(w, px + ddx, oy - 1, pz + ddz, foundationMat));
             }
-        for (int h = 1; h <= 2; h++) {
-            res.add(() -> ctx.setBlockTracked(w, px, oy + h, pz, logMat));
-            res.add(() -> ctx.setBlockTracked(w, px + 1, oy + h, pz + 1, logMat));
         }
-        for (int dx = 0; dx <= 1; dx++)
-            res.add(() -> ctx.setBlockTracked(w, px + dx, oy + 3, pz + (dx == 0 ? 1 : 0), slabMat));
+        for (int h = 1; h <= 2; h++) {
+            final int hh = h;
+            res.add(() -> ctx.setBlockTracked(w, px, oy + hh, pz, logMat));
+            res.add(() -> ctx.setBlockTracked(w, px + 1, oy + hh, pz + 1, logMat));
+        }
+        for (int dx = 0; dx <= 1; dx++) {
+            final int ddx = dx;
+            res.add(() -> ctx.setBlockTracked(w, px + ddx, oy + 3, pz + (ddx == 0 ? 1 : 0), slabMat));
+        }
 
         /* ---------- intérieur amélioré ---------- */
         addInterior(res, w, ctx, ox, oy, oz, width, depth, rotationDeg);
@@ -282,8 +288,8 @@ public final class Batiments {
 
     private static void addShutters(List<Runnable> res, World w, Village ctx,
                                     int x, int y, int z, BlockFace face) {
-        BlockFace left  = face.getOppositeFace().getClockWise();
-        BlockFace right = face.getClockWise();
+        BlockFace left  = face.rotateYCCW();
+        BlockFace right = face.rotateY();
         for (BlockFace side : List.of(left, right)) {
             int sx = x + side.getModX();
             int sz = z + side.getModZ();
