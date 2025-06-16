@@ -34,6 +34,8 @@ import org.bukkit.scoreboard.Criteria;
 import org.bukkit.scoreboard.DisplaySlot;
 import org.bukkit.scoreboard.Objective;
 import org.bukkit.scoreboard.Scoreboard;
+import org.bukkit.Particle;
+import org.bukkit.Sound;
 
 import java.io.File;
 import java.io.IOException;
@@ -198,6 +200,13 @@ public final class Eleveur implements CommandExecutor, Listener {
         return "(" + b.getX() + ", " + b.getY() + ", " + b.getZ() + ")";
     }
 
+    /** Retourne un code couleur vert→rouge selon le ratio 0–1. */
+    private static ChatColor barColor(double ratio) {
+        if (ratio < 0.50) return ChatColor.GREEN;
+        if (ratio < 0.80) return ChatColor.GOLD;
+        return ChatColor.RED;
+    }
+
     private void validateSelection(Player player, Selection sel) {
         Block c1 = sel.corner1;
         Block c2 = sel.corner2;
@@ -309,10 +318,26 @@ public final class Eleveur implements CommandExecutor, Listener {
             int width  = sec.getInt("width");
             int length = sec.getInt("length");
 
+            String vid = sec.getString("villager-id", "");
+            Villager existing = null;
+            if (!vid.isEmpty()) {
+                try {
+                    Entity ent = Bukkit.getEntity(UUID.fromString(vid));
+                    if (ent instanceof Villager v) {
+                        existing = v;
+                    }
+                } catch (IllegalArgumentException ignored) {}
+            }
+
             Location origin = new Location(w, bx, by, bz);
-            clearZone(origin, width, length, List.of("Éleveur", "Golem Éleveur"));
+            if (existing == null) {
+                clearZone(origin, width, length, List.of("Éleveur", "Golem Éleveur"));
+            } else {
+                clearZone(origin, width, length, List.of("Golem Éleveur"));
+            }
 
             RanchSession rs = new RanchSession(plugin, origin, width, length);
+            rs.rancher = existing;
             // Démarrer l'enclos au tick suivant
             Bukkit.getScheduler().runTaskLater(plugin, rs::start, 20L);
             sessions.add(rs);
@@ -433,13 +458,15 @@ public final class Eleveur implements CommandExecutor, Listener {
         String title = ChatColor.YELLOW + "== Enclos ==";
         obj.getScore(title).setScore(999);
 
-        // Nbre d’animaux
+        // ----- animaux + limite -----
         Map<EntityType,Integer> counts = session.countAnimals();
+        int max = session.ANIMAL_LIMIT;
         int line = 998;
         for (EntityType type : MAIN_SPECIES) {
             int c = counts.getOrDefault(type, 0);
-            String s = ChatColor.GREEN + type.name() + ": " + c;
-            obj.getScore(s).setScore(line--);
+            double ratio = (double) c / max;
+            String txt = barColor(ratio) + type.name() + " " + c + "/" + max;
+            obj.getScore(txt).setScore(line--);
         }
 
         p.setScoreboard(sb);
@@ -462,10 +489,12 @@ public final class Eleveur implements CommandExecutor, Listener {
         private BukkitRunnable ranchTask;
 
         // Limite d’animaux par espèce
-        private static final int ANIMAL_LIMIT = 5;
+        private final int ANIMAL_LIMIT = plugin.getConfig()
+                .getInt("eleveur.animal-limit", 5);
 
-        // Délai de boucle (2 s)
-        private static final int RANCH_LOOP_PERIOD_TICKS = 40;
+        // Délai de boucle de la tâche principale
+        private final int RANCH_LOOP_PERIOD_TICKS = plugin.getConfig()
+                .getInt("eleveur.villager-restock-ticks", 40);
 
         // Hauteur du mur, 1 bloc de fondation + 2 blocs palette + 1 slab
         private static final int WALL_FOUNDATION_HEIGHT = 1;
@@ -718,28 +747,47 @@ public final class Eleveur implements CommandExecutor, Listener {
             setupTrades(rancher);
         }
 
+        /* ----------------------------------------------------------
+         *  Remplace l’ancienne méthode setupTrades
+         * ---------------------------------------------------------- */
         private void setupTrades(Villager v) {
-            List<MerchantRecipe> recipes = new ArrayList<>();
-            // Ex. Achat 64 viandes contre diamants
-            recipes.add(createRecipe(Material.DIAMOND, 1, new ItemStack(Material.BEEF, 64)));
-            recipes.add(createRecipe(Material.DIAMOND, 1, new ItemStack(Material.PORKCHOP, 64)));
-            recipes.add(createRecipe(Material.DIAMOND, 1, new ItemStack(Material.CHICKEN, 64)));
-            recipes.add(createRecipe(Material.DIAMOND, 1, new ItemStack(Material.MUTTON, 64)));
 
-            recipes.add(createRecipe(Material.DIAMOND, 2, new ItemStack(Material.COOKED_BEEF, 64)));
-            recipes.add(createRecipe(Material.DIAMOND, 2, new ItemStack(Material.COOKED_PORKCHOP, 64)));
-            recipes.add(createRecipe(Material.DIAMOND, 2, new ItemStack(Material.COOKED_CHICKEN, 64)));
-            recipes.add(createRecipe(Material.DIAMOND, 2, new ItemStack(Material.COOKED_MUTTON, 64)));
+            v.setRecipes(Collections.emptyList()); // nettoie d’éventuels vieux trades
+            List<MerchantRecipe> result = new ArrayList<>();
 
-            v.setRecipes(recipes);
+            // 1) boucle sur les viandes — raw
+            int rawPrice  = plugin.getConfig().getInt("eleveur.emerald-price.raw-stack",1);
+            int cookPrice = plugin.getConfig().getInt("eleveur.emerald-price.cook-stack",2);
+
+            record Meat(Material raw, Material cook) {}
+            List<Meat> meats = List.of(
+                    new Meat(Material.BEEF,      Material.COOKED_BEEF),
+                    new Meat(Material.PORKCHOP,  Material.COOKED_PORKCHOP),
+                    new Meat(Material.CHICKEN,   Material.COOKED_CHICKEN),
+                    new Meat(Material.MUTTON,    Material.COOKED_MUTTON)
+            );
+
+            for (Meat m : meats) {
+                result.add(stackForEmerald(rawPrice , new ItemStack(m.raw(),  64)));
+                result.add(stackForEmerald(cookPrice, new ItemStack(m.cook(), 64)));
+            }
+
+            // 2) quelques à‑côtés : cuir, plumes, laine
+            result.add(stackForEmerald(1, new ItemStack(Material.LEATHER, 32)));
+            result.add(stackForEmerald(1, new ItemStack(Material.FEATHER, 32)));
+            result.add(stackForEmerald(1, new ItemStack(Material.WHITE_WOOL, 32)));
+
+            v.setRecipes(result);
         }
 
-        private MerchantRecipe createRecipe(Material matInput, int amount, ItemStack output) {
-            MerchantRecipe recipe = new MerchantRecipe(output, 9999999); // maxUses
-            recipe.addIngredient(new ItemStack(matInput, amount));
-            recipe.setExperienceReward(false);
-            return recipe;
+        /*  utilitaire privé juste après la méthode ci‑dessus  */
+        private MerchantRecipe stackForEmerald(int emeraldCost, ItemStack stack) {
+            MerchantRecipe r = new MerchantRecipe(stack, 999_999);
+            r.addIngredient(new ItemStack(Material.EMERALD, emeraldCost));
+            r.setExperienceReward(false);
+            return r;
         }
+
 
         private void spawnOrRespawnGolems() {
             // Supprimer golems morts
@@ -811,6 +859,10 @@ public final class Eleveur implements CommandExecutor, Listener {
                     world.dropItemNaturally(victim.getLocation(), it);
                 }
 
+                // Effet visuel
+                world.spawnParticle(Particle.CRIT, victim.getLocation().add(0,1,0), 15, 0.3,0.2,0.3, 0.1);
+                world.playSound(victim.getLocation(), Sound.ENTITY_PLAYER_ATTACK_CRIT, 1, 1.2f);
+
                 // Retirer l’animal
                 victim.remove();
             }
@@ -842,7 +894,7 @@ public final class Eleveur implements CommandExecutor, Listener {
          */
         private List<ItemStack> simulateLoot(EntityType type) {
             List<ItemStack> loot = new ArrayList<>();
-            int chanceCooked = 5;
+            int chanceCooked = plugin.getConfig().getInt("eleveur.loot-cooked-chance", 5);
             switch (type) {
                 case COW -> {
                     int beef = 1 + RNG.nextInt(3);
@@ -885,16 +937,35 @@ public final class Eleveur implements CommandExecutor, Listener {
             if (rancher == null) return;
             Inventory inv = rancher.getInventory();
 
-            // On parcourt une copie pour éviter les modifications concurrentes
-            ItemStack[] contents = inv.getContents();
-            for (ItemStack stack : contents) {
+            for (ItemStack stack : inv.getContents()) {
                 if (stack == null) continue;
-
-                // On dépose
-                deposit(Collections.singletonList(stack));
-                // On retire de l'inventaire PNJ
+                ItemStack leftover = depositOneStack(stack.clone());
                 inv.remove(stack);
+                if (leftover != null) {
+                    world.dropItemNaturally(rancher.getLocation(), leftover);
+                }
             }
+        }
+
+        /** Dépose une stack dans les coffres. Retourne le reste ou null si tout stocké. */
+        private ItemStack depositOneStack(ItemStack in) {
+            chestBlocks.removeIf(b -> b.getType() != Material.CHEST);
+            if (chestBlocks.isEmpty()) return in;            // rien
+
+            int start = lastChestIndex % chestBlocks.size();
+            int idx = start;
+            do {
+                Chest c = (Chest) chestBlocks.get(idx).getState();
+                Map<Integer, ItemStack> left = c.getInventory().addItem(in);
+                c.update();
+                if (left.isEmpty()) {              // stocké
+                    lastChestIndex = (idx + 1) % chestBlocks.size();
+                    return null;
+                }
+                in = left.values().iterator().next(); // reste
+                idx = (idx + 1) % chestBlocks.size();
+            } while (idx != start);
+            return in; // aucun coffre n'avait de place
         }
 
         /**
@@ -993,6 +1064,7 @@ public final class Eleveur implements CommandExecutor, Listener {
             map.put("z", baseZ);
             map.put("width", width);
             map.put("length", length);
+            map.put("villager-id", rancher != null ? rancher.getUniqueId().toString() : "");
             return map;
         }
 

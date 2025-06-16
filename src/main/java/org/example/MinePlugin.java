@@ -99,6 +99,9 @@ public final class MinePlugin extends JavaPlugin implements Listener {
         // Instancie /village
         village = new Village(this);
 
+        // Charge la configuration par défaut avant l'éleveur
+        saveDefaultConfig();
+
         // Instancie /eleveur
         eleveur = new Eleveur(this);
         eleveur.loadSavedSessions(); // Restaure les enclos
