@@ -75,12 +75,12 @@ public final class Batiments {
                 boolean edge = dx == 0 || dx == width - 1 || dz == 0 || dz == depth - 1;
                 if (!edge) continue;
                 int[] p = rotate(dx, dz, rotationDeg);
+                final boolean eastWest = dz == 0 || dz == depth - 1;
                 res.add(() -> {
                     ctx.setBlockTracked(w, ox + p[0], beamY, oz + p[1], logMat);
                     /* petite orientation de l’écorce pour que les fibres suivent l’arête */
                     Block b = w.getBlockAt(ox + p[0], beamY, oz + p[1]);
                     if (b.getBlockData() instanceof Orientable o) {
-                        boolean eastWest = dz == 0 || dz == depth - 1;
                         o.setAxis(eastWest ? Axis.X : Axis.Z);
                         b.setBlockData(o, false);
                     }
