@@ -25,6 +25,18 @@ Ce plugin est expérimental et n'est pas stable.
 4. Vérifiez la présence du plugin à l'aide de la commande `/plugins`.
 5. Lors du premier démarrage, un dossier `plugins/MinePlugin/` est créé pour stocker les données et configurations.
 
+## Configuration
+
+Après un premier démarrage du serveur, le fichier `plugins/MinePlugin/config.yml` est généré.
+Il rassemble différents paramètres du plugin que vous pouvez ajuster :
+
+- la limite d'animaux et le temps de rechargement du PNJ pour la commande `/eleveur` ;
+- le prix en émeraudes des piles de viande vendues par le PNJ ;
+- la chance d'obtenir de la viande cuite.
+
+Le fichier de référence se trouve dans `src/main/resources/config.yml`. Modifiez
+uniquement la version copiée dans `plugins/MinePlugin/`.
+
 ## Mode en jeu
 
 Une fois le plugin installé et le serveur relancé :
