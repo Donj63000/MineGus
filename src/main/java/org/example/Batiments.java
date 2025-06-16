@@ -75,7 +75,12 @@ public final class Batiments {
                 boolean edge = dx == 0 || dx == width - 1 || dz == 0 || dz == depth - 1;
                 if (!edge) continue;
                 int[] p = rotate(dx, dz, rotationDeg);
-                final boolean eastWest = dz == 0 || dz == depth - 1;
+                BlockFace baseDir = (dz == 0) ? BlockFace.NORTH :
+                        (dz == depth - 1) ? BlockFace.SOUTH :
+                                (dx == 0) ? BlockFace.WEST : BlockFace.EAST;
+                BlockFace outward = rotFace(baseDir, rotationDeg);
+                final boolean eastWest =
+                        outward == BlockFace.NORTH || outward == BlockFace.SOUTH;
                 res.add(() -> {
                     ctx.setBlockTracked(w, ox + p[0], beamY, oz + p[1], logMat);
                     /* petite orientation de l’écorce pour que les fibres suivent l’arête */
