@@ -294,6 +294,18 @@ public final class Batiments {
         }
         int fx = ox + base[0], fz = oz + base[1], fy = topY + 4;
         a.add(() -> ctx.setBlockTracked(w, fx, fy, fz, Material.CAMPFIRE));
+
+        /* dalle par-dessus */
+        int slabY = topY + 5;
+        a.add(() -> ctx.setBlockTracked(w, fx, slabY, fz, Material.BRICK_SLAB));
+
+        /* ouverture latérale pour la fumée */
+        int[] side = rotate(1, 0, rot);
+        int hx = fx + side[0];
+        int hz = fz + side[1];
+        int holeY = topY + 3;
+        a.add(() -> ctx.setBlockTracked(w, hx, holeY, hz, Material.AIR));
+
         return a;
     }
 
