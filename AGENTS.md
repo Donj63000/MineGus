@@ -8,3 +8,5 @@ Ce dépôt contient un plugin Paper pour Minecraft.
 - Après chaque modification, tente d'exécuter `mvn -q package` pour vérifier la compilation. Si Maven n'est pas disponible, indique-le dans la section Tests du PR.
 - Ne modifie jamais le fichier compilé `MinePlugin.jar`.
 - Respecte la structure et le style de code existants.
+
+TEST
