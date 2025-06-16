@@ -30,14 +30,43 @@ public final class Batiments {
         int wallH = 4;
 
         /* ---------- palette aléatoire ---------- */
-        Material logMat    = pick(RNG, Material.OAK_LOG, Material.SPRUCE_LOG, Material.BIRCH_LOG);
-        Material plankMat  = pick(RNG, Material.OAK_PLANKS, Material.SPRUCE_PLANKS, Material.BIRCH_PLANKS);
-        Material stairMat  = switch (plankMat) {
-            case SPRUCE_PLANKS -> Material.SPRUCE_STAIRS;
-            case BIRCH_PLANKS  -> Material.BIRCH_STAIRS;
-            default            -> Material.OAK_STAIRS;
+        List<Material> logs = List.of(
+                Material.STRIPPED_OAK_LOG, Material.STRIPPED_SPRUCE_LOG,
+                Material.STRIPPED_BIRCH_LOG, Material.STRIPPED_DARK_OAK_LOG);
+        List<Material> planks = List.of(
+                Material.OAK_PLANKS, Material.SPRUCE_PLANKS,
+                Material.BIRCH_PLANKS, Material.DARK_OAK_PLANKS);
+
+        Material logMat   = logs.get(RNG.nextInt(logs.size()));
+        Material plankMat = planks.get(RNG.nextInt(planks.size()));
+
+        Material foundationMat = RNG.nextBoolean() ? Material.COBBLESTONE : Material.STONE_BRICKS;
+
+        Material stairMat = switch (plankMat) {
+            case SPRUCE_PLANKS   -> Material.SPRUCE_STAIRS;
+            case BIRCH_PLANKS    -> Material.BIRCH_STAIRS;
+            case DARK_OAK_PLANKS -> Material.DARK_OAK_STAIRS;
+            default              -> Material.OAK_STAIRS;
         };
+        Material slabMat  = Material.valueOf(stairMat.name().replace("_STAIRS", "_SLAB"));
         Material windowMat = RNG.nextBoolean() ? Material.GLASS_PANE : Material.WHITE_STAINED_GLASS_PANE;
+
+        /* ---------- fondations (y = oy) ---------- */
+        for (int dx = 0; dx < width; dx++)
+            for (int dz = 0; dz < depth; dz++) {
+                int[] p = rotate(dx, dz, rotationDeg);
+                ctx.setBlockTracked(w, ox + p[0], oy - 1, oz + p[1], foundationMat);
+            }
+
+        /* ---------- poutres d'angle (2 blocs de haut) ---------- */
+        for (int h = 1; h <= 2; h++) {
+            for (int[] corner : List.of(
+                    new int[]{0,0}, new int[]{width - 1,0},
+                    new int[]{0,depth - 1}, new int[]{width - 1,depth - 1})) {
+                int[] p = rotate(corner[0], corner[1], rotationDeg);
+                ctx.setBlockTracked(w, ox + p[0], oy + h, oz + p[1], logMat);
+            }
+        }
 
         /* ---------- murs extérieurs + fenêtres ---------- */
         for (int dx = 0; dx < width; dx++)
@@ -51,15 +80,32 @@ public final class Batiments {
                     int fx = ox + p[0], fy = oy + 1 + h, fz = oz + p[1];
 
                     boolean corner = edgeX && edgeZ;
+                    if (corner) continue;
+
                     boolean windowLayer = (h == 1);
                     boolean frontBack = edgeZ && !edgeX && (dx == 2 || dx == width - 3);
                     boolean sides     = edgeX && !edgeZ && (dz == 2 || dz == depth - 3);
 
-                    Material mat = (windowLayer && (frontBack || sides))
-                            ? windowMat
-                            : (corner ? logMat : plankMat);
+                    boolean putWindow = windowLayer && (frontBack || sides);
 
-                    res.add(() -> ctx.setBlockTracked(w, fx, fy, fz, mat));
+                    if (putWindow) {
+                        res.add(() -> ctx.setBlockTracked(w, fx, fy, fz, windowMat));
+                        if (h == 1) {
+                            res.add(() -> {
+                                Block bAppui = w.getBlockAt(fx, fy - 1, fz);
+                                bAppui.setType(stairMat, false);
+                                Stairs st = (Stairs) bAppui.getBlockData();
+                                st.setFacing(rotFace(BlockFace.NORTH, rotationDeg));
+                                st.setHalf(Stairs.Half.TOP);
+                                bAppui.setBlockData(st, false);
+                            });
+                            addShutters(res, w, ctx, fx, fy, fz,
+                                    rotFace(BlockFace.NORTH, rotationDeg));
+                        }
+                    } else {
+                        Material mat = corner ? logMat : plankMat;
+                        res.add(() -> ctx.setBlockTracked(w, fx, fy, fz, mat));
+                    }
                 }
             }
 
@@ -76,6 +122,28 @@ public final class Batiments {
         res.add(() -> ctx.setBlockTracked(w, ox + door[0], oy + 2, oz + door[1], Material.OAK_DOOR));
         res.add(() -> ctx.setBlockTracked(w, ox + door[0], oy + 3, oz + door[1], Material.LANTERN));
 
+        /* petit perron couvert de 2 × 2 */
+        int[] porchFront = switch (rotationDeg) {
+            case 0   -> new int[]{0, -1};
+            case 90  -> new int[]{1,  0};
+            case 180 -> new int[]{0,  1};
+            case 270 -> new int[]{-1, 0};
+            default  -> new int[]{0, -1};
+        };
+        int px = ox + door[0] + porchFront[0];
+        int pz = oz + door[1] + porchFront[1];
+        for (int dx = 0; dx <= 1; dx++)
+            for (int dz = 0; dz <= 1; dz++) {
+                res.add(() -> ctx.setBlockTracked(w, px + dx, oy, pz + dz, Material.OAK_SLAB));
+                res.add(() -> ctx.setBlockTracked(w, px + dx, oy - 1, pz + dz, foundationMat));
+            }
+        for (int h = 1; h <= 2; h++) {
+            res.add(() -> ctx.setBlockTracked(w, px, oy + h, pz, logMat));
+            res.add(() -> ctx.setBlockTracked(w, px + 1, oy + h, pz + 1, logMat));
+        }
+        for (int dx = 0; dx <= 1; dx++)
+            res.add(() -> ctx.setBlockTracked(w, px + dx, oy + 3, pz + (dx == 0 ? 1 : 0), slabMat));
+
         /* ---------- intérieur amélioré ---------- */
         addInterior(res, w, ctx, ox, oy, oz, width, depth, rotationDeg);
 
@@ -89,7 +157,7 @@ public final class Batiments {
 
         /* ---------- toit + éventuelle cheminée ---------- */
         int roofBaseY = oy + wallH + 1;
-        res.addAll(buildRoof(w, ox, oz, roofBaseY, width, depth, rotationDeg, stairMat, plankMat, ctx));
+        res.addAll(buildRoof(w, ox, oz, roofBaseY, width, depth, rotationDeg, stairMat, plankMat, slabMat, ctx));
 
         if (RNG.nextBoolean()) {
             res.addAll(buildChimney(w, ox, oz, roofBaseY + width / 2, rotationDeg, ctx));
@@ -128,7 +196,8 @@ public final class Batiments {
     private static List<Runnable> buildRoof(
             World w, int ox, int oz, int baseY,
             int width, int depth, int rot,
-            Material stairMat, Material fillMat, Village ctx) {
+            Material stairMat, Material fillMat,
+            Material slabMat, Village ctx) {
 
         List<Runnable> a = new ArrayList<>();
         int layers = width / 2;
@@ -179,6 +248,18 @@ public final class Batiments {
             a.add(() -> ctx.setBlockTracked(w, ox + pW[0], overY, oz + pW[1], stairMat));
             a.add(() -> ctx.setBlockTracked(w, ox + pE[0], overY, oz + pE[1], stairMat));
         }
+
+        /* faitage */
+        int ridgeY = baseY + layers;
+        for (int dx = 0; dx < width; dx++) {
+            int[] p = rotate(dx, -1, rot);
+            a.add(() -> ctx.setBlockTracked(w, ox + p[0], ridgeY, oz + p[1], slabMat));
+        }
+        /* remplissage antispawn */
+        for (int dx = 1; dx < width - 1; dx++) {
+            int[] p = rotate(dx, 0, rot);
+            a.add(() -> ctx.setBlockTracked(w, ox + p[0], ridgeY - 1, oz + p[1], slabMat));
+        }
         return a;
     }
 
@@ -197,6 +278,17 @@ public final class Batiments {
         int fx = ox + base[0], fz = oz + base[1], fy = topY + 4;
         a.add(() -> ctx.setBlockTracked(w, fx, fy, fz, Material.CAMPFIRE));
         return a;
+    }
+
+    private static void addShutters(List<Runnable> res, World w, Village ctx,
+                                    int x, int y, int z, BlockFace face) {
+        BlockFace left  = face.getOppositeFace().getClockWise();
+        BlockFace right = face.getClockWise();
+        for (BlockFace side : List.of(left, right)) {
+            int sx = x + side.getModX();
+            int sz = z + side.getModZ();
+            res.add(() -> ctx.setBlockTracked(w, sx, y, sz, Material.OAK_TRAPDOOR));
+        }
     }
 
     /* =================== Helpers =================== */
