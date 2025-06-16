@@ -7,6 +7,7 @@ import org.bukkit.block.data.Orientable;
 import org.bukkit.block.data.Bisected;
 import org.bukkit.block.data.type.Door;
 import org.bukkit.block.data.type.Stairs;
+import org.bukkit.block.data.type.TrapDoor;
 import org.bukkit.entity.EntityType;
 
 import java.util.*;
@@ -319,7 +320,15 @@ public final class Batiments {
         for (BlockFace side : List.of(left, right)) {
             int sx = x + side.getModX();
             int sz = z + side.getModZ();
-            res.add(() -> ctx.setBlockTracked(w, sx, y, sz, shutterMat));
+            res.add(() -> {
+                ctx.setBlockTracked(w, sx, y, sz, shutterMat);
+                Block b = w.getBlockAt(sx, y, sz);
+                if (b.getBlockData() instanceof TrapDoor td) {
+                    td.setFacing(outward);
+                    td.setOpen(true);
+                    b.setBlockData(td, false);
+                }
+            });
         }
     }
 
