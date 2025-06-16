@@ -1,0 +1,15 @@
+# Configuration par défaut pour MinePlugin
+
+# Paramètres de l'éleveur
+# Limite d'animaux par espèce dans un enclos
+# Temps de restock du PNJ en ticks
+# Chance en pourcent d'obtenir de la viande cuite
+# Prix en émeraudes pour 64 viandes
+
+eleveur:
+  animal-limit: 5
+  villager-restock-ticks: 6000   # 5 mn
+  loot-cooked-chance: 5          # %
+  emerald-price:
+    raw-stack: 1   # 64 viandes crues  => 1 émeraude
+    cook-stack: 2  # 64 viandes cuites => 2 émeraudes
