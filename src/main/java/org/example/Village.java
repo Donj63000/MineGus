@@ -180,6 +180,12 @@ public final class Village implements CommandExecutor {
         placedBlocks.add(b.getLocation());
     }
 
+    public void setBlockTracked(World w, int x, int y, int z, BlockData data) {
+        Block b = w.getBlockAt(x, y, z);
+        b.setBlockData(data, false);
+        placedBlocks.add(b.getLocation());
+    }
+
     public Runnable createSpawnerAction(World w, int x, int y, int z, EntityType type) {
         return () -> {
             setBlockTracked(w, x, y, z, Material.SPAWNER);
