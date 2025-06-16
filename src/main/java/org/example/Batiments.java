@@ -4,6 +4,8 @@ import org.bukkit.*;
 import org.bukkit.block.Block;
 import org.bukkit.block.BlockFace;
 import org.bukkit.block.data.Orientable;
+import org.bukkit.block.data.Bisected;
+import org.bukkit.block.data.type.Door;
 import org.bukkit.block.data.type.Stairs;
 import org.bukkit.entity.EntityType;
 
@@ -139,8 +141,15 @@ public final class Batiments {
 
         /* ---------- porte + lanterne de façade ---------- */
         int[] doorRel = rotate(width / 2, 0, rotationDeg);
-        res.add(() -> ctx.setBlockTracked(w, ox + doorRel[0], oy + 1, oz + doorRel[1], doorMat));
-        res.add(() -> ctx.setBlockTracked(w, ox + doorRel[0], oy + 2, oz + doorRel[1], doorMat));
+        BlockFace outward = rotFace(BlockFace.NORTH, rotationDeg);
+        Door bottom = (Door) doorMat.createBlockData();
+        bottom.setFacing(outward);
+        bottom.setHalf(Bisected.Half.BOTTOM);
+        Door top = (Door) doorMat.createBlockData();
+        top.setFacing(outward);
+        top.setHalf(Bisected.Half.TOP);
+        res.add(() -> ctx.setBlockTracked(w, ox + doorRel[0], oy + 1, oz + doorRel[1], bottom));
+        res.add(() -> ctx.setBlockTracked(w, ox + doorRel[0], oy + 2, oz + doorRel[1], top));
         res.add(() -> ctx.setBlockTracked(w, ox + doorRel[0], oy + 3, oz + doorRel[1], Material.LANTERN));
 
         /* ---------- perron 2 × 2 ---------- */
