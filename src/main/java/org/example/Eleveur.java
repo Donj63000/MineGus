@@ -24,6 +24,7 @@ import org.example.TeleportUtils;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
 import org.bukkit.event.block.BlockBreakEvent;
+import org.bukkit.event.block.BlockPlaceEvent;
 import org.bukkit.event.player.PlayerInteractEvent;
 import org.bukkit.event.player.PlayerQuitEvent;
 import org.bukkit.inventory.Inventory;
@@ -263,6 +264,15 @@ public final class Eleveur implements CommandExecutor, Listener {
         Block block = event.getBlock();
         Player p = event.getPlayer();
 
+        // Protection générale de l'enclos
+        for (RanchSession rs : sessions) {
+            if (rs.isInside(block.getLocation()) && !p.isOp()) {
+                event.setCancelled(true);
+                p.sendMessage(ChatColor.RED + "Cet enclos est protégé, vous ne pouvez pas modifier ici !");
+                return;
+            }
+        }
+
         // 1) Interdire le cassage d’un spawner si pas op
         if (block.getType() == Material.SPAWNER && !p.isOp()) {
             for (RanchSession rs : sessions) {
@@ -284,6 +294,20 @@ public final class Eleveur implements CommandExecutor, Listener {
                     saveAllSessions();
                 }
                 break;
+            }
+        }
+    }
+
+    @EventHandler
+    public void onBlockPlace(BlockPlaceEvent event) {
+        Block block = event.getBlock();
+        Player p = event.getPlayer();
+
+        for (RanchSession rs : sessions) {
+            if (rs.isInside(block.getLocation()) && !p.isOp()) {
+                event.setCancelled(true);
+                p.sendMessage(ChatColor.RED + "Cet enclos est protégé, vous ne pouvez pas modifier ici !");
+                return;
             }
         }
     }
