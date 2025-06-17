@@ -46,24 +46,29 @@ public final class Disposition {
                                        Queue<Runnable> q,
                                        TerrainManager.SetBlock sb) {
 
-        int originX = center.getBlockX() - (cols - 1) * spacing / 2;
-        int originZ = center.getBlockZ() - (rows - 1) * spacing / 2;
+        int originX = center.getBlockX();
+        int originZ = center.getBlockZ();
+        int lotW    = smallSize;
+        int grid    = lotW + spacing;
         Random rng  = new Random();
 
         /* --- grille routes + lots --- */
         for (int r = 0; r < rows; r++) {
             for (int c = 0; c < cols; c++) {
 
+                int baseX = originX + (c - (cols - 1) / 2) * grid;
+                int baseZ = originZ + (r - (rows - 1) / 2) * grid;
+
                 /* 1) bande de route (axe N‑S) */
-                int roadX = originX + c * spacing;
+                int roadX = baseX;
                 for (int dz = -roadHalf; dz <= roadHalf; dz++) {
-                    int z = originZ + r * spacing + dz;
+                    int z = baseZ + dz;
                     HouseBuilder.paintRoad(q, roadPalette, roadX, baseY, z, sb);
                 }
 
                 /* 2) choix bâtiment sur le lot */
-                int lotX = originX + c * spacing - smallSize / 2;
-                int lotZ = originZ + r * spacing - smallSize / 2;
+                int lotX = baseX - lotW / 2;
+                int lotZ = baseZ - lotW / 2;
                 double roll = rng.nextDouble();
 
                 if (roll < 0.60) {
@@ -91,8 +96,8 @@ public final class Disposition {
         /* --- lampadaires aux carrefours --- */
         for (int r = 0; r < rows; r++) {
             for (int c = 0; c < cols; c++) {
-                int x = originX + c * spacing;
-                int z = originZ + r * spacing;
+                int x = originX + (c - (cols - 1) / 2) * grid;
+                int z = originZ + (r - (rows - 1) / 2) * grid;
                 q.addAll(HouseBuilder.buildLampPost(x, baseY + 1, z, sb));
             }
         }
