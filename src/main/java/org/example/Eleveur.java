@@ -221,6 +221,13 @@ public final class Eleveur implements CommandExecutor, Listener {
             return;
         }
 
+        // Vérifier même monde
+        if (!c1.getWorld().equals(c2.getWorld())) {
+            player.sendMessage(ChatColor.RED + "Les 2 blocs doivent être dans le même monde !");
+            sel.corner2 = null;
+            return;
+        }
+
         World w = c1.getWorld();
         int y = c1.getY();
         int x1 = c1.getX(), x2 = c2.getX();
