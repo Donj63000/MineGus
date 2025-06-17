@@ -893,7 +893,7 @@ public final class Eleveur implements CommandExecutor, Listener {
         private List<LivingEntity> getEntitiesInZone(EntityType type) {
             BoundingBox box = new BoundingBox(
                     baseX, baseY, baseZ,
-                    baseX + width, baseY + 10, baseZ + length
+                    baseX + width - 1 + 0.99, baseY + 10, baseZ + length - 1 + 0.99
             );
             return world.getNearbyEntities(box, e -> e.getType() == type)
                     .stream()
