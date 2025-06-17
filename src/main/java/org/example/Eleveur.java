@@ -526,16 +526,15 @@ public final class Eleveur implements CommandExecutor, Listener {
 
         RanchSession(JavaPlugin plugin, Location origin, int width, int length) {
             this.plugin = plugin;
+            this.animalLimit = plugin.getConfig().getInt("eleveur.animal-limit", 5);
+            this.ranchLoopPeriodTicks = plugin.getConfig()
+                    .getInt("eleveur.villager-restock-ticks", 40);
             this.world = origin.getWorld();
             this.baseX = origin.getBlockX();
             this.baseY = origin.getBlockY();
             this.baseZ = origin.getBlockZ();
             this.width = width;
             this.length = length;
-
-            this.animalLimit = plugin.getConfig().getInt("eleveur.animal-limit", 5);
-            this.ranchLoopPeriodTicks = plugin.getConfig()
-                    .getInt("eleveur.villager-restock-ticks", 40);
         }
 
         public void start() {
