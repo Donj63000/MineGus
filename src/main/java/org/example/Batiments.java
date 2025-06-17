@@ -186,10 +186,6 @@ public final class Batiments {
         res.addAll(buildRoof(w, ox, oz, roofBaseY, width, depth,
                 rotationDeg, stairMat, plankMat, slabMat, ctx));
 
-        if (RNG.nextBoolean()) {
-            res.addAll(buildChimney(w, ox, oz,
-                    roofBaseY + width / 2, rotationDeg, ctx));
-        }
         return res;
     }
 
@@ -224,7 +220,8 @@ public final class Batiments {
             Material slabMat, Village ctx) {
 
         List<Runnable> a = new ArrayList<>();
-        int layers = width / 2;
+        final int layers = (width - 1) / 2;
+        final boolean doubleRidge = (width % 2 == 0);
 
         for (int layer = 0; layer < layers; layer++) {
             int y = baseY + layer;
@@ -273,37 +270,46 @@ public final class Batiments {
         for (int dx = 0; dx < width; dx++) {
             int[] p = rotate(dx, -1, rot);
             a.add(() -> ctx.setBlockTracked(w, ox + p[0], ridgeY, oz + p[1], slabMat));
-            /* slab dans le creux intérieur pour anti‑spawn et finition */
-            if (dx > 0 && dx < width - 1) {
-                int[] p2 = rotate(dx, 0, rot);
+            int[] p2 = rotate(dx, 0, rot);
+            if (doubleRidge) {
+                a.add(() -> ctx.setBlockTracked(w, ox + p2[0], ridgeY, oz + p2[1], slabMat));
+            } else if (dx > 0 && dx < width - 1) {
                 a.add(() -> ctx.setBlockTracked(w, ox + p2[0], ridgeY - 1, oz + p2[1], slabMat));
             }
         }
+
+        /* cheminée éventuelle */
+        a.addAll(buildChimneyAfterRoof(w, ox, oz, baseY, rot, layers, doubleRidge, ctx));
         return a;
     }
 
     /*════════════════════ CHEMINÉE ════════════════════*/
-    private static List<Runnable> buildChimney(
-            World w, int ox, int oz, int topY, int rot, Village ctx) {
+    private static List<Runnable> buildChimneyAfterRoof(
+            World w, int ox, int oz, int baseY,
+            int rot, int layers, boolean doubleRidge, Village ctx) {
 
         List<Runnable> a = new ArrayList<>();
+        if (!RNG.nextBoolean()) return a;
+
+        int ridgeY = baseY + layers;
+
         int[] base = rotate(1, -1, rot); // arrière‑gauche
         for (int dy = 0; dy <= 3; dy++) {
-            int fx = ox + base[0], fy = topY + dy, fz = oz + base[1];
+            int fx = ox + base[0], fy = ridgeY + dy, fz = oz + base[1];
             a.add(() -> ctx.setBlockTracked(w, fx, fy, fz, Material.BRICKS));
         }
-        int fx = ox + base[0], fz = oz + base[1], fy = topY + 4;
+        int fx = ox + base[0], fz = oz + base[1], fy = ridgeY + 4;
         a.add(() -> ctx.setBlockTracked(w, fx, fy, fz, Material.CAMPFIRE));
 
         /* dalle par-dessus */
-        int slabY = topY + 5;
+        int slabY = ridgeY + 5;
         a.add(() -> ctx.setBlockTracked(w, fx, slabY, fz, Material.BRICK_SLAB));
 
         /* ouverture latérale pour la fumée */
         int[] side = rotate(1, 0, rot);
         int hx = fx + side[0];
         int hz = fz + side[1];
-        int holeY = topY + 3;
+        int holeY = ridgeY + 3;
         a.add(() -> ctx.setBlockTracked(w, hx, holeY, hz, Material.AIR));
 
         return a;
