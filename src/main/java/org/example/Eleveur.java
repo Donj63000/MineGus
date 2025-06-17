@@ -702,11 +702,29 @@ public final class Eleveur implements CommandExecutor, Listener {
         }
 
         private void buildGround() {
-            // Base du sol en herbe
+            List<Block> replaced = new ArrayList<>();
             for (int dx = 0; dx < width; dx++) {
                 for (int dz = 0; dz < length; dz++) {
-                    setBlock(baseX + dx, baseY, baseZ + dz, GROUND_BLOCK);
+                    Block b = world.getBlockAt(baseX + dx, baseY, baseZ + dz);
+                    if (b.getType() != Material.GRASS_BLOCK) {
+                        b.setType(Material.DIRT);
+                        replaced.add(b);
+                    }
                 }
+            }
+
+            if (!replaced.isEmpty()) {
+                new BukkitRunnable() {
+                    @Override
+                    public void run() {
+                        for (Block b : replaced) {
+                            b.setType(Material.GRASS_BLOCK);
+                            world.spawnParticle(Particle.VILLAGER_HAPPY,
+                                    b.getLocation().add(0.5, 1, 0.5),
+                                    5, 0.2, 0.2, 0.2);
+                        }
+                    }
+                }.runTaskLater(plugin, 40L);
             }
         }
 
