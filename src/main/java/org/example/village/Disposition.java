@@ -61,10 +61,9 @@ public final class Disposition {
 
                 /* 1) bande de route (axe N‑S) */
                 int roadX = baseX;
-                for (int dz = -roadHalf; dz <= roadHalf; dz++) {
-                    int z = baseZ + dz;
-                    HouseBuilder.paintRoad(q, roadPalette, roadX, baseY, z, sb);
-                }
+                HouseBuilder.paintStrip(q, roadPalette,
+                        roadX, baseY,
+                        baseZ - roadHalf, baseZ + roadHalf, sb);
 
                 /* 2) choix bâtiment sur le lot */
                 int lotX = baseX - lotW / 2;
