@@ -17,6 +17,7 @@ import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.EntityType;
 import org.bukkit.entity.Golem;
+import org.bukkit.entity.ItemFrame;
 import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Player;
 import org.bukkit.entity.Villager;
@@ -681,6 +682,18 @@ public final class Eleveur implements CommandExecutor, Listener {
             // On place la fence gate
             Block gateBlock = world.getBlockAt(x, y + 1, z);
             gateBlock.setType(Material.DARK_OAK_FENCE_GATE);
+
+            // Ajout d'un ItemFrame orienté vers l'intérieur
+            BlockFace inward;
+            if (x == baseX)               inward = BlockFace.EAST;
+            else if (x == baseX + width - 1) inward = BlockFace.WEST;
+            else if (z == baseZ)            inward = BlockFace.SOUTH;
+            else                             inward = BlockFace.NORTH;
+
+            Location frameLoc = gateBlock.getLocation().add(0.5, 0.5, 0.5);
+            ItemFrame frame = world.spawn(frameLoc, ItemFrame.class);
+            frame.setFacingDirection(inward, true);
+            frame.setItem(new ItemStack(Material.ARROW));
         }
 
         private void buildGround() {
