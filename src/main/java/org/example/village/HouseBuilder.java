@@ -113,6 +113,25 @@ public final class HouseBuilder {
     }
 
     /* -------------------------------------------------------------- */
+    /*  util : bande verticale de route                                */
+    /* -------------------------------------------------------------- */
+    public static void paintStrip(Queue<Runnable> q,
+                                  List<Material> palette,
+                                  int fx, int fy,
+                                  int fz0, int fz1,
+                                  TerrainManager.SetBlock sb) {
+
+        Random R = new Random();
+        int minZ = Math.min(fz0, fz1);
+        int maxZ = Math.max(fz0, fz1);
+        for (int z = minZ; z <= maxZ; z++) {
+            final int fz = z;
+            Material m = palette.get(R.nextInt(palette.size()));
+            q.add(() -> sb.set(fx, fy, fz, m));
+        }
+    }
+
+    /* -------------------------------------------------------------- */
     /* CHAMP (farmland + eau + cultures)                              */
     /* -------------------------------------------------------------- */
     public static List<Runnable> buildFarm(Location base,
