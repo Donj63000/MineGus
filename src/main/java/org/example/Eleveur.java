@@ -578,6 +578,7 @@ public final class Eleveur implements CommandExecutor, Listener {
             buildWalls();
             buildGround();
             applyPath();   // Chemin central
+            ensureCampfire();
             buildRoof();   // Petit toit décoratif
 
             placeChests();
@@ -724,6 +725,20 @@ public final class Eleveur implements CommandExecutor, Listener {
                         lamp.setType(Material.LANTERN);
                     }
                 }
+            }
+        }
+
+        /**
+         * Assure la présence d'un feu de camp au centre.
+         * Place un HAY_BLOCK en support si besoin.
+         */
+        private void ensureCampfire() {
+            int cx = baseX + width / 2;
+            int cz = baseZ + length / 2;
+            Block campfire = world.getBlockAt(cx, baseY + 1, cz);
+            if (campfire.getType() != Material.CAMPFIRE) {
+                setBlock(cx, baseY, cz, Material.HAY_BLOCK);
+                campfire.setType(Material.CAMPFIRE);
             }
         }
 
