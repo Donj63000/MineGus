@@ -126,19 +126,15 @@ public final class Village implements CommandExecutor {
                 spacing, roadHalf, baseY, offX, offZ));
 
         /* maisons */
+        int grid = spacing;
         for (int r = 0; r < rows; r++) {
             for (int c = 0; c < cols; c++) {
 
                 int hx = center.getBlockX() + offX + c * spacing;
                 int hz = center.getBlockZ() + offZ + r * spacing;
 
-                /* orientation façade vers la route */
-                int rot = (r == rows / 2) ? (hz < center.getBlockZ() ? 180 : 0)
-                        : (r < rows / 2)  ? 180 : 0;
-                if (rot == 0 || rot == 180) {
-                    if (c < cols / 2) rot = 90;
-                    else if (c > cols / 2) rot = 270;
-                }
+                int rot = computeHouseRotation(hx, hz, center,
+                        spacing, rows, cols, grid);
 
                 todo.addAll(Batiments.buildHouseRotatedActions(
                         w, new Location(w, hx, baseY, hz),
@@ -378,6 +374,21 @@ public final class Village implements CommandExecutor {
     private void undoVillage() {
         placedBlocks.forEach(loc -> loc.getBlock().setType(Material.AIR, false));
         placedBlocks.clear();
+    }
+
+    /**
+     * Calcule l'orientation optimale pour qu'une maison fasse face à la route
+     * la plus proche. Les paramètres rows, cols et grid sont conservés pour
+     * d'éventuels ajustements futurs.
+     */
+    private int computeHouseRotation(int hx, int hz, Location center,
+                                     int spacing, int rows, int cols, int grid) {
+        int dx = hx - center.getBlockX();
+        int dz = hz - center.getBlockZ();
+
+        if (Math.abs(dx) > Math.abs(dz))
+            return dx > 0 ? 270 : 90;
+        return dz > 0 ? 0 : 180;
     }
 
     private int[] computeBounds(Location c,
