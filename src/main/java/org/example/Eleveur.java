@@ -822,6 +822,9 @@ public final class Eleveur implements CommandExecutor, Listener {
                         baseX + width / 2.0,
                         baseY,
                         baseZ + length / 2.0).add(golems.size() * 2.0 - 1.0, 0, -1.5);
+
+                c.setY(world.getHighestBlockYAt(c) + 1);
+
                 Golem g = (Golem) world.spawnEntity(c, EntityType.IRON_GOLEM);
                 g.setCustomName("Golem Éleveur");
                 golems.add(g);
