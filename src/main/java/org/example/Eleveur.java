@@ -182,7 +182,7 @@ public final class Eleveur implements CommandExecutor, Listener {
         for (int i = 0; i < sessions.size(); i++) {
             RanchSession rs = sessions.get(i);
             Location o = rs.getOrigin();
-            String msg = ChatColor.AQUA + i + " : (" + o.getBlockX() + ", "
+            String msg = ChatColor.AQUA + "" + i + " : (" + o.getBlockX() + ", "
                     + o.getBlockY() + ", " + o.getBlockZ() + ")";
             player.sendMessage(msg);
         }
