@@ -44,7 +44,11 @@ import net.md_5.bungee.api.ChatMessageType;
 import net.md_5.bungee.api.chat.TextComponent;
 
 import java.io.File;
+import java.io.FileWriter;
 import java.io.IOException;
+import java.io.PrintWriter;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.*;
 import org.bukkit.util.BoundingBox;
 
@@ -561,6 +565,9 @@ public final class Eleveur implements CommandExecutor, Listener {
         // Compteur pour le rafraîchissement des trades
         private int tradesCounter = 0;
 
+        // Fichier de log pour les enclos
+        private final File logFile;
+
         RanchSession(JavaPlugin plugin, Location origin, int width, int length) {
             this.plugin = plugin;
             this.animalLimit = plugin.getConfig().getInt("eleveur.animal-limit", 5);
@@ -572,6 +579,7 @@ public final class Eleveur implements CommandExecutor, Listener {
             this.baseZ = origin.getBlockZ();
             this.width = width;
             this.length = length;
+            this.logFile = new File(plugin.getDataFolder(), "ranches.log");
         }
 
         public void start() {
@@ -588,6 +596,8 @@ public final class Eleveur implements CommandExecutor, Listener {
             spawnOrRespawnGolems();
 
             runRanchLoop();
+
+            logEvent("Enclos démarré en " + world.getName() + " (" + baseX + "," + baseY + "," + baseZ + ")");
         }
 
         public void stop() {
@@ -604,6 +614,8 @@ public final class Eleveur implements CommandExecutor, Listener {
                 }
             }
             golems.clear();
+
+            logEvent("Enclos arrêté en " + world.getName() + " (" + baseX + "," + baseY + "," + baseZ + ")");
         }
 
         /**
@@ -1184,6 +1196,25 @@ public final class Eleveur implements CommandExecutor, Listener {
          */
         private void setBlock(int x, int y, int z, Material mat) {
             world.getBlockAt(x, y, z).setType(mat, false);
+        }
+
+        /**
+         * Envoie un message dans un fichier de log dédié.
+         */
+        private void logEvent(String message) {
+            try {
+                if (!logFile.exists()) {
+                    logFile.createNewFile();
+                }
+                try (FileWriter fw = new FileWriter(logFile, true);
+                     PrintWriter pw = new PrintWriter(fw)) {
+                    String ts = LocalDateTime.now()
+                            .format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"));
+                    pw.println("[" + ts + "] " + message);
+                }
+            } catch (IOException e) {
+                plugin.getLogger().warning("[Eleveur] Impossible d'\u00e9crire dans ranches.log");
+            }
         }
     }
 
