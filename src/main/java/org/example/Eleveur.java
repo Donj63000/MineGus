@@ -40,6 +40,8 @@ import org.bukkit.scoreboard.Objective;
 import org.bukkit.scoreboard.Scoreboard;
 import org.bukkit.Particle;
 import org.bukkit.Sound;
+import net.md_5.bungee.api.ChatMessageType;
+import net.md_5.bungee.api.chat.TextComponent;
 
 import java.io.File;
 import java.io.IOException;
@@ -915,6 +917,11 @@ public final class Eleveur implements CommandExecutor, Listener {
             int surplus = inZone.size() - animalLimit;
             if (surplus <= 0) return;
 
+            Location center = new Location(world,
+                    baseX + width / 2.0,
+                    baseY + 1,
+                    baseZ + length / 2.0);
+
             for (int i = 0; i < surplus; i++) {
                 if (inZone.isEmpty()) break;
                 LivingEntity victim = inZone.remove(inZone.size() - 1);
@@ -937,6 +944,13 @@ public final class Eleveur implements CommandExecutor, Listener {
 
                 // Retirer l’animal
                 victim.remove();
+
+                for (Player p : world.getPlayers()) {
+                    if (p.getLocation().distanceSquared(center) <= 15 * 15) {
+                        p.spigot().sendMessage(ChatMessageType.ACTION_BAR,
+                                new TextComponent(ChatColor.RED + "Animal éliminé"));
+                    }
+                }
             }
         }
 
