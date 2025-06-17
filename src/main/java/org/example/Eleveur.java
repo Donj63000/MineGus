@@ -20,6 +20,7 @@ import org.bukkit.entity.Golem;
 import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Player;
 import org.bukkit.entity.Villager;
+import org.example.TeleportUtils;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
 import org.bukkit.event.block.BlockBreakEvent;
@@ -871,7 +872,7 @@ public final class Eleveur implements CommandExecutor, Listener {
 
                 // PNJ se TP au-dessus pour "l’effet"
                 if (rancher != null && !rancher.isDead()) {
-                    rancher.teleportAsync(victim.getLocation().add(0.5, 1, 0.5));
+                    TeleportUtils.safeTeleport(rancher, victim.getLocation().add(0.5, 1, 0.5));
                 }
 
                 // Génère drops
