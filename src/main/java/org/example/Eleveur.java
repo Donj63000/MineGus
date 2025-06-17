@@ -133,6 +133,28 @@ public final class Eleveur implements CommandExecutor, Listener {
             return false;
         }
 
+        if (args.length > 0) {
+            switch (args[0].toLowerCase()) {
+                case "list" -> {
+                    listSessions(player);
+                    return true;
+                }
+                case "delete" -> {
+                    if (args.length < 2) {
+                        player.sendMessage(ChatColor.RED + "/eleveur delete <id>");
+                        return true;
+                    }
+                    try {
+                        int id = Integer.parseInt(args[1]);
+                        deleteSession(player, id);
+                    } catch (NumberFormatException e) {
+                        player.sendMessage(ChatColor.RED + "Index invalide.");
+                    }
+                    return true;
+                }
+            }
+        }
+
         giveRanchSelector(player);
         // Initialise la sélection
         selections.put(player.getUniqueId(), new Selection());
@@ -150,6 +172,32 @@ public final class Eleveur implements CommandExecutor, Listener {
             stick.setItemMeta(meta);
         }
         player.getInventory().addItem(stick);
+    }
+
+    private void listSessions(Player player) {
+        if (sessions.isEmpty()) {
+            player.sendMessage(ChatColor.YELLOW + "Aucun enclos actif.");
+            return;
+        }
+        for (int i = 0; i < sessions.size(); i++) {
+            RanchSession rs = sessions.get(i);
+            Location o = rs.getOrigin();
+            String msg = ChatColor.AQUA + i + " : (" + o.getBlockX() + ", "
+                    + o.getBlockY() + ", " + o.getBlockZ() + ")";
+            player.sendMessage(msg);
+        }
+    }
+
+    private void deleteSession(Player player, int id) {
+        if (id < 0 || id >= sessions.size()) {
+            player.sendMessage(ChatColor.RED + "Index invalide.");
+            return;
+        }
+        RanchSession rs = sessions.get(id);
+        rs.stop();
+        sessions.remove(id);
+        saveAllSessions();
+        player.sendMessage(ChatColor.YELLOW + "Enclos " + id + " supprimé.");
     }
 
     /* ============================================================
@@ -1212,6 +1260,10 @@ public final class Eleveur implements CommandExecutor, Listener {
             map.put("length", length);
             map.put("villager-id", rancher != null ? rancher.getUniqueId().toString() : "");
             return map;
+        }
+
+        public Location getOrigin() {
+            return new Location(world, baseX, baseY, baseZ);
         }
 
         /* ========================================================
