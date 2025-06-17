@@ -268,12 +268,20 @@ public final class Batiments {
         /* faîtage */
         int ridgeY = baseY + layers;
         for (int dx = 0; dx < width; dx++) {
-            int[] p = rotate(dx, -1, rot);
-            a.add(() -> ctx.setBlockTracked(w, ox + p[0], ridgeY, oz + p[1], slabMat));
-            int[] p2 = rotate(dx, 0, rot);
-            if (doubleRidge) {
-                a.add(() -> ctx.setBlockTracked(w, ox + p2[0], ridgeY, oz + p2[1], slabMat));
-            } else if (dx > 0 && dx < width - 1) {
+            boolean ridgePos = dx == layers || (doubleRidge && dx == layers + 1);
+
+            if (ridgePos) {
+                int[] p = rotate(dx, -1, rot);
+                a.add(() -> ctx.setBlockTracked(w, ox + p[0], ridgeY, oz + p[1], slabMat));
+
+                if (doubleRidge) {
+                    int[] p2 = rotate(dx, 0, rot);
+                    a.add(() -> ctx.setBlockTracked(w, ox + p2[0], ridgeY, oz + p2[1], slabMat));
+                }
+            }
+
+            if (dx > 0 && dx < width - 1) {
+                int[] p2 = rotate(dx, 0, rot);
                 a.add(() -> ctx.setBlockTracked(w, ox + p2[0], ridgeY - 1, oz + p2[1], slabMat));
             }
         }
