@@ -556,6 +556,8 @@ public final class Eleveur implements CommandExecutor, Listener {
 
         // Index pour le round-robin des coffres
         private int lastChestIndex = 0;
+        // Compteur pour le rafraîchissement des trades
+        private int tradesCounter = 0;
 
         RanchSession(JavaPlugin plugin, Location origin, int width, int length) {
             this.plugin = plugin;
@@ -891,6 +893,13 @@ public final class Eleveur implements CommandExecutor, Listener {
                     // Transférer inventaire PNJ vers coffres
                     if (rancher != null) {
                         transferPNJInventory();
+                        tradesCounter += ranchLoopPeriodTicks;
+                        if (tradesCounter >= 20 * 60) {
+                            if (rancher != null && !rancher.isDead()) {
+                                setupTrades(rancher);
+                            }
+                            tradesCounter = 0;
+                        }
                     }
                 }
             };
