@@ -10,6 +10,7 @@ eleveur:
   animal-limit: 5
   villager-restock-ticks: 6000   # 5 mn
   loot-cooked-chance: 5          # %
+  species: [CHICKEN, COW, PIG, SHEEP, RABBIT]
   emerald-price:
     raw-stack: 1   # 64 viandes crues  => 1 émeraude
     cook-stack: 2  # 64 viandes cuites => 2 émeraudes
