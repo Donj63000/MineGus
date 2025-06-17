@@ -24,6 +24,7 @@ import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
 import org.bukkit.event.block.BlockBreakEvent;
 import org.bukkit.event.player.PlayerInteractEvent;
+import org.bukkit.event.player.PlayerQuitEvent;
 import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.MerchantRecipe;
@@ -40,6 +41,7 @@ import org.bukkit.Sound;
 import java.io.File;
 import java.io.IOException;
 import java.util.*;
+import org.bukkit.util.BoundingBox;
 
 /**
  * =========================================================
@@ -63,13 +65,8 @@ public final class Eleveur implements CommandExecutor, Listener {
     // Nom du bâton de sélection
     private static final String RANCH_SELECTOR_NAME = ChatColor.GOLD + "Sélecteur d'élevage";
 
-    // Espèces concernées par la limitation
-    private static final List<EntityType> MAIN_SPECIES = Arrays.asList(
-            EntityType.CHICKEN,
-            EntityType.COW,
-            EntityType.PIG,
-            EntityType.SHEEP
-    );
+    // Espèces concernées par la limitation (chargées depuis la config)
+    private static List<EntityType> MAIN_SPECIES;
 
     private final JavaPlugin plugin;
 
@@ -91,6 +88,11 @@ public final class Eleveur implements CommandExecutor, Listener {
 
     public Eleveur(JavaPlugin plugin) {
         this.plugin = plugin;
+
+        MAIN_SPECIES = plugin.getConfig().getStringList("eleveur.species")
+                .stream()
+                .map(EntityType::valueOf)
+                .toList();
 
         // Lier la commande /eleveur
         if (plugin.getCommand("eleveur") != null) {
@@ -393,6 +395,9 @@ public final class Eleveur implements CommandExecutor, Listener {
         if (scoreboardTask != null) {
             scoreboardTask.cancel();
         }
+        for (Player p : Bukkit.getOnlinePlayers()) {
+            removeScoreboard(p);
+        }
         for (RanchSession rs : sessions) {
             rs.stop();
         }
@@ -435,6 +440,11 @@ public final class Eleveur implements CommandExecutor, Listener {
         }
     }
 
+    @EventHandler
+    public void onQuit(PlayerQuitEvent e) {
+        removeScoreboard(e.getPlayer());
+    }
+
     private void updateScoreboard(Player p, RanchSession session) {
         // Scoreboard existant ou nouveau
         Scoreboard sb = playerScoreboards.get(p.getUniqueId());
@@ -460,7 +470,7 @@ public final class Eleveur implements CommandExecutor, Listener {
 
         // ----- animaux + limite -----
         Map<EntityType,Integer> counts = session.countAnimals();
-        int max = session.ANIMAL_LIMIT;
+        int max = session.animalLimit;
         int line = 998;
         for (EntityType type : MAIN_SPECIES) {
             int c = counts.getOrDefault(type, 0);
@@ -489,12 +499,10 @@ public final class Eleveur implements CommandExecutor, Listener {
         private BukkitRunnable ranchTask;
 
         // Limite d’animaux par espèce
-        private final int ANIMAL_LIMIT = plugin.getConfig()
-                .getInt("eleveur.animal-limit", 5);
+        private int animalLimit;
 
         // Délai de boucle de la tâche principale
-        private final int RANCH_LOOP_PERIOD_TICKS = plugin.getConfig()
-                .getInt("eleveur.villager-restock-ticks", 40);
+        private int ranchLoopPeriodTicks;
 
         // Hauteur du mur, 1 bloc de fondation + 2 blocs palette + 1 slab
         private static final int WALL_FOUNDATION_HEIGHT = 1;
@@ -524,6 +532,10 @@ public final class Eleveur implements CommandExecutor, Listener {
             this.baseZ = origin.getBlockZ();
             this.width = width;
             this.length = length;
+
+            this.animalLimit = plugin.getConfig().getInt("eleveur.animal-limit", 5);
+            this.ranchLoopPeriodTicks = plugin.getConfig()
+                    .getInt("eleveur.villager-restock-ticks", 40);
         }
 
         public void start() {
@@ -659,6 +671,10 @@ public final class Eleveur implements CommandExecutor, Listener {
                     if (dz < 0 || dz >= length) continue;
                     Block ground = world.getBlockAt(baseX + dx, baseY, baseZ + dz);
                     ground.setType(Material.DIRT_PATH);
+                    if (dx % 7 == 0) {
+                        Block lamp = ground.getRelative(BlockFace.UP);
+                        lamp.setType(Material.LANTERN);
+                    }
                 }
             }
         }
@@ -831,7 +847,7 @@ public final class Eleveur implements CommandExecutor, Listener {
                     }
                 }
             };
-            ranchTask.runTaskTimer(plugin, 20L, RANCH_LOOP_PERIOD_TICKS);
+            ranchTask.runTaskTimer(plugin, 20L, ranchLoopPeriodTicks);
         }
 
         /**
@@ -840,7 +856,7 @@ public final class Eleveur implements CommandExecutor, Listener {
          */
         private void cullExcessAnimals(EntityType type) {
             List<LivingEntity> inZone = getEntitiesInZone(type);
-            int surplus = inZone.size() - ANIMAL_LIMIT;
+            int surplus = inZone.size() - animalLimit;
             if (surplus <= 0) return;
 
             for (int i = 0; i < surplus; i++) {
@@ -861,7 +877,7 @@ public final class Eleveur implements CommandExecutor, Listener {
 
                 // Effet visuel
                 world.spawnParticle(Particle.CRIT, victim.getLocation().add(0,1,0), 15, 0.3,0.2,0.3, 0.1);
-                world.playSound(victim.getLocation(), Sound.ENTITY_PLAYER_ATTACK_CRIT, 1, 1.2f);
+                world.playSound(victim, Sound.ENTITY_PLAYER_ATTACK_CRIT, 0.7f, 1.2f);
 
                 // Retirer l’animal
                 victim.remove();
@@ -869,24 +885,14 @@ public final class Eleveur implements CommandExecutor, Listener {
         }
 
         private List<LivingEntity> getEntitiesInZone(EntityType type) {
-            List<LivingEntity> result = new ArrayList<>();
-            int minX = baseX, maxX = baseX + width - 1;
-            int minZ = baseZ, maxZ = baseZ + length - 1;
-            int minY = baseY, maxY = baseY + 10;
-            for (Entity e : world.getEntities()) {
-                if (e.getType() == type && e instanceof LivingEntity le) {
-                    Location loc = e.getLocation();
-                    int x = loc.getBlockX();
-                    int y = loc.getBlockY();
-                    int z = loc.getBlockZ();
-                    if (x >= minX && x <= maxX &&
-                            z >= minZ && z <= maxZ &&
-                            y >= minY && y <= maxY) {
-                        result.add(le);
-                    }
-                }
-            }
-            return result;
+            BoundingBox box = new BoundingBox(
+                    baseX, baseY, baseZ,
+                    baseX + width, baseY + 10, baseZ + length
+            );
+            return world.getNearbyEntities(box, e -> e.getType() == type)
+                    .stream()
+                    .map(e -> (LivingEntity) e)
+                    .toList();
         }
 
         /**
@@ -936,6 +942,7 @@ public final class Eleveur implements CommandExecutor, Listener {
         private void transferPNJInventory() {
             if (rancher == null) return;
             Inventory inv = rancher.getInventory();
+            if (Arrays.stream(inv.getContents()).allMatch(Objects::isNull)) return;
 
             for (ItemStack stack : inv.getContents()) {
                 if (stack == null) continue;
