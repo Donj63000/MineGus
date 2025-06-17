@@ -280,6 +280,34 @@ public final class Batiments {
 
         /* cheminée éventuelle */
         a.addAll(buildChimneyAfterRoof(w, ox, oz, baseY, rot, layers, doubleRidge, ctx));
+
+        /* soutènement sous la gouttière */
+        int supportY = baseY - 2;
+        for (int x = -1; x <= width; x++) {
+            int[] n = rotate(x, -1, rot);
+            int[] s = rotate(x, depth, rot);
+            a.add(() -> ctx.setBlockTracked(w, ox + n[0], supportY, oz + n[1], fillMat));
+            a.add(() -> ctx.setBlockTracked(w, ox + s[0], supportY, oz + s[1], fillMat));
+        }
+        for (int z = 0; z < depth; z++) {
+            int[] wv = rotate(-1, z, rot);
+            int[] ev = rotate(width, z, rot);
+            a.add(() -> ctx.setBlockTracked(w, ox + wv[0], supportY, oz + wv[1], fillMat));
+            a.add(() -> ctx.setBlockTracked(w, ox + ev[0], supportY, oz + ev[1], fillMat));
+        }
+
+        /* jambages aux coins de la gouttière */
+        int[][] corners = { { -1, -1 }, { width, -1 }, { -1, depth }, { width, depth } };
+        for (int[] c : corners) {
+            int[] p = rotate(c[0], c[1], rot);
+            for (int y = baseY - 2; y <= baseY - 1; y++) {
+                int px = ox + p[0];
+                int pz = oz + p[1];
+                int py = y;
+                a.add(() -> ctx.setBlockTracked(w, px, py, pz, fillMat));
+            }
+        }
+
         return a;
     }
 
