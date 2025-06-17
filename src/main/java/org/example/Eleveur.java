@@ -518,6 +518,12 @@ public final class Eleveur implements CommandExecutor, Listener {
             obj.getScore(txt).setScore(line--);
         }
 
+        // ----- compteurs viande -----
+        String rawTxt = ChatColor.GRAY + "Cru : " + session.getRawCount();
+        obj.getScore(rawTxt).setScore(line--);
+        String cookTxt = ChatColor.GOLD + "Cuit : " + session.getCookedCount();
+        obj.getScore(cookTxt).setScore(line--);
+
         p.setScoreboard(sb);
     }
 
@@ -567,6 +573,10 @@ public final class Eleveur implements CommandExecutor, Listener {
 
         // Fichier de log pour les enclos
         private final File logFile;
+
+        // Compteurs de viande
+        private int rawCount = 0;
+        private int cookedCount = 0;
 
         RanchSession(JavaPlugin plugin, Location origin, int width, int length) {
             this.plugin = plugin;
@@ -1022,6 +1032,7 @@ public final class Eleveur implements CommandExecutor, Listener {
                     int leather = RNG.nextInt(3);
                     Material rawBeef = (RNG.nextInt(100) < chanceCooked) ? Material.COOKED_BEEF : Material.BEEF;
                     loot.add(new ItemStack(rawBeef, beef));
+                    if (rawBeef == Material.COOKED_BEEF) cookedCount += beef; else rawCount += beef;
                     if (leather > 0) {
                         loot.add(new ItemStack(Material.LEATHER, leather));
                     }
@@ -1031,6 +1042,7 @@ public final class Eleveur implements CommandExecutor, Listener {
                     int f = RNG.nextInt(3);
                     Material raw = (RNG.nextInt(100) < chanceCooked) ? Material.COOKED_CHICKEN : Material.CHICKEN;
                     loot.add(new ItemStack(raw, c));
+                    if (raw == Material.COOKED_CHICKEN) cookedCount += c; else rawCount += c;
                     if (f > 0) {
                         loot.add(new ItemStack(Material.FEATHER, f));
                     }
@@ -1039,11 +1051,13 @@ public final class Eleveur implements CommandExecutor, Listener {
                     int p = 1 + RNG.nextInt(3);
                     Material raw = (RNG.nextInt(100) < chanceCooked) ? Material.COOKED_PORKCHOP : Material.PORKCHOP;
                     loot.add(new ItemStack(raw, p));
+                    if (raw == Material.COOKED_PORKCHOP) cookedCount += p; else rawCount += p;
                 }
                 case SHEEP -> {
                     int m = 1 + RNG.nextInt(2);
                     Material raw = (RNG.nextInt(100) < chanceCooked) ? Material.COOKED_MUTTON : Material.MUTTON;
                     loot.add(new ItemStack(raw, m));
+                    if (raw == Material.COOKED_MUTTON) cookedCount += m; else rawCount += m;
                     loot.add(new ItemStack(Material.WHITE_WOOL, 1));
                 }
                 default -> {}
@@ -1172,6 +1186,16 @@ public final class Eleveur implements CommandExecutor, Listener {
         }
         public boolean hasChests() {
             return !chestBlocks.isEmpty();
+        }
+
+        /* ========================================================
+         *   Accès compteurs
+         * ======================================================== */
+        public int getRawCount() {
+            return rawCount;
+        }
+        public int getCookedCount() {
+            return cookedCount;
         }
 
         /* ========================================================
