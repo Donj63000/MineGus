@@ -22,6 +22,9 @@ import org.bukkit.event.player.PlayerInteractEvent;
 import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.meta.ItemMeta;
+import org.bukkit.inventory.EntityEquipment;
+import org.bukkit.inventory.meta.LeatherArmorMeta;
+import org.bukkit.Color;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.bukkit.scheduler.BukkitRunnable;
 
@@ -485,6 +488,19 @@ public class Mineur implements CommandExecutor, Listener {
             miner.setCustomName("Mineur");
             miner.setCustomNameVisible(true);
             miner.setProfession(Villager.Profession.ARMORER);
+
+            // Pioche visible et casque orange
+            ItemStack pick = new ItemStack(Material.IRON_PICKAXE);
+            ItemStack helmet = new ItemStack(Material.LEATHER_HELMET);
+            helmet.editMeta(m -> ((LeatherArmorMeta) m).setColor(Color.ORANGE));
+
+            EntityEquipment eq = miner.getEquipment();
+            eq.setItemInMainHand(pick);
+            eq.setItemInMainHandDropChance(0);
+            eq.setHelmet(helmet);
+            eq.setHelmetDropChance(0);
+
+            miner.setAI(false);
         }
 
         private void spawnOrRespawnGolems() {
