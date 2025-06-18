@@ -104,9 +104,7 @@ public final class Village implements CommandExecutor {
         int cols     = (int) cfg.get("cols");
         int baseY    = center.getBlockY();
 
-        /* offsets pour centrer la grille */
-        int offX = -((cols - 1) * spacing) / 2;
-        int offZ = -((rows - 1) * spacing) / 2;
+        int grid     = houseW + spacing;
 
         /* répartition spawners PNJ */
         prepareVillagerSpawnerDistribution(rows * cols);
@@ -115,7 +113,7 @@ public final class Village implements CommandExecutor {
 
         /* terrain plat (aire + rebords) */
         int[] bounds = computeBounds(center, rows, cols,
-                houseW, houseD, spacing, offX, offZ);
+                houseW, houseD, grid);
         todo.addAll(prepareGroundActions(w,
                 bounds[0] - roadHalf - 3, bounds[1] + roadHalf + 3,
                 bounds[2] - roadHalf - 3, bounds[3] + roadHalf + 3,
@@ -126,15 +124,13 @@ public final class Village implements CommandExecutor {
 
         /* routes */
         todo.addAll(buildGridRoads(w, center, rows, cols,
-                spacing, roadHalf, baseY, offX, offZ));
+                grid, roadHalf, baseY));
 
         /* maisons */
-        int grid = spacing;
         for (int r = 0; r < rows; r++) {
             for (int c = 0; c < cols; c++) {
-
-                int hx = center.getBlockX() + offX + c * spacing;
-                int hz = center.getBlockZ() + offZ + r * spacing;
+                int hx = center.getBlockX() + (c - (cols - 1) / 2) * grid;
+                int hz = center.getBlockZ() + (r - (rows - 1) / 2) * grid;
 
                 int rot = computeHouseRotation(hx, hz, center,
                         spacing, rows, cols, grid);
@@ -147,7 +143,7 @@ public final class Village implements CommandExecutor {
 
         /* lampadaires */
         todo.addAll(buildCrossLampPosts(w, center, rows, cols,
-                spacing, baseY, offX, offZ));
+                grid, baseY));
 
         /* muraille périphérique */
         todo.addAll(buildWallActions(w,
@@ -254,25 +250,24 @@ public final class Village implements CommandExecutor {
 
     /* ========================= ROUTES ========================= */
     private List<Runnable> buildGridRoads(World w, Location c,
-                                          int rows, int cols, int spacing,
-                                          int half, int y,
-                                          int offX, int offZ) {
+                                          int rows, int cols, int grid,
+                                          int half, int y) {
         List<Runnable> a = new ArrayList<>();
 
         /* horizontales */
         for (int r = 0; r < rows; r++) {
-            int z = c.getBlockZ() + offZ + r * spacing;
+            int z = c.getBlockZ() + (r - (rows - 1) / 2) * grid;
             a.addAll(roadLine(w,
-                    c.getBlockX() + offX - spacing,
-                    c.getBlockX() + offX + (cols - 1) * spacing + spacing,
+                    c.getBlockX() + (-1 - (cols - 1) / 2) * grid,
+                    c.getBlockX() + (cols - (cols - 1) / 2) * grid,
                     z, true, half, y));
         }
         /* verticales */
         for (int col = 0; col < cols; col++) {
-            int x = c.getBlockX() + offX + col * spacing;
+            int x = c.getBlockX() + (col - (cols - 1) / 2) * grid;
             a.addAll(roadLine(w,
-                    c.getBlockZ() + offZ - spacing,
-                    c.getBlockZ() + offZ + (rows - 1) * spacing + spacing,
+                    c.getBlockZ() + (-1 - (rows - 1) / 2) * grid,
+                    c.getBlockZ() + (rows - (rows - 1) / 2) * grid,
                     x, false, half, y));
         }
         return a;
@@ -300,13 +295,13 @@ public final class Village implements CommandExecutor {
 
     /* =============== DÉCOR : lampadaires & puits =============== */
     private List<Runnable> buildCrossLampPosts(World w, Location c,
-                                               int rows, int cols, int spacing,
-                                               int baseY, int offX, int offZ) {
+                                               int rows, int cols, int grid,
+                                               int baseY) {
         List<Runnable> a = new ArrayList<>();
         for (int r = 0; r < rows; r++) {
-            int z = c.getBlockZ() + offZ + r * spacing;
+            int z = c.getBlockZ() + (r - (rows - 1) / 2) * grid;
             for (int col = 0; col < cols; col++) {
-                int x = c.getBlockX() + offX + col * spacing;
+                int x = c.getBlockX() + (col - (cols - 1) / 2) * grid;
                 a.addAll(buildLampPostActions(w, x, baseY + 1, z));
             }
         }
@@ -397,15 +392,15 @@ public final class Village implements CommandExecutor {
     private int[] computeBounds(Location c,
                                 int rows, int cols,
                                 int w, int d,
-                                int spacing, int ox, int oz) {
+                                int grid) {
 
         int minX = Integer.MAX_VALUE, maxX = Integer.MIN_VALUE;
         int minZ = Integer.MAX_VALUE, maxZ = Integer.MIN_VALUE;
 
         for (int r = 0; r < rows; r++)
             for (int col = 0; col < cols; col++) {
-                int hx = c.getBlockX() + ox + col * spacing;
-                int hz = c.getBlockZ() + oz + r * spacing;
+                int hx = c.getBlockX() + (col - (cols - 1) / 2) * grid;
+                int hz = c.getBlockZ() + (r - (rows - 1) / 2) * grid;
                 int[] b = Batiments.computeHouseBounds(hx, hz, w, d, 0);
                 minX = Math.min(minX, b[0]); maxX = Math.max(maxX, b[1]);
                 minZ = Math.min(minZ, b[2]); maxZ = Math.max(maxZ, b[3]);
