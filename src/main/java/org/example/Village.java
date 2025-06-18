@@ -40,7 +40,7 @@ public final class Village implements CommandExecutor {
 
     public void prepareVillagerSpawnerDistribution(int totalHouses) {
         int quota = Math.min(MAX_VIL_SPAWNERS,
-                Math.max(MIN_VIL_SPAWNERS, totalHouses / 3));
+                Math.max(MIN_VIL_SPAWNERS, totalHouses / 2));
         Set<Integer> chosen = new HashSet<>();
         while (chosen.size() < quota) chosen.add(rng.nextInt(totalHouses));
         villagerSpawnerIdx = chosen;
@@ -136,9 +136,12 @@ public final class Village implements CommandExecutor {
 
                 int rot = computeHouseRotation(hx, hz, center);
 
+                double roll = rng.nextDouble();
+                boolean habitation = roll < 0.70;           // lot = house small|big
+
                 todo.addAll(Batiments.buildHouseRotatedActions(
                         w, new Location(w, hx, baseY, hz),
-                        houseW, houseD, rot, this));
+                        houseW, houseD, rot, this, habitation));
             }
         }
 
