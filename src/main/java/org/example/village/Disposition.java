@@ -28,7 +28,7 @@ public final class Disposition {
                                     int villageId) {
 
         scheduleLayout(plugin, center, rows, cols, baseY, villageId,
-                smallSize, spacing, roadHalf,
+                smallSize, bigSize, spacing, roadHalf,
                 roadPalette, roofPalette, wallLogs, wallPlanks, cropSeeds,
                 tasks, sb);
     }
@@ -39,7 +39,7 @@ public final class Disposition {
     private static void scheduleLayout(JavaPlugin plugin,
                                        Location center,
                                        int rows, int cols, int baseY, int villageId,
-                                       int smallSize, int spacing, int roadHalf,
+                                       int smallSize, int bigSize, int spacing, int roadHalf,
                                        List<Material> roadPalette, List<Material> roofPalette,
                                        List<Material> wallLogs,     List<Material> wallPlanks,
                                        List<Material> cropSeeds,
@@ -70,11 +70,22 @@ public final class Disposition {
                 int lotZ = baseZ - lot / 2;
                 double roll = rng.nextDouble();
 
-                if (roll < 0.60) {
+                int size;
+                if (roll < 0.50) {                     // petite maison
+                    size = smallSize;
                     q.addAll(HouseBuilder.buildHouse(
                             plugin,
                             new Location(center.getWorld(), lotX, baseY + 1, lotZ),
-                            smallSize, rng.nextInt(4),
+                            size, rng.nextInt(4),
+                            wallLogs, wallPlanks, roofPalette,
+                            sb, rng, villageId));
+
+                } else if (roll < 0.70) {              // grande maison
+                    size = bigSize;
+                    q.addAll(HouseBuilder.buildHouse(
+                            plugin,
+                            new Location(center.getWorld(), lotX, baseY + 1, lotZ),
+                            size, rng.nextInt(4),
                             wallLogs, wallPlanks, roofPalette,
                             sb, rng, villageId));
 
