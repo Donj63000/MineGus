@@ -128,8 +128,8 @@ public final class Village implements CommandExecutor {
                 Material.SEA_LANTERN           // ~5 %
         );
 
-        /* spawners PNJ : 4 fixes */
-        prepareVillagerSpawnerDistribution(rows * cols);
+        /* aucun spawner dans les maisons */
+        prepareVillagerSpawnerDistribution(0);
 
         Queue<Runnable> todo = new LinkedList<>();
 
@@ -175,6 +175,9 @@ public final class Village implements CommandExecutor {
 
         /* lampadaires de carrefour */
         todo.addAll(buildCrossLampPosts(w, center, rows, cols, grid, baseY));
+
+        /* spawners PNJ aux quatre coins */
+        todo.addAll(buildQuarterVillagerSpawners(w, bounds, baseY));
 
         /* muraille */
         todo.add(() ->
@@ -371,6 +374,33 @@ public final class Village implements CommandExecutor {
                 () -> setBlockTracked(w, x, y + 2, z, Material.CHAIN),
                 () -> setBlockTracked(w, x, y + 3, z, Material.LANTERN)
         );
+    }
+
+    private List<Runnable> buildQuarterVillagerSpawners(World w, int[] b, int y) {
+        List<Runnable> a = new ArrayList<>();
+
+        int cx = (b[0] + b[1]) / 2;
+        int cz = (b[2] + b[3]) / 2;
+        int x1 = (b[0] + cx) / 2;
+        int x2 = (b[1] + cx) / 2;
+        int z1 = (b[2] + cz) / 2;
+        int z2 = (b[3] + cz) / 2;
+
+        int[][] pts = { {x1, z1}, {x2, z1}, {x1, z2}, {x2, z2} };
+        int[][] off = { {1,0}, {-1,0}, {0,1}, {0,-1} };
+
+        for (int[] p : pts) {
+            int px = p[0];
+            int pz = p[1];
+            a.add(createSpawnerAction(w, px, y + 1, pz, EntityType.VILLAGER));
+            for (int[] o : off) {
+                int fx = px + o[0];
+                int fz = pz + o[1];
+                a.add(() -> setBlockTracked(w, fx, y + 1, fz, Material.SEA_LANTERN));
+            }
+        }
+
+        return a;
     }
 
     /* -------------------------- Puits + cloche utilitaires -------------------------- */
