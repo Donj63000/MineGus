@@ -31,6 +31,7 @@ public final class Village implements CommandExecutor {
     private static final int MAX_VIL_SPAWNERS = 8;
     private static final int GOLEM_SPAWNERS   = 2;          // au moins 2 générateurs de golems
     private static final int NPC_CAP          = 100;        // plafond mou pour limiter le lag
+    private static final int WALL_GAP         = 6;          // distance entre les maisons et la muraille
     /* ──────────────────────────────────────────────────────────── */
 
     private final Random rng = new Random();
@@ -160,8 +161,8 @@ public final class Village implements CommandExecutor {
 
         /* muraille périphérique */
         todo.addAll(buildWallActions(w,
-                bounds[0] - 5, bounds[1] + 5,
-                bounds[2] - 5, bounds[3] + 5,
+                bounds[0] - WALL_GAP, bounds[1] + WALL_GAP,
+                bounds[2] - WALL_GAP, bounds[3] + WALL_GAP,
                 baseY));
 
         /* maire + spawners à golem */
