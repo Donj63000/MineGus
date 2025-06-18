@@ -559,6 +559,7 @@ public class Mineur implements CommandExecutor, Listener {
                     // Téléportation "pour le show"
                     Location above = currentBlock.getLocation().add(0.5, 1.0, 0.5);
                     miner.teleport(above);
+                    miner.swingMainHand();
 
                     showMiningEffects(currentBlock, stage);
                     stage++;
