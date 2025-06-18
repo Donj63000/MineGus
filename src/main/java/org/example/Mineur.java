@@ -25,8 +25,12 @@ import org.bukkit.inventory.meta.ItemMeta;
 import org.bukkit.inventory.EntityEquipment;
 import org.bukkit.inventory.meta.LeatherArmorMeta;
 import org.bukkit.Color;
+import org.bukkit.Sound;
+import org.bukkit.Particle;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.bukkit.scheduler.BukkitRunnable;
+import org.bukkit.craftbukkit.CraftWorld;
+import net.minecraft.network.protocol.game.PacketPlayOutBlockBreakAnimation;
 
 import java.io.File;
 import java.io.IOException;
@@ -523,6 +527,8 @@ public class Mineur implements CommandExecutor, Listener {
         private void startMiningTask() {
             miningTask = new BukkitRunnable() {
                 int chestIndex = 0;
+                Block currentBlock = null;
+                int stage = 0;
 
                 @Override
                 public void run() {
@@ -533,27 +539,37 @@ public class Mineur implements CommandExecutor, Listener {
                     spawnOrRespawnGolems();
 
                     // S'il n'y a plus de blocs => stop
-                    if (blocksToMine.isEmpty()) {
+                    if (currentBlock == null && blocksToMine.isEmpty()) {
                         cancel();
                         return;
                     }
 
-                    // Prend le prochain bloc
-                    Block b = blocksToMine.poll();
-                    if (b == null) return;
+                    if (currentBlock == null) {
+                        currentBlock = blocksToMine.poll();
+                        stage = 0;
+                        if (currentBlock == null) return;
+                    }
 
-                    Material mat = b.getType();
+                    Material mat = currentBlock.getType();
                     if (mat == Material.AIR || mat == Material.BEDROCK) {
+                        currentBlock = null;
                         return;
                     }
 
                     // Téléportation "pour le show"
-                    Location above = b.getLocation().add(0.5, 1.0, 0.5);
+                    Location above = currentBlock.getLocation().add(0.5, 1.0, 0.5);
                     miner.teleport(above);
 
+                    showMiningEffects(currentBlock, stage);
+                    stage++;
+
+                    if (stage <= 9) {
+                        return;
+                    }
+
                     // On simule la casse
-                    List<ItemStack> drops = new ArrayList<>(b.getDrops(new ItemStack(Material.IRON_PICKAXE)));
-                    b.setType(Material.AIR, false);
+                    List<ItemStack> drops = new ArrayList<>(currentBlock.getDrops(new ItemStack(Material.IRON_PICKAXE)));
+                    currentBlock.setType(Material.AIR, false);
 
                     // On dépose dans un coffre
                     if (!drops.isEmpty() && !chestBlocks.isEmpty()) {
@@ -569,9 +585,31 @@ public class Mineur implements CommandExecutor, Listener {
                             }
                         }
                     }
+
+                    currentBlock = null;
                 }
             };
-            miningTask.runTaskTimer(plugin, 20L, 20L); // 1 bloc/s
+            miningTask.runTaskTimer(plugin, 2L, 2L); // 1 bloc/s (10 étapes)
+        }
+
+        /* --------------------- Effets visuels de minage --------------------- */
+        private void showMiningEffects(Block b, int stage) {
+            World w = b.getWorld();
+            Location loc = b.getLocation().add(0.5, 0.5, 0.5);
+
+            // 1) Son
+            w.playSound(loc, Sound.BLOCK_STONE_HIT, 0.75f, 1.0f);
+
+            // 2) Particules
+            w.spawnParticle(Particle.BLOCK_CRACK, loc, 12, 0.3, 0.3, 0.3, b.getBlockData());
+
+            // 3) Craquelure visuelle (0‑9)
+            int id = miner.getEntityId();  // identifiant unique pour ne pas empiler
+            PacketPlayOutBlockBreakAnimation packet =
+                    new PacketPlayOutBlockBreakAnimation(id, b.getX(), b.getY(), b.getZ(), stage);
+            ((CraftWorld) w).getHandle().getServer().getPlayerList()
+                    .broadcastPacketNearby(loc.getX(), loc.getY(), loc.getZ(), 32,
+                            ((CraftWorld) w).getHandle().getDimensionKey(), packet);
         }
 
         /* --------------------- Vérifications coffres --------------------- */
