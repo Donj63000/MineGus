@@ -21,6 +21,7 @@ public final class Batiments {
 
     private Batiments() {}
     private static final Random RNG = new Random();
+    private static final int N_LAYOUTS = 4;
 
     /*══════════════════════ API PRINCIPALE ══════════════════════*/
     public static List<Runnable> buildHouseRotatedActions(
@@ -195,22 +196,143 @@ public final class Batiments {
                                     int ox, int oy, int oz,
                                     int width, int depth, int rot) {
 
-        int[] bed     = rotate(2,             2,             rot);
-        int[] craft   = rotate(width - 3,     2,             rot);
-        int[] chest   = rotate(width - 3,     depth - 3,     rot);
-        int[] furnace = rotate(2,             depth - 3,     rot);
-        int[] barrel  = rotate(width / 2,     depth - 2,     rot);
-        int[] lantern = rotate(width / 2,     depth / 2,     rot); // plafond
-        int[] table   = rotate(width / 2,     2,             rot);
+        switch (RNG.nextInt(N_LAYOUTS)) {
+            case 0 -> layoutSimple(res, w, ctx, ox, oy, oz, width, depth, rot);
+            case 1 -> layoutKitchen(res, w, ctx, ox, oy, oz, width, depth, rot);
+            case 2 -> layoutWorkshop(res, w, ctx, ox, oy, oz, width, depth, rot);
+            case 3 -> layoutLibrary(res, w, ctx, ox, oy, oz, width, depth, rot);
+        }
 
-        res.add(() -> ctx.setBlockTracked(w, ox + bed[0],     oy + 1, oz + bed[1],     Material.WHITE_BED));
-        res.add(() -> ctx.setBlockTracked(w, ox + craft[0],   oy + 1, oz + craft[1],   Material.CRAFTING_TABLE));
-        res.add(() -> ctx.setBlockTracked(w, ox + chest[0],   oy + 1, oz + chest[1],   Material.CHEST));
-        res.add(() -> ctx.setBlockTracked(w, ox + furnace[0], oy + 1, oz + furnace[1], Material.BLAST_FURNACE));
-        res.add(() -> ctx.setBlockTracked(w, ox + barrel[0],  oy + 1, oz + barrel[1],  Material.BARREL));
-        res.add(() -> ctx.setBlockTracked(w, ox + table[0],   oy + 1, oz + table[1],   Material.FLOWER_POT));
-        /* éclairage central supplémentaire */
-        res.add(() -> ctx.setBlockTracked(w, ox + lantern[0], oy + 4, oz + lantern[1], Material.LANTERN));
+        addAmbientLighting(res, w, ctx, ox, oy, oz, width, depth, rot);
+    }
+
+    /* --- Layout #0 : proche de votre version d’origine --- */
+    private static void layoutSimple(List<Runnable> res, World w, Village ctx,
+                                     int ox, int oy, int oz,
+                                     int width, int depth, int rot) {
+
+        place(res, w, ctx, ox, oy, oz, rot,
+              new Object[][]{
+                  {2, 2, Material.WHITE_BED},
+                  {width - 3, 2, Material.CRAFTING_TABLE},
+                  {width / 2, 2, Material.FLOWER_POT},
+                  {2, depth - 3, Material.BLAST_FURNACE},
+                  {width - 3, depth - 3, Material.CHEST}
+              });
+
+        maybeJobSite(res, w, ctx, ox, oy, oz, rot, width, depth);
+    }
+
+    /* --- Layout #1 : cuisine rustique --- */
+    private static void layoutKitchen(List<Runnable> res, World w, Village ctx,
+                                      int ox, int oy, int oz,
+                                      int width, int depth, int rot) {
+
+        place(res, w, ctx, ox, oy, oz, rot, new Object[][]{
+                {2, 2, Material.CAULDRON},
+                {3, 2, Material.SMOKER},
+                {4, 2, Material.CAMPFIRE},
+                {width - 3, 2, Material.BARREL},
+                {width - 3, depth - 3, Material.CHEST},
+                {width / 2, depth - 2, Material.WHITE_BED}
+        });
+
+        maybeJobSite(res, w, ctx, ox, oy, oz, rot, width, depth);
+    }
+
+    /* --- Layout #2 : atelier de forgeron --- */
+    private static void layoutWorkshop(List<Runnable> res, World w, Village ctx,
+                                       int ox, int oy, int oz,
+                                       int width, int depth, int rot) {
+
+        place(res, w, ctx, ox, oy, oz, rot, new Object[][]{
+                {2, 2, Material.GRINDSTONE},
+                {3, 2, Material.ANVIL},
+                {4, 2, Material.BLAST_FURNACE},
+                {width - 3, 2, Material.BARREL},
+                {width - 3, depth - 3, Material.CHEST},
+                {width / 2, depth - 2, Material.WHITE_BED}
+        });
+
+        maybeJobSite(res, w, ctx, ox, oy, oz, rot, width, depth);
+    }
+
+    /* --- Layout #3 : mini-bibliothèque --- */
+    private static void layoutLibrary(List<Runnable> res, World w, Village ctx,
+                                      int ox, int oy, int oz,
+                                      int width, int depth, int rot) {
+
+        place(res, w, ctx, ox, oy, oz, rot, new Object[][]{
+                {2, 2, Material.LECTERN},
+                {3, 2, Material.BOOKSHELF},
+                {4, 2, Material.BOOKSHELF},
+                {width - 3, 2, Material.CARTOGRAPHY_TABLE},
+                {width - 3, depth - 3, Material.CHEST},
+                {width / 2, depth - 2, Material.WHITE_BED}
+        });
+
+        maybeJobSite(res, w, ctx, ox, oy, oz, rot, width, depth);
+    }
+
+    /*──────────────────────── helpers ────────────────────────*/
+    private static void place(List<Runnable> res, World w, Village ctx,
+                              int ox, int oy, int oz, int rot,
+                              Object[][] data) {
+        for (Object[] d : data) {
+            int[] p = rotate((int) d[0], (int) d[1], rot);
+            Material m = (Material) d[2];
+            res.add(() -> ctx.setBlockTracked(w, ox + p[0], oy + 1, oz + p[1], m));
+        }
+    }
+
+    private static void addAmbientLighting(List<Runnable> res, World w, Village ctx,
+                                           int ox, int oy, int oz,
+                                           int width, int depth, int rot) {
+
+        /* lanterne centrale */
+        int[] c = rotate(width / 2, depth / 2, rot);
+        res.add(() -> ctx.setBlockTracked(w, ox + c[0], oy + 4, oz + c[1], Material.LANTERN));
+
+        /* torches murales */
+        for (BlockFace dir : List.of(BlockFace.NORTH, BlockFace.EAST,
+                                     BlockFace.SOUTH, BlockFace.WEST)) {
+
+            int dx = switch (dir) { case EAST -> width - 2; case WEST -> 1; default -> width / 2; };
+            int dz = switch (dir) { case SOUTH -> depth - 2; case NORTH -> 1; default -> depth / 2; };
+            int[] p = rotate(dx, dz, rot);
+
+            res.add(() -> {
+                ctx.setBlockTracked(w, ox + p[0], oy + 3, oz + p[1], Material.TORCH);
+                Block torch = w.getBlockAt(ox + p[0], oy + 3, oz + p[1]);
+                if (torch.getBlockData() instanceof org.bukkit.block.data.WallMounted wm) {
+                    wm.setFacing(dir);
+                    torch.setBlockData(wm, false);
+                }
+            });
+        }
+    }
+
+    private static void maybeJobSite(List<Runnable> res, World w, Village ctx,
+                                     int ox, int oy, int oz, int rot,
+                                     int width, int depth) {
+
+        if (!ctx.shouldPlaceSpawner()) return;
+
+        record Pair(Material m, double p) {}
+        List<Pair> pool = List.of(
+            new Pair(Material.COMPOSTER, 0.35),
+            new Pair(Material.GRINDSTONE, 0.25),
+            new Pair(Material.CARTOGRAPHY_TABLE, 0.20),
+            new Pair(Material.LECTERN, 0.20)
+        );
+
+        Material chosen = Material.CRAFTING_TABLE;
+        double r = RNG.nextDouble(), acc = 0;
+        for (Pair p : pool) { acc += p.p; if (r < acc) { chosen = p.m; break; } }
+
+        int[] jp = rotate(width / 2, depth / 2 - 1, rot);
+        final int jx = ox + jp[0], jz = oz + jp[1];
+        res.add(() -> ctx.setBlockTracked(w, jx, oy + 1, jz, chosen));
     }
 
     /*═════════════════════ TOIT ═════════════════════*/
