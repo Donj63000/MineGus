@@ -6,6 +6,7 @@ import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.World;
 import org.bukkit.block.Block;
+import org.bukkit.Chunk;
 import org.bukkit.block.Chest;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandExecutor;
@@ -388,6 +389,9 @@ public class Mineur implements CommandExecutor, Listener {
         // coffres
         private final List<Block> chestBlocks = new ArrayList<>();
 
+        // Chunks maintenus chargés
+        private final Set<Chunk> ticketChunks = new HashSet<>();
+
         // Tâche de minage (BukkitRunnable)
         private BukkitRunnable miningTask;
 
@@ -399,6 +403,9 @@ public class Mineur implements CommandExecutor, Listener {
             this.base = base;
             this.width  = width;
             this.length = length;
+
+            // Maintient les chunks de la zone chargés
+            registerChunks();
 
             // 1) Place cadre
             placeFrame();
@@ -485,6 +492,35 @@ public class Mineur implements CommandExecutor, Listener {
                 b.setType(Material.CHEST, false);
                 chestBlocks.add(b);
             }
+        }
+
+        /* --------------------- Gestion des tickets de chunk ------------------ */
+        private void registerChunks() {
+            World w = base.getWorld();
+            int minX = base.getBlockX();
+            int maxX = base.getBlockX() + width - 1;
+            int minZ = base.getBlockZ();
+            int maxZ = base.getBlockZ() + length - 1;
+
+            int minChunkX = minX >> 4;
+            int maxChunkX = maxX >> 4;
+            int minChunkZ = minZ >> 4;
+            int maxChunkZ = maxZ >> 4;
+
+            for (int cx = minChunkX; cx <= maxChunkX; cx++) {
+                for (int cz = minChunkZ; cz <= maxChunkZ; cz++) {
+                    Chunk chunk = w.getChunkAt(cx, cz);
+                    chunk.addPluginChunkTicket(plugin);
+                    ticketChunks.add(chunk);
+                }
+            }
+        }
+
+        private void unregisterChunks() {
+            for (Chunk c : ticketChunks) {
+                c.removePluginChunkTicket(plugin);
+            }
+            ticketChunks.clear();
         }
 
         /* --------------------- PNJ + golems --------------------- */
@@ -657,6 +693,8 @@ public class Mineur implements CommandExecutor, Listener {
                 g.remove();
             }
             golems.clear();
+
+            unregisterChunks();
         }
 
         /* --------------------- Persistance : toMap() --------------------- */
