@@ -374,7 +374,7 @@ public class Mineur implements CommandExecutor, Listener {
     /* =========================================================== */
     /*  CLASSE INTERNE MiningSession : 1 zone, 1 PNJ, 2 golems...  */
     /* =========================================================== */
-    public static class MiningSession {
+    public class MiningSession {
         private final JavaPlugin plugin;
         private final Location base;  // coin minimal (x, z) + y
         private final int width, length;
@@ -583,7 +583,9 @@ public class Mineur implements CommandExecutor, Listener {
 
                     // S'il n'y a plus de blocs => stop
                     if (blocksToMine.isEmpty()) {
-                        cancel();
+                        stopSession();
+                        sessions.remove(MiningSession.this);
+                        Mineur.this.saveAllSessions();
                         return;
                     }
 
