@@ -295,14 +295,17 @@ public class Mineur implements CommandExecutor, Listener {
             int width  = sec.getInt("width");
             int length = sec.getInt("length");
             int remaining = sec.getInt("remaining", -1);
+            double minerY = sec.getDouble("minerY", by);
 
             Location base = new Location(w, bx, by, bz);
             clearZone(base, width, length,
                     List.of("Mineur", "Golem de minage"));
 
             int finalRemaining = remaining;
+            double finalMinerY = minerY;
             Bukkit.getScheduler().runTaskLater(plugin, () -> {
                 MiningSession session = new MiningSession(plugin, base, width, length);
+                session.moveMinerToY(finalMinerY);
 
                 if (finalRemaining >= 0) {
                     int total = session.blocksToMine.size();
@@ -522,6 +525,13 @@ public class Mineur implements CommandExecutor, Listener {
             }
         }
 
+        private void moveMinerToY(double y) {
+            if (miner == null || miner.isDead()) return;
+            Location loc = miner.getLocation();
+            loc.setY(y);
+            TeleportUtils.safeTeleport(miner, loc);
+        }
+
         /* --------------------- Boucle de minage (1 bloc/s) --------------------- */
         private void startMiningTask() {
             miningTask = new BukkitRunnable() {
@@ -660,6 +670,7 @@ public class Mineur implements CommandExecutor, Listener {
             map.put("z", base.getBlockZ());
             map.put("width",  width);
             map.put("length", length);
+            map.put("minerY", miner != null ? miner.getLocation().getY() : base.getY());
             map.put("remaining", blocksToMine.size());
             return map;
         }
