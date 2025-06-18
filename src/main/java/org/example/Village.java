@@ -152,7 +152,7 @@ public final class Village implements CommandExecutor {
                 List.of(Material.GRAVEL, Material.DIRT_PATH, Material.COARSE_DIRT),
                 List.of(Material.WHEAT_SEEDS),
                 todo,
-                this::setBlockTracked,
+                (x, y, z, m) -> setBlockTracked(w, x, y, z, m),
                 rng.nextInt());
 
         /* lampadaires */
