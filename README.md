@@ -34,9 +34,10 @@ Il rassemble différents paramètres du plugin que vous pouvez ajuster :
 - le prix en émeraudes des piles de viande vendues par le PNJ ;
 - la chance d'obtenir de la viande cuite.
 - la taille des maisons et la grille du village pour la commande `/village`.
+- la marge par défaut de six blocs autour de la muraille du village.
 
 La section `village` du fichier YAML contient notamment `houseSmall`,
-`houseBig`, `roadHalf`, `spacing`, `plazaSize`, `rows` et `cols` pour
+`houseBig`, `roadHalf`, `spacing`, `plazaSize`, `rows`, `cols` et `wallGap` pour
 personnaliser la génération du village.
 
 Le fichier de référence se trouve dans `src/main/resources/config.yml`. Modifiez

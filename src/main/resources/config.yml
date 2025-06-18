@@ -24,3 +24,4 @@ village:
   plazaSize: 9
   rows: 4
   cols: 5
+  wallGap: 6        # marge entre les maisons et la muraille
