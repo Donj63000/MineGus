@@ -9,4 +9,3 @@ Ce dépôt contient un plugin Paper pour Minecraft.
 - Ne modifie jamais le fichier compilé `MinePlugin.jar`.
 - Respecte la structure et le style de code existants.
 
-TEST
