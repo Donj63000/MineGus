@@ -66,13 +66,12 @@ public final class Disposition {
                         baseZ - roadHalf, baseZ + roadHalf, sb);
 
                 /* 2) choix bâtiment sur le lot */
-                int lotX = baseX - lot / 2;
-                int lotZ = baseZ - lot / 2;
                 double roll = rng.nextDouble();
 
-                int size;
                 if (roll < 0.50) {                     // petite maison
-                    size = smallSize;
+                    int size = smallSize;
+                    int lotX = baseX - size / 2;
+                    int lotZ = baseZ - size / 2;
                     q.addAll(HouseBuilder.buildHouse(
                             plugin,
                             new Location(center.getWorld(), lotX, baseY + 1, lotZ),
@@ -81,7 +80,9 @@ public final class Disposition {
                             sb, rng, villageId));
 
                 } else if (roll < 0.70) {              // grande maison
-                    size = bigSize;
+                    int size = bigSize;
+                    int lotX = baseX - size / 2;
+                    int lotZ = baseZ - size / 2;
                     q.addAll(HouseBuilder.buildHouse(
                             plugin,
                             new Location(center.getWorld(), lotX, baseY + 1, lotZ),
@@ -90,11 +91,15 @@ public final class Disposition {
                             sb, rng, villageId));
 
                 } else if (roll < 0.85) {
+                    int lotX = baseX - lot / 2;
+                    int lotZ = baseZ - lot / 2;
                     q.addAll(HouseBuilder.buildFarm(
                             new Location(center.getWorld(), lotX, baseY + 1, lotZ),
                             cropSeeds, sb));
 
                 } else {
+                    int lotX = baseX - lot / 2;
+                    int lotZ = baseZ - lot / 2;
                     q.addAll(HouseBuilder.buildPen(
                             plugin,
                             new Location(center.getWorld(), lotX, baseY + 1, lotZ),
