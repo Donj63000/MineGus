@@ -459,8 +459,8 @@ public class Mineur implements CommandExecutor, Listener {
             int by = base.getBlockY();
             int bz = base.getBlockZ();
 
-            // On mine depuis "by" jusqu'à -58 (ou bedrock)
-            for (int y = by; y >= -58; y--) {
+            // On mine depuis "by" jusqu'à la hauteur minimale du monde
+            for (int y = by; y >= base.getWorld().getMinHeight(); y--) {
                 for (int x = bx; x < bx + width; x++) {
                     for (int z = bz; z < bz + length; z++) {
                         Block b = w.getBlockAt(x, y, z);
@@ -583,7 +583,9 @@ public class Mineur implements CommandExecutor, Listener {
 
                     // S'il n'y a plus de blocs => stop
                     if (blocksToMine.isEmpty()) {
-                        cancel();
+                        stopSession();
+                        Mineur.this.sessions.remove(this);
+                        Mineur.this.saveAllSessions();
                         return;
                     }
 
@@ -635,7 +637,9 @@ public class Mineur implements CommandExecutor, Listener {
             Location loc = b.getLocation().add(0.5, 0.5, 0.5);
             World w = b.getWorld();
 
-            w.playSound(loc, Sound.BLOCK_STONE_BREAK, 0.6f, 1.0f);
+            if (stage == 0 || stage == 9) {
+                w.playSound(loc, Sound.BLOCK_STONE_BREAK, 0.6f, 1.0f);
+            }
             w.spawnParticle(Particle.BLOCK_CRACK, loc, 8, 0.2, 0.2, 0.2, b.getBlockData());
 
             float progress = Math.min(1f, Math.max(0f, stage / 9f));
@@ -647,9 +651,12 @@ public class Mineur implements CommandExecutor, Listener {
 
         /* --------------------- Dépôt des items --------------------- */
         private void depositDrops(List<ItemStack> drops, int chestIndex) {
-            if (drops.isEmpty() || chestBlocks.isEmpty() || miner == null || miner.isDead()) return;
+            if (drops.isEmpty() || chestBlocks.isEmpty()) return;
 
-            Block chestBlock = chestBlocks.get(chestIndex % chestBlocks.size());
+            int size = chestBlocks.size();
+            if (size == 0) return;
+
+            Block chestBlock = chestBlocks.get(chestIndex % size);
             Location dest = chestBlock.getLocation().add(0.5, 1.0, 0.5);
 
             boolean moved = false;
