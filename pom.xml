@@ -29,6 +29,12 @@
             <version>${paper.api.version}</version>
             <scope>provided</scope>
         </dependency>
+        <dependency>
+            <groupId>io.papermc.paper</groupId>
+            <artifactId>paper-mojangapi</artifactId>
+            <version>${paper.api.version}</version>
+            <scope>provided</scope>
+        </dependency>
     </dependencies>
 
     <build>
