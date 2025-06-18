@@ -24,6 +24,14 @@ public final class WallBuilder {
                 boolean edge = Math.abs(dx) == rx + 1 || Math.abs(dz) == rz + 1;
                 if (!edge) continue;
 
+                // PATCH 7  ouverture 3 blocs
+                boolean gateNS = Math.abs(dz) == rz + 1 && Math.abs(dx) <= 1;
+                boolean gateEW = Math.abs(dx) == rx + 1 && Math.abs(dz) <= 1;
+                if (gateNS || gateEW) {
+                    // laisser vide pour l’ouverture
+                    continue;
+                }
+
                 int x = center.getBlockX() + dx;
                 int z = center.getBlockZ() + dz;
                 int groundY = w.getHighestBlockYAt(x, z);
@@ -36,6 +44,11 @@ public final class WallBuilder {
                 // dalle de couronnement
                 int fx = x, fz = z, topY = baseY + 6;
                 q.add(() -> sb.set(fx, topY, fz, Material.SMOOTH_STONE_SLAB));
+                // ensuite, aux deux extrémités de l'ouverture
+                boolean torchNS = Math.abs(dz) == rz + 1 && Math.abs(dx) == 2;
+                boolean torchEW = Math.abs(dx) == rx + 1 && Math.abs(dz) == 2;
+                if (torchNS || torchEW)
+                    q.add(() -> sb.set(fx, topY, fz, Material.WALL_TORCH));
             }
         }
     }
