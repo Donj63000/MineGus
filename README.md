@@ -33,6 +33,11 @@ Il rassemble différents paramètres du plugin que vous pouvez ajuster :
 - la limite d'animaux et le temps de rechargement du PNJ pour la commande `/eleveur` ;
 - le prix en émeraudes des piles de viande vendues par le PNJ ;
 - la chance d'obtenir de la viande cuite.
+- la taille des maisons et la grille du village pour la commande `/village`.
+
+La section `village` du fichier YAML contient notamment `houseSmall`,
+`houseBig`, `roadHalf`, `spacing`, `plazaSize`, `rows` et `cols` pour
+personnaliser la génération du village.
 
 Le fichier de référence se trouve dans `src/main/resources/config.yml`. Modifiez
 uniquement la version copiée dans `plugins/MinePlugin/`.

@@ -14,3 +14,13 @@ eleveur:
   emerald-price:
     raw-stack: 1   # 64 viandes crues  => 1 émeraude
     cook-stack: 2  # 64 viandes cuites => 2 émeraudes
+
+# Paramètres du village
+village:
+  houseSmall: 9
+  houseBig: 11
+  roadHalf: 2
+  spacing: 20
+  plazaSize: 9
+  rows: 4
+  cols: 5

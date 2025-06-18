@@ -58,11 +58,13 @@ public final class Village implements CommandExecutor {
         this.plugin = plugin;
         Objects.requireNonNull(plugin.getCommand("village")).setExecutor(this);
 
-        cfg.put("houseWidth",    9);
-        cfg.put("houseDepth",    9);
-        cfg.put("roadHalf",      2);   // demi‑largeur (=> 3 blocs)
-        cfg.put("houseSpacing", 18);   // route + trottoirs
-        cfg.put("plazaSize",     6);   // 6 × 6
+        cfg.put("houseWidth",    plugin.getConfig().getInt("village.houseSmall", 9));
+        cfg.put("houseDepth",    plugin.getConfig().getInt("village.houseSmall", 9));
+        cfg.put("roadHalf",      plugin.getConfig().getInt("village.roadHalf", 2));
+        cfg.put("houseSpacing",  plugin.getConfig().getInt("village.spacing", 20));
+        cfg.put("plazaSize",     plugin.getConfig().getInt("village.plazaSize", 9));
+        cfg.put("rows",          plugin.getConfig().getInt("village.rows", 4));
+        cfg.put("cols",          plugin.getConfig().getInt("village.cols", 5));
     }
     /* ──────────────────────────────────────────────────────────── */
 
@@ -98,7 +100,8 @@ public final class Village implements CommandExecutor {
         int houseD   = (int) cfg.get("houseDepth");
         int spacing  = (int) cfg.get("houseSpacing");
         int roadHalf = (int) cfg.get("roadHalf");
-        int rows     = 4, cols = 5;
+        int rows     = (int) cfg.get("rows");
+        int cols     = (int) cfg.get("cols");
         int baseY    = center.getBlockY();
 
         /* offsets pour centrer la grille */
