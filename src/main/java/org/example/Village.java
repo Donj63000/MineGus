@@ -22,7 +22,7 @@ import org.bukkit.configuration.file.FileConfiguration;
 import java.util.*;
 
 /**
- * Commande :
+ * Commande :
  *   /village        – génère un village orthogonal (place, routes, maisons)
  *   /village undo   – supprime la dernière génération.
  */
@@ -59,13 +59,13 @@ public final class Village implements CommandExecutor {
     private final JavaPlugin plugin;
     private final List<Location> placedBlocks = new ArrayList<>();
 
-    private int rows;
-    private int cols;
-    private int houseSmall;
-    private int houseBig;
-    private int roadHalf;
-    private int spacing;
-    private int plazaSize;
+    private final int rows;
+    private final int cols;
+    private final int houseSmall;
+    private final int houseBig;
+    private final int roadHalf;
+    private final int spacing;
+    private final int plazaSize;
 
     public Village(JavaPlugin plugin) {
         this.plugin = plugin;
@@ -112,13 +112,8 @@ public final class Village implements CommandExecutor {
         /* ─── paramètres de grille ─── */
         int houseW   = houseSmall;
         int houseD   = houseSmall;
-        int spacing  = this.spacing;
-        int roadHalf = this.roadHalf;
-        int rows     = this.rows;
-        int cols     = this.cols;
-        int baseY    = center.getBlockY();
-
         int grid     = houseW + spacing;
+        int baseY    = center.getBlockY();
 
         /* répartition spawners PNJ */
         prepareVillagerSpawnerDistribution(rows * cols);
@@ -127,21 +122,34 @@ public final class Village implements CommandExecutor {
 
         /* terrain plat (aire + rebords) */
         int maxHouse = Math.max(houseSmall, houseBig);
-        int[] bounds = computeBounds(center, rows, cols,
-                maxHouse, maxHouse, grid);
+        int[] bounds = computeBounds(center, rows, cols, maxHouse, maxHouse, grid);
+
+        /* ╭─────────────────────────────────────────────────────────────╮
+           │ CORRECTIF ALIGNEMENT MURAILLE                               │
+           │ → on recalcule le centre géométrique du village             │
+           ╰─────────────────────────────────────────────────────────────╯ */
+        int villageCenterX = (bounds[0] + bounds[1]) / 2;
+        int villageCenterZ = (bounds[2] + bounds[3]) / 2;
+        Location villageCenter = new Location(w, villageCenterX, baseY, villageCenterZ);
+
+        int rx = (bounds[1] - bounds[0]) / 2 + WALL_GAP;
+        int rz = (bounds[3] - bounds[2]) / 2 + WALL_GAP;
+
+        /* terrain à plat pour la muraille + marge */
         todo.addAll(prepareGroundActions(w,
-                bounds[0] - roadHalf - 5, bounds[1] + roadHalf + 5,
-                bounds[2] - roadHalf - 5, bounds[3] + roadHalf + 5,
+                bounds[0] - roadHalf - 5 - WALL_GAP,
+                bounds[1] + roadHalf + 5 + WALL_GAP,
+                bounds[2] - roadHalf - 5 - WALL_GAP,
+                bounds[3] + roadHalf + 5 + WALL_GAP,
                 baseY));
 
-        /* place centrale */
+        /* place centrale (reste à l’emplacement d’origine) */
         todo.addAll(buildPlaza(w, center.clone(), plazaSize));
 
-        /* routes */
-        todo.addAll(buildGridRoads(w, center, rows, cols,
-                grid, roadHalf, baseY));
+        /* routes internes */
+        todo.addAll(buildGridRoads(w, center, rows, cols, grid, roadHalf, baseY));
 
-        /* lots complets (maisons, fermes, enclos) gérés par Disposition */
+        /* lots (maisons, fermes, etc.) */
         Disposition.buildVillage(plugin,
                 center,
                 rows, cols, baseY,
@@ -155,16 +163,14 @@ public final class Village implements CommandExecutor {
                 (x, y, z, m) -> setBlockTracked(w, x, y, z, m),
                 rng.nextInt());
 
-        /* lampadaires */
-        todo.addAll(buildCrossLampPosts(w, center, rows, cols,
-                grid, baseY));
+        /* lampadaires aux croisements */
+        todo.addAll(buildCrossLampPosts(w, center, rows, cols, grid, baseY));
 
-        /* muraille périphérique */
+        /* muraille périphérique parfaitement centrée */
         todo.add(() ->
                 WallBuilder.build(
-                        center,
-                        (bounds[1] - bounds[0]) / 2,
-                        (bounds[3] - bounds[2]) / 2,
+                        villageCenter,  // ← centre corrigé
+                        rx, rz,
                         baseY,
                         Material.STONE_BRICKS,
                         todo,
@@ -172,9 +178,10 @@ public final class Village implements CommandExecutor {
                 )
         );
 
-        /* maire + spawners à golem */
+        /* maire sur la place (optionnel : rester sur la place historique) */
         todo.add(() -> spawnVillager(w, center.clone().add(1, 1, 1), "Maire"));
 
+        /* spawners à golem – placés sur l’axe E‑O de la place historique */
         int plazaHalf = plazaSize / 2;
         for (int i = 0; i < GOLEM_SPAWNERS; i++) {
             int sign = (i % 2 == 0) ? 1 : -1;            // est / ouest
@@ -186,8 +193,8 @@ public final class Village implements CommandExecutor {
         /* exécution asynchrone (250 blocs / tick) */
         buildActionsInBatches(todo, 250);
 
-        /* tâche de limitation à 100 NPC */
-        VillageEntityManager.startCapTask(plugin, center, NPC_CAP);
+        /* quota 100 NPC : utilise le centre corrigé pour le tri distance² */
+        VillageEntityManager.startCapTask(plugin, villageCenter, NPC_CAP);
     }
 
     /* ====================== I/O BLOCS TRACKÉS ====================== */
@@ -267,7 +274,7 @@ public final class Village implements CommandExecutor {
         a.addAll(buildWellActions(w, c));
         a.add(() -> placeBell(w, c.clone().add(0, 3, 0)));
 
-        // PATCH 5-B  bancs N & S
+        // bancs N & S (patch 5‑B)
         int plazaHalf = size / 2;
         for (int dx = -2; dx <= 2; dx++) {
             int fxN = c.getBlockX() + dx, fzN = c.getBlockZ() - plazaHalf;
@@ -338,7 +345,7 @@ public final class Village implements CommandExecutor {
                 : Material.GRAVEL;      /* 15 % max de dirt path, 0 % coarse */
     }
 
-    /* =============== DÉCOR : lampadaires & puits =============== */
+    /* =============== DÉCOR : lampadaires & puits =============== */
     private List<Runnable> buildCrossLampPosts(World w, Location c,
                                                int rows, int cols, int grid,
                                                int baseY) {
@@ -397,7 +404,6 @@ public final class Village implements CommandExecutor {
         placedBlocks.forEach(loc -> loc.getBlock().setType(Material.AIR, false));
         placedBlocks.clear();
     }
-
 
     private int[] computeBounds(Location c,
                                 int rows, int cols,
