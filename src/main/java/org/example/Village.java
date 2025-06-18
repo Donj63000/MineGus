@@ -4,6 +4,8 @@ import org.bukkit.*;
 import org.bukkit.block.Block;
 import org.bukkit.block.CreatureSpawner;
 import org.bukkit.block.data.BlockData;
+import org.bukkit.block.data.type.Stairs;
+import org.bukkit.block.BlockFace;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandExecutor;
 import org.bukkit.command.CommandSender;
@@ -244,6 +246,30 @@ public final class Village implements CommandExecutor {
         /* puits + cloche */
         a.addAll(buildWellActions(w, c));
         a.add(() -> placeBell(w, c.clone().add(0, 3, 0)));
+
+        // PATCH 5-B  bancs N & S
+        int plazaHalf = size / 2;
+        for (int dx = -2; dx <= 2; dx++) {
+            int fxN = c.getBlockX() + dx, fzN = c.getBlockZ() - plazaHalf;
+            int fxS = c.getBlockX() + dx, fzS = c.getBlockZ() + plazaHalf;
+            final int fnx = fxN, fnz = fzN, fsx = fxS, fsz = fzS;
+            a.add(() -> {
+                setBlockTracked(w, fnx, y + 1, fnz, Material.SPRUCE_STAIRS);
+                Block b = w.getBlockAt(fnx, y + 1, fnz);
+                if (b.getBlockData() instanceof Stairs st) {
+                    st.setFacing(BlockFace.SOUTH);
+                    b.setBlockData(st, false);
+                }
+            });
+            a.add(() -> {
+                setBlockTracked(w, fsx, y + 1, fsz, Material.SPRUCE_STAIRS);
+                Block b = w.getBlockAt(fsx, y + 1, fsz);
+                if (b.getBlockData() instanceof Stairs st) {
+                    st.setFacing(BlockFace.NORTH);
+                    b.setBlockData(st, false);
+                }
+            });
+        }
         return a;
     }
 
