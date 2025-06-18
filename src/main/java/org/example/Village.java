@@ -15,6 +15,7 @@ import org.bukkit.entity.Villager;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.bukkit.scheduler.BukkitRunnable;
 import org.example.village.VillageEntityManager;
+import org.bukkit.configuration.file.FileConfiguration;
 
 import java.util.*;
 
@@ -54,19 +55,27 @@ public final class Village implements CommandExecutor {
     /* ────────────────────────── INSTANCE ───────────────────────── */
     private final JavaPlugin plugin;
     private final List<Location> placedBlocks = new ArrayList<>();
-    private final Map<String, Object> cfg     = new HashMap<>();
+
+    private int rows;
+    private int cols;
+    private int houseSmall;
+    private int houseBig;
+    private int roadHalf;
+    private int spacing;
+    private int plazaSize;
 
     public Village(JavaPlugin plugin) {
         this.plugin = plugin;
         Objects.requireNonNull(plugin.getCommand("village")).setExecutor(this);
 
-        cfg.put("houseWidth",    plugin.getConfig().getInt("village.houseSmall", 9));
-        cfg.put("houseDepth",    plugin.getConfig().getInt("village.houseSmall", 9));
-        cfg.put("roadHalf",      plugin.getConfig().getInt("village.roadHalf", 2));
-        cfg.put("houseSpacing",  plugin.getConfig().getInt("village.spacing", 20));
-        cfg.put("plazaSize",     plugin.getConfig().getInt("village.plazaSize", 9));
-        cfg.put("rows",          plugin.getConfig().getInt("village.rows", 4));
-        cfg.put("cols",          plugin.getConfig().getInt("village.cols", 5));
+        FileConfiguration cfg = plugin.getConfig();
+        this.rows       = cfg.getInt("village.rows", 4);
+        this.cols       = cfg.getInt("village.cols", 5);
+        this.houseSmall = cfg.getInt("village.houseSmall", 9);
+        this.houseBig   = cfg.getInt("village.houseBig", 11);
+        this.roadHalf   = cfg.getInt("village.roadHalf", 2);
+        this.spacing    = cfg.getInt("village.spacing", 20);
+        this.plazaSize  = cfg.getInt("village.plazaSize", 9);
     }
     /* ──────────────────────────────────────────────────────────── */
 
@@ -98,12 +107,12 @@ public final class Village implements CommandExecutor {
         if (w == null) return;
 
         /* ─── paramètres de grille ─── */
-        int houseW   = (int) cfg.get("houseWidth");
-        int houseD   = (int) cfg.get("houseDepth");
-        int spacing  = (int) cfg.get("houseSpacing");
-        int roadHalf = (int) cfg.get("roadHalf");
-        int rows     = (int) cfg.get("rows");
-        int cols     = (int) cfg.get("cols");
+        int houseW   = houseSmall;
+        int houseD   = houseSmall;
+        int spacing  = this.spacing;
+        int roadHalf = this.roadHalf;
+        int rows     = this.rows;
+        int cols     = this.cols;
         int baseY    = center.getBlockY();
 
         int grid     = houseW + spacing;
@@ -122,7 +131,7 @@ public final class Village implements CommandExecutor {
                 baseY));
 
         /* place centrale */
-        todo.addAll(buildPlaza(w, center.clone(), (int) cfg.get("plazaSize")));
+        todo.addAll(buildPlaza(w, center.clone(), plazaSize));
 
         /* routes */
         todo.addAll(buildGridRoads(w, center, rows, cols,
@@ -158,7 +167,7 @@ public final class Village implements CommandExecutor {
         /* maire + spawners à golem */
         todo.add(() -> spawnVillager(w, center.clone().add(1, 1, 1), "Maire"));
 
-        int plazaHalf = ((int) cfg.get("plazaSize")) / 2;
+        int plazaHalf = plazaSize / 2;
         for (int i = 0; i < GOLEM_SPAWNERS; i++) {
             int sign = (i % 2 == 0) ? 1 : -1;            // est / ouest
             int gx   = center.getBlockX() + sign * (plazaHalf + 2);
