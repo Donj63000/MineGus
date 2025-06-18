@@ -46,18 +46,18 @@ public final class Disposition {
                                        Queue<Runnable> q,
                                        TerrainManager.SetBlock sb) {
 
-        int originX = center.getBlockX();
-        int originZ = center.getBlockZ();
-        int lotW    = smallSize;
-        int grid    = lotW + spacing;
+        int lot  = smallSize;                // largeur standard d’une maison
+        int grid = lot + spacing;            // centre-à-centre (lot + rue)
+        int cx   = center.getBlockX();       // repère 0,0 = centre de la place
+        int cz   = center.getBlockZ();
         Random rng  = new Random();
 
         /* --- grille routes + lots --- */
         for (int r = 0; r < rows; r++) {
             for (int c = 0; c < cols; c++) {
 
-                int baseX = originX + (c - (cols - 1) / 2) * grid;
-                int baseZ = originZ + (r - (rows - 1) / 2) * grid;
+                int baseX = cx + (c - (cols - 1) / 2) * grid;
+                int baseZ = cz + (r - (rows - 1) / 2) * grid;
 
                 /* 1) bande de route (axe N‑S) */
                 int roadX = baseX;
@@ -66,8 +66,8 @@ public final class Disposition {
                         baseZ - roadHalf, baseZ + roadHalf, sb);
 
                 /* 2) choix bâtiment sur le lot */
-                int lotX = baseX - lotW / 2;
-                int lotZ = baseZ - lotW / 2;
+                int lotX = baseX - lot / 2;
+                int lotZ = baseZ - lot / 2;
                 double roll = rng.nextDouble();
 
                 if (roll < 0.60) {
@@ -95,8 +95,8 @@ public final class Disposition {
         /* --- lampadaires aux carrefours --- */
         for (int r = 0; r < rows; r++) {
             for (int c = 0; c < cols; c++) {
-                int x = originX + (c - (cols - 1) / 2) * grid;
-                int z = originZ + (r - (rows - 1) / 2) * grid;
+                int x = cx + (c - (cols - 1) / 2) * grid;
+                int z = cz + (r - (rows - 1) / 2) * grid;
                 q.addAll(HouseBuilder.buildLampPost(x, baseY + 1, z, sb));
             }
         }
