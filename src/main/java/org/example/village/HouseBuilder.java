@@ -74,27 +74,20 @@ public final class HouseBuilder {
                                            TerrainManager.SetBlock sb) {
 
         List<Runnable> l = new ArrayList<>();
-        Random R = new Random();
 
         /* segment X */
         int minX = Math.min(x0, x1);
         int maxX = Math.max(x0, x1);
-        for (int x = minX; x <= maxX; x++)
-            for (int dz = -halfWidth; dz <= halfWidth; dz++) {
-                final int fx = x, fz = z0 + dz;
-                Material m = palette.get(R.nextInt(palette.size()));
-                l.add(() -> sb.set(fx, y, fz, m));
-            }
+        for (int x = minX; x <= maxX; x++) {
+            paintStrip(l, palette, x, y, z0 - halfWidth, z0 + halfWidth, sb);
+        }
 
         /* segment Z */
         int minZ = Math.min(z0, z1);
         int maxZ = Math.max(z0, z1);
-        for (int z = minZ; z <= maxZ; z++)
-            for (int dx = -halfWidth; dx <= halfWidth; dx++) {
-                final int fx = x1 + dx, fz = z;
-                Material m = palette.get(R.nextInt(palette.size()));
-                l.add(() -> sb.set(fx, y, fz, m));
-            }
+        for (int dx = -halfWidth; dx <= halfWidth; dx++) {
+            paintStrip(l, palette, x1 + dx, y, minZ, maxZ, sb);
+        }
 
         return l;
     }
@@ -127,6 +120,19 @@ public final class HouseBuilder {
         for (int z = minZ; z <= maxZ; z++) {
             final int fz = z;
             Material m = palette.get(R.nextInt(palette.size()));
+            q.add(() -> sb.set(fx, fy, fz, m));
+        }
+    }
+
+    // PATCH 2-A
+    private static void paintStrip(List<Runnable> q, List<Material> palette,
+                                   int fx, int fy, int fz0, int fz1,
+                                   TerrainManager.SetBlock sb) {
+        Random R = new Random();
+        int min = Math.min(fz0, fz1), max = Math.max(fz0, fz1);
+        for (int z = min; z <= max; z++) {
+            Material m = palette.get(R.nextInt(palette.size()));
+            int fz = z;
             q.add(() -> sb.set(fx, fy, fz, m));
         }
     }
