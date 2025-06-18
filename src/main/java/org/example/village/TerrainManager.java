@@ -21,8 +21,10 @@ public final class TerrainManager {
 
         World w = center.getWorld();
 
+        double radius2 = Math.pow(Math.max(rx, rz) + 4, 2);
         for (int dx = -rx - 2; dx <= rx + 2; dx++) {
             for (int dz = -rz - 2; dz <= rz + 2; dz++) {
+                if (dx * dx + dz * dz > radius2) continue;
                 int x = center.getBlockX() + dx;
                 int z = center.getBlockZ() + dz;
                 int topY = w.getHighestBlockYAt(x, z);
