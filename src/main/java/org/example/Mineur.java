@@ -387,7 +387,7 @@ public class Mineur implements CommandExecutor, Listener {
         private final List<Golem> golems = new ArrayList<>();
 
         // coffres
-        private final List<Block> chestBlocks = new ArrayList<>();
+        private final List<Block> chestArray = new ArrayList<>();
 
         // Chunks maintenus chargés
         private final Set<Chunk> ticketChunks = new HashSet<>();
@@ -490,7 +490,7 @@ public class Mineur implements CommandExecutor, Listener {
                 Location loc = start.clone().add(positiveX ? i : -i, 0, 0);
                 Block b = loc.getBlock();
                 b.setType(Material.CHEST, false);
-                chestBlocks.add(b);
+                chestArray.add(b);
             }
         }
 
@@ -649,38 +649,46 @@ public class Mineur implements CommandExecutor, Listener {
 
         /* --------------------- Dépôt des items --------------------- */
         private void depositDrops(List<ItemStack> drops, int chestIndex) {
-            if (drops.isEmpty() || chestBlocks.isEmpty() || miner == null || miner.isDead()) return;
+            if (drops.isEmpty() || chestArray.isEmpty() || miner == null || miner.isDead()) return;
 
-            int size = chestBlocks.size();
+            int size = chestArray.size();
             if (size == 0) return;
-            Block chestBlock = chestBlocks.get(chestIndex % size);
-            Location dest = chestBlock.getLocation().add(0.5, 1.0, 0.5);
+
+            int idx = chestIndex % size;
+            Block target = chestArray.get(idx);
+            int loops = 0;
+            while (target.getType() != Material.CHEST && loops < size) {
+                idx = (idx + 1) % size;
+                target = chestArray.get(idx);
+                loops++;
+            }
+            if (target.getType() != Material.CHEST) return;
+
+            Location dest = target.getLocation().add(0.5, 1.0, 0.5);
 
             boolean moved = false;
             try { moved = miner.getPathfinder().moveTo(dest, 1.1); }
             catch (NoSuchMethodError | UnsupportedOperationException ignored) { }
             if (!moved) TeleportUtils.safeTeleport(miner, dest);
 
-            if (chestBlock.getType() == Material.CHEST) {
-                Chest c = (Chest) chestBlock.getState();
-                Inventory inv = c.getInventory();
-                for (ItemStack drop : drops) {
-                    inv.addItem(drop);
-                }
+            Chest c = (Chest) target.getState();
+            Inventory inv = c.getInventory();
+            for (ItemStack drop : drops) {
+                inv.addItem(drop);
             }
         }
 
         /* --------------------- Vérifications coffres --------------------- */
         public boolean isChestBlock(Block b) {
-            return chestBlocks.contains(b);
+            return chestArray.contains(b);
         }
 
         public void removeChest(Block b) {
-            chestBlocks.remove(b);
+            chestArray.remove(b);
         }
 
         public boolean hasChests() {
-            return !chestBlocks.isEmpty();
+            return !chestArray.isEmpty();
         }
 
         /* --------------------- Arrêt de la session --------------------- */
