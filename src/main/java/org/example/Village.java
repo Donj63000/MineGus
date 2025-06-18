@@ -29,24 +29,30 @@ import java.util.*;
 public final class Village implements CommandExecutor {
 
     /* ────────────────────────── QUOTAS ────────────────────────── */
-    private static final int MIN_VIL_SPAWNERS = 4;
-    private static final int MAX_VIL_SPAWNERS = 8;
-    private static final int GOLEM_SPAWNERS   = 2;          // au moins 2 générateurs de golems
-    private static final int NPC_CAP          = 100;        // plafond mou pour limiter le lag
-    private static final int WALL_GAP         = 6;          // distance entre les maisons et la muraille
+    private static final int VIL_SPAWNERS    = 4;          // ← fixe : 4 spawners PNJ
+    private static final int GOLEM_SPAWNERS  = 2;          // 2 générateurs de golems
+    private static final int NPC_CAP         = 100;        // plafond mou pour limiter le lag
+    private static final int WALL_GAP        = 6;          // distance entre les maisons et la muraille
     /* ──────────────────────────────────────────────────────────── */
 
     private final Random rng = new Random();
 
-    /* sélection aléatoire des maisons qui recevront un spawner PNJ */
+    /* indices des maisons qui recevront un spawner PNJ */
     private Set<Integer> villagerSpawnerIdx = Collections.emptySet();
     private int currentHouseIdx = 0;
 
+    /** Distribue les 4 spawners de façon régulière dans la grille. */
     public void prepareVillagerSpawnerDistribution(int totalHouses) {
-        int quota = Math.min(MAX_VIL_SPAWNERS,
-                Math.max(MIN_VIL_SPAWNERS, totalHouses / 2));
         Set<Integer> chosen = new HashSet<>();
-        while (chosen.size() < quota) chosen.add(rng.nextInt(totalHouses));
+        if (totalHouses == 0) { villagerSpawnerIdx = chosen; return; }
+
+        /* pas = taille d’un quart de séquence ; on place vers le milieu de chaque quart */
+        double step = (double) totalHouses / VIL_SPAWNERS;
+        for (int i = 0; i < VIL_SPAWNERS; i++) {
+            int idx = (int) Math.round(i * step + step / 2 - 0.5);
+            idx = Math.min(idx, totalHouses - 1);        // garde‑fou
+            chosen.add(idx);
+        }
         villagerSpawnerIdx = chosen;
         currentHouseIdx    = 0;
     }
