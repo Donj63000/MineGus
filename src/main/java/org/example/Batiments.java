@@ -21,6 +21,7 @@ public final class Batiments {
 
     private Batiments() {}
     private static final Random RNG = new Random();
+    private static final int N_LAYOUTS = 4;
 
     /*══════════════════════ API PRINCIPALE ══════════════════════*/
     public static List<Runnable> buildHouseRotatedActions(
@@ -195,23 +196,93 @@ public final class Batiments {
                                     int ox, int oy, int oz,
                                     int width, int depth, int rot) {
 
-        int[] bed     = rotate(2,             2,             rot);
-        int[] craft   = rotate(width - 3,     2,             rot);
-        int[] chest   = rotate(width - 3,     depth - 3,     rot);
-        int[] furnace = rotate(2,             depth - 3,     rot);
-        int[] barrel  = rotate(width / 2,     depth - 2,     rot);
-        int[] lantern = rotate(width / 2,     depth / 2,     rot); // plafond
-        int[] table   = rotate(width / 2,     2,             rot);
+        switch (RNG.nextInt(N_LAYOUTS)) {
+            case 0 -> layoutSimple(res, w, ctx, ox, oy, oz, width, depth, rot);
+            case 1 -> layoutKitchen(res, w, ctx, ox, oy, oz, width, depth, rot);
+            case 2 -> layoutWorkshop(res, w, ctx, ox, oy, oz, width, depth, rot);
+            default -> layoutLibrary(res, w, ctx, ox, oy, oz, width, depth, rot);
+        }
 
-        res.add(() -> ctx.setBlockTracked(w, ox + bed[0],     oy + 1, oz + bed[1],     Material.WHITE_BED));
-        res.add(() -> ctx.setBlockTracked(w, ox + craft[0],   oy + 1, oz + craft[1],   Material.CRAFTING_TABLE));
-        res.add(() -> ctx.setBlockTracked(w, ox + chest[0],   oy + 1, oz + chest[1],   Material.CHEST));
-        res.add(() -> ctx.setBlockTracked(w, ox + furnace[0], oy + 1, oz + furnace[1], Material.BLAST_FURNACE));
-        res.add(() -> ctx.setBlockTracked(w, ox + barrel[0],  oy + 1, oz + barrel[1],  Material.BARREL));
-        res.add(() -> ctx.setBlockTracked(w, ox + table[0],   oy + 1, oz + table[1],   Material.FLOWER_POT));
-        /* éclairage central supplémentaire */
-        res.add(() -> ctx.setBlockTracked(w, ox + lantern[0], oy + 4, oz + lantern[1], Material.LANTERN));
+        addAmbientLighting(res, w, ctx, ox, oy, oz, width, depth, rot);
     }
+
+    private static void layoutSimple(List<Runnable> res, World w, Village ctx,
+                                     int ox, int oy, int oz,
+                                     int width, int depth, int rot) {
+        List<Pair> items = List.of(
+                new Pair(2,             2,             Material.WHITE_BED),
+                new Pair(width - 3,     2,             Material.CRAFTING_TABLE),
+                new Pair(width - 3,     depth - 3,     Material.CHEST),
+                new Pair(2,             depth - 3,     Material.BLAST_FURNACE),
+                new Pair(width / 2,     depth - 2,     Material.BARREL),
+                new Pair(width / 2,     2,             Material.FLOWER_POT)
+        );
+        items.forEach(p -> place(res, w, ctx, ox, oy, oz, rot, p));
+    }
+
+    private static void layoutKitchen(List<Runnable> res, World w, Village ctx,
+                                      int ox, int oy, int oz,
+                                      int width, int depth, int rot) {
+        List<Pair> items = List.of(
+                new Pair(2,             2,             Material.WHITE_BED),
+                new Pair(width - 3,     2,             Material.SMOKER),
+                new Pair(width - 3,     depth - 3,     Material.BARREL),
+                new Pair(2,             depth - 3,     Material.CAULDRON)
+        );
+        items.forEach(p -> place(res, w, ctx, ox, oy, oz, rot, p));
+        maybeJobSite(res, w, ctx, ox, oy, oz, rot,
+                width / 2, depth - 2, Material.COMPOSTER);
+    }
+
+    private static void layoutWorkshop(List<Runnable> res, World w, Village ctx,
+                                       int ox, int oy, int oz,
+                                       int width, int depth, int rot) {
+        List<Pair> items = List.of(
+                new Pair(2,             2,             Material.WHITE_BED),
+                new Pair(width - 3,     2,             Material.SMITHING_TABLE),
+                new Pair(width - 3,     depth - 3,     Material.BLAST_FURNACE),
+                new Pair(2,             depth - 3,     Material.ANVIL)
+        );
+        items.forEach(p -> place(res, w, ctx, ox, oy, oz, rot, p));
+        maybeJobSite(res, w, ctx, ox, oy, oz, rot,
+                width / 2, depth - 2, Material.GRINDSTONE);
+    }
+
+    private static void layoutLibrary(List<Runnable> res, World w, Village ctx,
+                                      int ox, int oy, int oz,
+                                      int width, int depth, int rot) {
+        List<Pair> items = List.of(
+                new Pair(2,             2,             Material.WHITE_BED),
+                new Pair(width - 3,     depth - 3,     Material.CHEST),
+                new Pair(width / 2,     depth - 2,     Material.BOOKSHELF)
+        );
+        items.forEach(p -> place(res, w, ctx, ox, oy, oz, rot, p));
+        maybeJobSite(res, w, ctx, ox, oy, oz, rot,
+                width - 3, 2, Material.LECTERN);
+    }
+
+    private static void place(List<Runnable> res, World w, Village ctx,
+                              int ox, int oy, int oz, int rot, Pair p) {
+        int[] c = rotate(p.x(), p.z(), rot);
+        res.add(() -> ctx.setBlockTracked(w, ox + c[0], oy + 1, oz + c[1], p.mat()));
+    }
+
+    private static void maybeJobSite(List<Runnable> res, World w, Village ctx,
+                                     int ox, int oy, int oz, int rot,
+                                     int dx, int dz, Material m) {
+        if (RNG.nextBoolean()) {
+            place(res, w, ctx, ox, oy, oz, rot, new Pair(dx, dz, m));
+        }
+    }
+
+    private static void addAmbientLighting(List<Runnable> res, World w, Village ctx,
+                                           int ox, int oy, int oz,
+                                           int width, int depth, int rot) {
+        int[] c = rotate(width / 2, depth / 2, rot);
+        res.add(() -> ctx.setBlockTracked(w, ox + c[0], oy + 4, oz + c[1], Material.LANTERN));
+    }
+
+    private record Pair(int x, int z, Material mat) {}
 
     /*═════════════════════ TOIT ═════════════════════*/
     private static List<Runnable> buildRoof(
@@ -255,15 +326,23 @@ public final class Batiments {
         int overY = baseY - 1;
         for (int x = -1; x <= width; x++) {
             int[] n = rotate(x, -1, rot);
+            int nx = n[0];
+            int nz = n[1];
             int[] s = rotate(x, depth, rot);
-            a.add(() -> ctx.setBlockTracked(w, ox + n[0], overY, oz + n[1], stairMat));
-            a.add(() -> ctx.setBlockTracked(w, ox + s[0], overY, oz + s[1], stairMat));
+            int sx = s[0];
+            int sz = s[1];
+            a.add(() -> ctx.setBlockTracked(w, ox + nx, overY, oz + nz, stairMat));
+            a.add(() -> ctx.setBlockTracked(w, ox + sx, overY, oz + sz, stairMat));
         }
         for (int z = 0; z < depth; z++) {
             int[] wv = rotate(-1,   z, rot);
+            int wvx = wv[0];
+            int wvz = wv[1];
             int[] ev = rotate(width, z, rot);
-            a.add(() -> ctx.setBlockTracked(w, ox + wv[0], overY, oz + wv[1], stairMat));
-            a.add(() -> ctx.setBlockTracked(w, ox + ev[0], overY, oz + ev[1], stairMat));
+            int evx = ev[0];
+            int evz = ev[1];
+            a.add(() -> ctx.setBlockTracked(w, ox + wvx, overY, oz + wvz, stairMat));
+            a.add(() -> ctx.setBlockTracked(w, ox + evx, overY, oz + evz, stairMat));
         }
 
         /* faîtage */
@@ -294,15 +373,23 @@ public final class Batiments {
         int supportY = baseY - 2;
         for (int x = -1; x <= width; x++) {
             int[] n = rotate(x, -1, rot);
+            int nx = n[0];
+            int nz = n[1];
             int[] s = rotate(x, depth, rot);
-            a.add(() -> ctx.setBlockTracked(w, ox + n[0], supportY, oz + n[1], fillMat));
-            a.add(() -> ctx.setBlockTracked(w, ox + s[0], supportY, oz + s[1], fillMat));
+            int sx = s[0];
+            int sz = s[1];
+            a.add(() -> ctx.setBlockTracked(w, ox + nx, supportY, oz + nz, fillMat));
+            a.add(() -> ctx.setBlockTracked(w, ox + sx, supportY, oz + sz, fillMat));
         }
         for (int z = 0; z < depth; z++) {
             int[] wv = rotate(-1, z, rot);
+            int wvx = wv[0];
+            int wvz = wv[1];
             int[] ev = rotate(width, z, rot);
-            a.add(() -> ctx.setBlockTracked(w, ox + wv[0], supportY, oz + wv[1], fillMat));
-            a.add(() -> ctx.setBlockTracked(w, ox + ev[0], supportY, oz + ev[1], fillMat));
+            int evx = ev[0];
+            int evz = ev[1];
+            a.add(() -> ctx.setBlockTracked(w, ox + wvx, supportY, oz + wvz, fillMat));
+            a.add(() -> ctx.setBlockTracked(w, ox + evx, supportY, oz + evz, fillMat));
         }
 
         /* jambages aux coins de la gouttière */
