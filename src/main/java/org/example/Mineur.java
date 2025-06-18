@@ -651,7 +651,9 @@ public class Mineur implements CommandExecutor, Listener {
         private void depositDrops(List<ItemStack> drops, int chestIndex) {
             if (drops.isEmpty() || chestBlocks.isEmpty() || miner == null || miner.isDead()) return;
 
-            Block chestBlock = chestBlocks.get(chestIndex % chestBlocks.size());
+            int size = chestBlocks.size();
+            if (size == 0) return;
+            Block chestBlock = chestBlocks.get(chestIndex % size);
             Location dest = chestBlock.getLocation().add(0.5, 1.0, 0.5);
 
             boolean moved = false;
