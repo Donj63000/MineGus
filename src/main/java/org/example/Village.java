@@ -115,6 +115,15 @@ public final class Village implements CommandExecutor {
         int grid     = houseW + spacing;
         int baseY    = center.getBlockY();
 
+        /* palette « route pierre taillée » + éclairage incrusté */
+        final List<Material> roadPalette = List.of(
+                Material.STONE_BRICKS,            // ~80 %
+                Material.MOSSY_STONE_BRICKS,      // ~5 %
+                Material.CRACKED_STONE_BRICKS,    // ~5 %
+                Material.CHISELED_STONE_BRICKS,   // ~5 %
+                Material.SEA_LANTERN             // ~5 %  → lumière
+        );
+
         /* répartition spawners PNJ */
         prepareVillagerSpawnerDistribution(rows * cols);
 
@@ -126,7 +135,6 @@ public final class Village implements CommandExecutor {
 
         /* ╭─────────────────────────────────────────────────────────────╮
            │ CORRECTIF ALIGNEMENT MURAILLE                               │
-           │ → on recalcule le centre géométrique du village             │
            ╰─────────────────────────────────────────────────────────────╯ */
         int villageCenterX = (bounds[0] + bounds[1]) / 2;
         int villageCenterZ = (bounds[2] + bounds[3]) / 2;
@@ -157,7 +165,7 @@ public final class Village implements CommandExecutor {
                 List.of(Material.OAK_LOG),
                 List.of(Material.OAK_PLANKS),
                 List.of(Material.OAK_STAIRS),
-                List.of(Material.GRAVEL, Material.DIRT_PATH, Material.COARSE_DIRT),
+                roadPalette,                     // ← nouvelle palette
                 List.of(Material.WHEAT_SEEDS),
                 todo,
                 (x, y, z, m) -> setBlockTracked(w, x, y, z, m),
@@ -169,7 +177,7 @@ public final class Village implements CommandExecutor {
         /* muraille périphérique parfaitement centrée */
         todo.add(() ->
                 WallBuilder.build(
-                        villageCenter,  // ← centre corrigé
+                        villageCenter,
                         rx, rz,
                         baseY,
                         Material.STONE_BRICKS,
@@ -178,10 +186,10 @@ public final class Village implements CommandExecutor {
                 )
         );
 
-        /* maire sur la place (optionnel : rester sur la place historique) */
+        /* maire sur la place */
         todo.add(() -> spawnVillager(w, center.clone().add(1, 1, 1), "Maire"));
 
-        /* spawners à golem – placés sur l’axe E‑O de la place historique */
+        /* spawners à golem – axe E‑O de la place */
         int plazaHalf = plazaSize / 2;
         for (int i = 0; i < GOLEM_SPAWNERS; i++) {
             int sign = (i % 2 == 0) ? 1 : -1;            // est / ouest
@@ -193,7 +201,7 @@ public final class Village implements CommandExecutor {
         /* exécution asynchrone (250 blocs / tick) */
         buildActionsInBatches(todo, 250);
 
-        /* quota 100 NPC : utilise le centre corrigé pour le tri distance² */
+        /* quota 100 NPC */
         VillageEntityManager.startCapTask(plugin, villageCenter, NPC_CAP);
     }
 
@@ -274,7 +282,7 @@ public final class Village implements CommandExecutor {
         a.addAll(buildWellActions(w, c));
         a.add(() -> placeBell(w, c.clone().add(0, 3, 0)));
 
-        // bancs N & S (patch 5‑B)
+        /* bancs N & S */
         int plazaHalf = size / 2;
         for (int dx = -2; dx <= 2; dx++) {
             int fxN = c.getBlockX() + dx, fzN = c.getBlockZ() - plazaHalf;
@@ -338,11 +346,14 @@ public final class Village implements CommandExecutor {
         return a;
     }
 
+    /** Route : 80 % pierre taillée, 15 % variantes, 5 % éclairage */
     private Material pickRoadMaterial() {
         int v = rng.nextInt(100);
-        return v < 70 ? Material.GRAVEL
-                : v < 85 ? Material.DIRT_PATH
-                : Material.GRAVEL;      /* 15 % max de dirt path, 0 % coarse */
+        return v < 5  ? Material.SEA_LANTERN
+                : v < 20 ? Material.CHISELED_STONE_BRICKS
+                : v < 35 ? Material.CRACKED_STONE_BRICKS
+                : v < 50 ? Material.MOSSY_STONE_BRICKS
+                : Material.STONE_BRICKS;
     }
 
     /* =============== DÉCOR : lampadaires & puits =============== */
