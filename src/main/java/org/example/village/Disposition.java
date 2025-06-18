@@ -100,10 +100,8 @@ public final class Disposition {
                 } else {
                     int lotX = baseX - lot / 2;
                     int lotZ = baseZ - lot / 2;
-                    q.addAll(HouseBuilder.buildPen(
-                            plugin,
-                            new Location(center.getWorld(), lotX, baseY + 1, lotZ),
-                            villageId, sb));
+                    /* NOUVEAU : lot laissé libre = lampadaire central pour la lumière */
+                    q.addAll(HouseBuilder.buildLampPost(lotX, baseY + 1, lotZ, sb));
                 }
             }
         }

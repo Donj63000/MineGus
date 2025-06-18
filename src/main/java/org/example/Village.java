@@ -16,6 +16,7 @@ import org.bukkit.plugin.java.JavaPlugin;
 import org.bukkit.scheduler.BukkitRunnable;
 import org.example.village.VillageEntityManager;
 import org.example.village.WallBuilder;
+import org.example.village.Disposition;
 import org.bukkit.configuration.file.FileConfiguration;
 
 import java.util.*;
@@ -129,8 +130,8 @@ public final class Village implements CommandExecutor {
         int[] bounds = computeBounds(center, rows, cols,
                 maxHouse, maxHouse, grid);
         todo.addAll(prepareGroundActions(w,
-                bounds[0] - roadHalf - 3, bounds[1] + roadHalf + 3,
-                bounds[2] - roadHalf - 3, bounds[3] + roadHalf + 3,
+                bounds[0] - roadHalf - 5, bounds[1] + roadHalf + 5,
+                bounds[2] - roadHalf - 5, bounds[3] + roadHalf + 5,
                 baseY));
 
         /* place centrale */
@@ -140,22 +141,19 @@ public final class Village implements CommandExecutor {
         todo.addAll(buildGridRoads(w, center, rows, cols,
                 grid, roadHalf, baseY));
 
-        /* maisons */
-        for (int r = 0; r < rows; r++) {
-            for (int c = 0; c < cols; c++) {
-                int hx = center.getBlockX() + (c - (cols - 1) / 2) * grid;
-                int hz = center.getBlockZ() + (r - (rows - 1) / 2) * grid;
-
-                int rot = computeHouseRotation(hx, hz, center);
-
-                double roll = rng.nextDouble();
-                boolean habitation = roll < 0.70;           // lot = house small|big
-
-                todo.addAll(Batiments.buildHouseRotatedActions(
-                        w, new Location(w, hx, baseY, hz),
-                        houseW, houseD, rot, this, habitation));
-            }
-        }
+        /* lots complets (maisons, fermes, enclos) gérés par Disposition */
+        Disposition.buildVillage(plugin,
+                center,
+                rows, cols, baseY,
+                houseSmall, houseBig, spacing, roadHalf,
+                List.of(Material.OAK_LOG),
+                List.of(Material.OAK_PLANKS),
+                List.of(Material.OAK_STAIRS),
+                List.of(Material.GRAVEL, Material.DIRT_PATH, Material.COARSE_DIRT),
+                List.of(Material.WHEAT_SEEDS),
+                todo,
+                (x, y, z, m) -> setBlockTracked(w, x, y, z, m),
+                rng.nextInt());
 
         /* lampadaires */
         todo.addAll(buildCrossLampPosts(w, center, rows, cols,
@@ -244,7 +242,7 @@ public final class Village implements CommandExecutor {
             for (int z = minZ; z <= maxZ; z++) {
                 final int fx = x, fz = z;
                 a.add(() -> {
-                    for (int h = 1; h <= 10; h++)
+                    for (int h = 1; h <= 15; h++)   /* nettoie plus haut = feuillage */
                         w.getBlockAt(fx, y + h, fz).setType(Material.AIR, false);
                     setBlockTracked(w, fx, y, fz, Material.GRASS_BLOCK);
                 });
@@ -305,16 +303,16 @@ public final class Village implements CommandExecutor {
         for (int r = 0; r < rows; r++) {
             int z = c.getBlockZ() + (r - (rows - 1) / 2) * grid;
             a.addAll(roadLine(w,
-                    c.getBlockX() + (-1 - (cols - 1) / 2) * grid,
-                    c.getBlockX() + (cols - (cols - 1) / 2) * grid,
+                    c.getBlockX() + (0 - (cols - 1) / 2) * grid,
+                    c.getBlockX() + ((cols - 1) - (cols - 1) / 2) * grid,
                     z, true, half, y));
         }
         /* verticales */
         for (int col = 0; col < cols; col++) {
             int x = c.getBlockX() + (col - (cols - 1) / 2) * grid;
             a.addAll(roadLine(w,
-                    c.getBlockZ() + (-1 - (rows - 1) / 2) * grid,
-                    c.getBlockZ() + (rows - (rows - 1) / 2) * grid,
+                    c.getBlockZ() + (0 - (rows - 1) / 2) * grid,
+                    c.getBlockZ() + ((rows - 1) - (rows - 1) / 2) * grid,
                     x, false, half, y));
         }
         return a;
@@ -335,9 +333,9 @@ public final class Village implements CommandExecutor {
 
     private Material pickRoadMaterial() {
         int v = rng.nextInt(100);
-        return v < 60 ? Material.GRAVEL
+        return v < 70 ? Material.GRAVEL
                 : v < 85 ? Material.DIRT_PATH
-                : Material.COARSE_DIRT;
+                : Material.GRAVEL;      /* 15 % max de dirt path, 0 % coarse */
     }
 
     /* =============== DÉCOR : lampadaires & puits =============== */
@@ -400,18 +398,6 @@ public final class Village implements CommandExecutor {
         placedBlocks.clear();
     }
 
-    /**
-     * Orientation simplifiée : la maison regarde la route la plus proche.
-     * Retourne 0, 90, 180 ou 270°.
-     */
-    private int computeHouseRotation(int hx, int hz, Location plaza) {
-        int dz = Math.abs(hz - plaza.getBlockZ());
-        int dx = Math.abs(hx - plaza.getBlockX());
-        if (dz < dx) {
-            return (hz < plaza.getBlockZ()) ? 180 : 0;   // regarde N ou S
-        }
-        return (hx < plaza.getBlockX()) ? 90 : 270;      // regarde O ou E
-    }
 
     private int[] computeBounds(Location c,
                                 int rows, int cols,
