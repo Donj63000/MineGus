@@ -8,6 +8,7 @@ import org.bukkit.block.data.Bisected;
 import org.bukkit.block.data.type.Door;
 import org.bukkit.block.data.type.Stairs;
 import org.bukkit.block.data.type.TrapDoor;
+import org.bukkit.block.data.Directional;
 import org.bukkit.entity.EntityType;
 
 import java.util.*;
@@ -304,7 +305,7 @@ public final class Batiments {
             res.add(() -> {
                 ctx.setBlockTracked(w, ox + p[0], oy + 3, oz + p[1], Material.TORCH);
                 Block torch = w.getBlockAt(ox + p[0], oy + 3, oz + p[1]);
-                if (torch.getBlockData() instanceof org.bukkit.block.data.WallMounted wm) {
+                if (torch.getBlockData() instanceof Directional wm) {
                     wm.setFacing(dir);
                     torch.setBlockData(wm, false);
                 }
