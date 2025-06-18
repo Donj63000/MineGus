@@ -386,7 +386,7 @@ public class Mineur implements CommandExecutor, Listener {
         private final List<Golem> golems = new ArrayList<>();
 
         // coffres
-        private final Set<Block> chestBlocks = new HashSet<>();
+        private final List<Block> chestBlocks = new ArrayList<>();
 
         // Tâche de minage (BukkitRunnable)
         private BukkitRunnable miningTask;
@@ -613,8 +613,7 @@ public class Mineur implements CommandExecutor, Listener {
         private void depositDrops(List<ItemStack> drops, int chestIndex) {
             if (drops.isEmpty() || chestBlocks.isEmpty() || miner == null || miner.isDead()) return;
 
-            List<Block> list = new ArrayList<>(chestBlocks);
-            Block chestBlock = list.get(chestIndex % list.size());
+            Block chestBlock = chestBlocks.get(chestIndex % chestBlocks.size());
             Location dest = chestBlock.getLocation().add(0.5, 1.0, 0.5);
 
             boolean moved = false;
