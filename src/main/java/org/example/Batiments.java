@@ -27,7 +27,8 @@ public final class Batiments {
             World w, Location start,
             int width, int depth,
             int rotationDeg,
-            Village ctx) {
+            Village ctx,
+            boolean habitation) {
 
         List<Runnable> res = new ArrayList<>();
         int ox = start.getBlockX();
@@ -175,7 +176,7 @@ public final class Batiments {
 
         /* ---------- éventuel spawner PNJ ---------- */
         int[] center = rotate(width / 2, depth / 2, rotationDeg);
-        if (ctx.shouldPlaceSpawner()) {
+        if (habitation && ctx.shouldPlaceSpawner()) {
             res.add(ctx.createSpawnerAction(
                     w, ox + center[0], oy + 1, oz + center[1],
                     EntityType.VILLAGER));
