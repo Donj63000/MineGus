@@ -132,8 +132,7 @@ public final class Village implements CommandExecutor {
                 int hx = center.getBlockX() + (c - (cols - 1) / 2) * grid;
                 int hz = center.getBlockZ() + (r - (rows - 1) / 2) * grid;
 
-                int rot = computeHouseRotation(hx, hz, center,
-                        spacing, rows, cols, grid);
+                int rot = computeHouseRotation(hx, hz, center);
 
                 todo.addAll(Batiments.buildHouseRotatedActions(
                         w, new Location(w, hx, baseY, hz),
@@ -375,18 +374,16 @@ public final class Village implements CommandExecutor {
     }
 
     /**
-     * Calcule l'orientation optimale pour qu'une maison fasse face à la route
-     * la plus proche. Les paramètres rows, cols et grid sont conservés pour
-     * d'éventuels ajustements futurs.
+     * Orientation simplifiée : la maison regarde la route la plus proche.
+     * Retourne 0, 90, 180 ou 270°.
      */
-    private int computeHouseRotation(int hx, int hz, Location center,
-                                     int spacing, int rows, int cols, int grid) {
-        int dx = hx - center.getBlockX();
-        int dz = hz - center.getBlockZ();
-
-        if (Math.abs(dx) > Math.abs(dz))
-            return dx > 0 ? 270 : 90;
-        return dz > 0 ? 0 : 180;
+    private int computeHouseRotation(int hx, int hz, Location plaza) {
+        int dz = Math.abs(hz - plaza.getBlockZ());
+        int dx = Math.abs(hx - plaza.getBlockX());
+        if (dz < dx) {
+            return (hz < plaza.getBlockZ()) ? 180 : 0;   // regarde N ou S
+        }
+        return (hx < plaza.getBlockX()) ? 90 : 270;      // regarde O ou E
     }
 
     private int[] computeBounds(Location c,
