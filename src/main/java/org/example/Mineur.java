@@ -27,6 +27,9 @@ import org.bukkit.inventory.meta.LeatherArmorMeta;
 import org.bukkit.Color;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.bukkit.scheduler.BukkitRunnable;
+import org.bukkit.Particle;
+import org.bukkit.Sound;
+import org.example.TeleportUtils;
 
 import java.io.File;
 import java.io.IOException;
@@ -547,31 +550,75 @@ public class Mineur implements CommandExecutor, Listener {
                         return;
                     }
 
-                    // Téléportation "pour le show"
+                    // Déplacement vers le bloc à miner
                     Location above = b.getLocation().add(0.5, 1.0, 0.5);
-                    miner.teleport(above);
+                    boolean moved = false;
+                    try { moved = miner.getPathfinder().moveTo(above, 1.1); }
+                    catch (NoSuchMethodError | UnsupportedOperationException ignored) { }
+                    if (!moved) TeleportUtils.safeTeleport(miner, above);
 
-                    // On simule la casse
-                    List<ItemStack> drops = new ArrayList<>(b.getDrops(new ItemStack(Material.IRON_PICKAXE)));
-                    b.setType(Material.AIR, false);
+                    // Étale la casse sur quelques ticks
+                    new BukkitRunnable() {
+                        int stage = 0;
 
-                    // On dépose dans un coffre
-                    if (!drops.isEmpty() && !chestBlocks.isEmpty()) {
-                        List<Block> list = new ArrayList<>(chestBlocks);
-                        Block chestBlock = list.get(chestIndex % list.size());
-                        chestIndex++;
-
-                        if (chestBlock.getType() == Material.CHEST) {
-                            Chest c = (Chest) chestBlock.getState();
-                            Inventory inv = c.getInventory();
-                            for (ItemStack drop : drops) {
-                                inv.addItem(drop);
+                        @Override
+                        public void run() {
+                            if (stage < 10) {
+                                showMiningEffects(b, stage);
+                                miner.swingMainHand();
+                                stage++;
+                                return;
                             }
+
+                            List<ItemStack> drops = new ArrayList<>(b.getDrops(new ItemStack(Material.IRON_PICKAXE)));
+                            b.setType(Material.AIR, false);
+                            if (!drops.isEmpty()) {
+                                depositDrops(drops, chestIndex);
+                                chestIndex++;
+                            }
+                            cancel();
                         }
-                    }
+                    }.runTaskTimer(plugin, 0L, 1L);
                 }
             };
             miningTask.runTaskTimer(plugin, 20L, 20L); // 1 bloc/s
+        }
+
+        /* --------------------- Effets de minage --------------------- */
+        private void showMiningEffects(Block b, int stage) {
+            Location loc = b.getLocation().add(0.5, 0.5, 0.5);
+            World w = b.getWorld();
+
+            w.playSound(loc, Sound.BLOCK_STONE_BREAK, 0.6f, 1.0f);
+            w.spawnParticle(Particle.BLOCK_CRACK, loc, 8, 0.2, 0.2, 0.2, b.getBlockData());
+
+            float progress = Math.min(1f, Math.max(0f, stage / 9f));
+            for (Player p : w.getPlayers()) {
+                try { p.sendBlockDamage(b.getLocation(), progress, miner.getEntityId()); }
+                catch (NoSuchMethodError | UnsupportedOperationException ignored) { }
+            }
+        }
+
+        /* --------------------- Dépôt des items --------------------- */
+        private void depositDrops(List<ItemStack> drops, int chestIndex) {
+            if (drops.isEmpty() || chestBlocks.isEmpty() || miner == null || miner.isDead()) return;
+
+            List<Block> list = new ArrayList<>(chestBlocks);
+            Block chestBlock = list.get(chestIndex % list.size());
+            Location dest = chestBlock.getLocation().add(0.5, 1.0, 0.5);
+
+            boolean moved = false;
+            try { moved = miner.getPathfinder().moveTo(dest, 1.1); }
+            catch (NoSuchMethodError | UnsupportedOperationException ignored) { }
+            if (!moved) TeleportUtils.safeTeleport(miner, dest);
+
+            if (chestBlock.getType() == Material.CHEST) {
+                Chest c = (Chest) chestBlock.getState();
+                Inventory inv = c.getInventory();
+                for (ItemStack drop : drops) {
+                    inv.addItem(drop);
+                }
+            }
         }
 
         /* --------------------- Vérifications coffres --------------------- */
