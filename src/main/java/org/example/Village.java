@@ -15,6 +15,7 @@ import org.bukkit.entity.Villager;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.bukkit.scheduler.BukkitRunnable;
 import org.example.village.VillageEntityManager;
+import org.example.village.WallBuilder;
 import org.bukkit.configuration.file.FileConfiguration;
 
 import java.util.*;
@@ -161,10 +162,17 @@ public final class Village implements CommandExecutor {
                 grid, baseY));
 
         /* muraille périphérique */
-        todo.addAll(buildWallActions(w,
-                bounds[0] - WALL_GAP, bounds[1] + WALL_GAP,
-                bounds[2] - WALL_GAP, bounds[3] + WALL_GAP,
-                baseY));
+        todo.add(() ->
+                WallBuilder.build(
+                        center,
+                        (bounds[1] - bounds[0]) / 2,
+                        (bounds[3] - bounds[2]) / 2,
+                        baseY,
+                        Material.STONE_BRICKS,
+                        todo,
+                        (x, y, z, m) -> setBlockTracked(w, x, y, z, m)
+                )
+        );
 
         /* maire + spawners à golem */
         todo.add(() -> spawnVillager(w, center.clone().add(1, 1, 1), "Maire"));
@@ -384,27 +392,6 @@ public final class Village implements CommandExecutor {
     private void placeBell(World w, Location l) {
         setBlockTracked(w, l.getBlockX(),     l.getBlockY(),     l.getBlockZ(), Material.CHAIN);
         setBlockTracked(w, l.getBlockX(), l.getBlockY() - 1, l.getBlockZ(), Material.BELL);
-    }
-
-    /* ========================= MURAILLE ========================= */
-    private List<Runnable> buildWallActions(World w,
-                                            int minX, int maxX,
-                                            int minZ, int maxZ,
-                                            int y) {
-        List<Runnable> a = new ArrayList<>();
-        int h = 5;
-        for (int x = minX; x <= maxX; x++)
-            for (int z = minZ; z <= maxZ; z++) {
-                boolean edge = (x == minX || x == maxX || z == minZ || z == maxZ);
-                if (!edge) continue;
-                for (int dy = 1; dy <= h; dy++) {
-                    final int fx = x, fy = y + dy, fz = z;
-                    a.add(() -> setBlockTracked(w, fx, fy, fz, Material.STONE_BRICKS));
-                }
-                final int fx = x, fz = z, top = y + h;
-                a.add(() -> setBlockTracked(w, fx, top, fz, Material.STONE_BRICK_SLAB));
-            }
-        return a;
     }
 
     /* ==================== UNDO & LIMITES ==================== */
