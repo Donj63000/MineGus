@@ -124,8 +124,9 @@ public final class Village implements CommandExecutor {
         Queue<Runnable> todo = new LinkedList<>();
 
         /* terrain plat (aire + rebords) */
+        int maxHouse = Math.max(houseSmall, houseBig);
         int[] bounds = computeBounds(center, rows, cols,
-                houseW, houseD, grid);
+                maxHouse, maxHouse, grid);
         todo.addAll(prepareGroundActions(w,
                 bounds[0] - roadHalf - 3, bounds[1] + roadHalf + 3,
                 bounds[2] - roadHalf - 3, bounds[3] + roadHalf + 3,
