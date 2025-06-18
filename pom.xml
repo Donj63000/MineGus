@@ -31,7 +31,7 @@
         </dependency>
         <dependency>
             <groupId>io.papermc.paper</groupId>
-            <artifactId>paper</artifactId>
+            <artifactId>paper-mojangapi</artifactId>
             <version>${paper.api.version}</version>
             <scope>provided</scope>
         </dependency>
