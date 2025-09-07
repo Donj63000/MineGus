@@ -64,6 +64,23 @@ Les fonctionnalités sauvegardent leurs informations (YAML) dans `plugins/MinePl
 - `docs/IDEES.md` : idées et notes.
 - `target/` : artefacts de build (ne pas modifier/committer).
 
+## Architecture du projet (qui fait quoi)
+- `org.example.MinePlugin` : point d’entrée. Enregistre `/army` et `/ping`, instancie les modules (`Mineur`, `Agriculture`, `Foret`, `Village`, `Eleveur`, `Armure`), charge/sauve les sessions dans `onEnable/onDisable`.
+- `org.example.Mineur` : gère `/mineur`. Bâton de sélection (2 blocs même Y), cadre + coffres + PNJ mineur + golems, minage vertical, persistance `sessions.yml`, arrêt si tous les coffres cassés.
+- `org.example.Agriculture` : gère `/champ`. Crée terres labourées + irrigation, PNJ fermier + golems, récolte/stockage auto, persistance `farms.yml`.
+- `org.example.Foret` : gère `/foret`. Grille de pousses, récolte et replantation auto, coffres d’angle, persistance `forests.yml`.
+- `org.example.Eleveur` : gère `/eleveur`. Génère un ranch (clôtures, coffres, spawners), limite d’animaux par espèce (depuis `config.yml`), ramassage et stockage, scoreboard, persistance `ranches.yml`.
+- `org.example.Village` : gère `/village` et `undo`. Orchestration asynchrone via une file de `Runnable` pour routes, place, lots, bâtiments, spawners PNJ/golems et muraille; lit la config (`rows`, `cols`, `houseSmall`, `houseBig`, `roadHalf`, `spacing`, `plazaSize`).
+- `org.example.Batiments` : helpers statiques de bâtiments (maisons pivotées, toitures, détails). Écrit via `Village#setBlockTracked` pour permettre l’undo.
+- `org.example.Golem` : sentinelle golem avec rayon de patrouille, retour au point d’ancrage (pathfinder/teleport), attributs ajustés.
+- `org.example.Armure` : gère `/armure`. Donne l’équipement “roi GIDON”, applique/retire les buffs en boucle, invoque des loups gardes à la prise de dégâts et programme leur disparition.
+- `org.example.TeleportUtils` : `safeTeleport` (utilise `teleportAsync` si dispo, sinon `teleport`).
+- `org.example.village.Disposition` : répartition des lots et planification des tâches (routes, maisons, fermes, lampadaires).
+- `org.example.village.HouseBuilder` : génère maisons/fermes/lampadaires; renvoie des actions différées.
+- `org.example.village.TerrainManager` : aplanit/remblaie le terrain; utilitaire `SetBlock` safe.
+- `org.example.village.WallBuilder` : construit la muraille (corps, crénelages, portes, torches) en tâches différées.
+- `org.example.village.VillageEntityManager` : spawn/cleanup des PNJ et golems, taggage par village, limitation de population périodique.
+
 ## Développement
 - Construire : `mvn -q package` (JAR dans `target/`). Tests optionnels : `mvn -q test` (JUnit 5 sous `src/test/java/`).
 - Lancer localement : copier le JAR dans `plugins/` d’un serveur Paper 1.20.x puis démarrer le serveur.
