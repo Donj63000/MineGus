@@ -1,133 +1,100 @@
 # MinePlugin
 
-Ce dépôt contient un plugin Paper pour Minecraft 1.20.x permettant d'automatiser diverses tâches (minage, agriculture, forêt, élevage, etc.).
-Ce mod est actuellement en bêta et continuera d'évoluer. Il est développé par un seul développeur amateur qui prend son temps. Pour l'instant, il est surtout destiné aux petits serveurs entre amis.
-Ce plugin est expérimental et n'est pas stable.
+Plugin Paper pour Minecraft 1.20.x qui automatise diverses tâches (minage, agriculture, forêt, élevage, etc.). Projet en bêta, expérimental, pensé pour de petits serveurs entre amis.
 
 ## Prérequis
+- Java 17 (OpenJDK/Temurin). Vérifier: `java -version`
+- Maven 3.9+ (ou 3.x). Vérifier: `mvn -v`
+- Serveur Paper 1.20.x (recommandé: 1.20.6)
+- IDE recommandé: IntelliJ IDEA, encodage projet en UTF‑8
 
-- **Java 17**
-- **Maven 3.x**
-- Un serveur **Paper 1.20.x**
+Notes:
+- Assurez‑vous que `JAVA_HOME` pointe vers une JDK 17 et que `java`/`mvn` sont dans le `PATH`.
+- Mémoire serveur conseillée ≥ 2 Go pour les tests locaux.
 
 ## Compilation du plugin
-
-1. Clonez ce dépôt puis placez-vous à la racine du projet.
-2. Exécutez `mvn clean package`.
-   - Le fichier `target/MineGus-1.1-SNAPSHOT.jar` est alors généré.
+1. Clonez le dépôt et placez‑vous à la racine du projet.
+2. Exécutez `mvn -q package`.
+   - Le JAR est généré dans `target/MineGus-<version>.jar`.
 
 ## Installation du plugin (.jar)
-
-1. Récupérez le fichier `MineGus-1.1-SNAPSHOT.jar` (généré à l'étape précédente ou fourni dans les releases).
-2. Copiez ce fichier dans le dossier `plugins/` de votre serveur Paper.
-   - Exemple : `/home/user/paper/plugins/MineGus-1.1-SNAPSHOT.jar`.
-3. Lancez ou redémarrez le serveur.
-4. Vérifiez la présence du plugin à l'aide de la commande `/plugins`.
-5. Lors du premier démarrage, un dossier `plugins/MinePlugin/` est créé pour stocker les données et configurations.
+1. Récupérez le JAR généré (ex. `MineGus-1.1-SNAPSHOT.jar`).
+2. Copiez‑le dans le dossier `plugins/` de votre serveur Paper.
+3. Démarrez ou redémarrez le serveur.
+4. Vérifiez `/plugins`. Au premier lancement, `plugins/MinePlugin/` est créé pour les données et la configuration.
 
 ## Configuration
+Après le premier démarrage, éditez `plugins/MinePlugin/config.yml` :
+- limites d’animaux et temps de recharge pour `/eleveur` ;
+- prix en émeraudes des piles vendues ;
+- chance d’obtenir de la viande cuite ;
+- taille des maisons/grille du village pour `/village` ;
+- marge par défaut autour de la muraille.
 
-Après un premier démarrage du serveur, le fichier `plugins/MinePlugin/config.yml` est généré.
-Il rassemble différents paramètres du plugin que vous pouvez ajuster :
-
-- la limite d'animaux et le temps de rechargement du PNJ pour la commande `/eleveur` ;
-- le prix en émeraudes des piles de viande vendues par le PNJ ;
-- la chance d'obtenir de la viande cuite.
-- la taille des maisons et la grille du village pour la commande `/village`.
-- la marge par défaut de six blocs autour de la muraille du village.
-
-La section `village` du fichier YAML contient notamment `houseSmall`,
-`houseBig`, `roadHalf`, `spacing`, `plazaSize`, `rows`, `cols` et `wallGap` pour
-personnaliser la génération du village.
-
-Le fichier de référence se trouve dans `src/main/resources/config.yml`. Modifiez
-uniquement la version copiée dans `plugins/MinePlugin/`.
+La section `village` expose notamment `houseSmall`, `houseBig`, `roadHalf`, `spacing`, `plazaSize`, `rows`, `cols`, `wallGap`. Le fichier de référence est `src/main/resources/config.yml` (ne modifiez pas celui‑ci, utilisez la copie dans `plugins/MinePlugin/`).
 
 ## Mode en jeu
-
-Une fois le plugin installé et le serveur relancé :
-1. Connectez-vous avec les droits d’opérateur.
-2. Tapez `/ping` pour confirmer que MinePlugin est actif.
-3. Utilisez ensuite les commandes listées plus bas pour créer vos premières zones automatisées.
-4. Pour arrêter une zone (mine, champ, forêt ou ranch), retirez tous les coffres associés.
-5. Les données sont sauvegardées dans `plugins/MinePlugin/` et restaurées au redémarrage.
+1. Connectez‑vous (opérateur) et tapez `/ping` pour vérifier le chargement.
+2. Utilisez les commandes ci‑dessous pour créer vos premières zones.
+3. Pour arrêter une zone (mine, champ, forêt, ranch), retirez tous les coffres associés.
+4. Les données sont sauvegardées dans `plugins/MinePlugin/` et restaurées au redémarrage.
 
 ## Commandes disponibles
+| Commande    | Description rapide                                                |
+|-------------|-------------------------------------------------------------------|
+| `/ping`     | Vérifie que le plugin répond (renvoie « Pong! »).                 |
+| `/army`     | Invoque temporairement 5 loups et 2 golems protecteurs.           |
+| `/mineur`   | Lance un mineur automatique dans une zone sélectionnée.           |
+| `/champ`    | Crée un champ agricole automatisé.                                |
+| `/foret`    | Met en place une forêt avec récolte et replantation automatiques. |
+| `/village`  | Génère un petit village complet près du joueur.                   |
+| `/eleveur`  | Construit un enclos d’élevage automatisé.                         |
+| `/armure`   | Donne l’armure légendaire du roi GIDON.                           |
 
-| Commande | Description rapide |
-|----------|-------------------|
-| `/ping` | Vérifie que le plugin répond (renvoie « Pong ! »). |
-| `/army` | Invoque temporairement 5 loups et 2 golems pour vous protéger. |
-| `/mineur` | Lance un mineur automatique sur une zone définie. |
-| `/champ` | Crée un champ agricole automatisé. |
-| `/foret` | Met en place une petite forêt avec récolte automatique. |
-| `/village` | Génère un village complet près du joueur. |
-| `/eleveur` | Construit un enclos d’élevage automatisé. |
-| `/armure` | Donne l’Armure légendaire du roi GIDON. |
-
-## Détails des commandes
-
-### `/ping`
-
-Simple commande de test : entrez `/ping` dans le chat pour vérifier que le plugin est bien chargé. Le message « Pong ! » doit apparaître.
-
-### `/army`
-
-Fait apparaître autour de vous cinq loups apprivoisés ainsi que deux golems. Ils protègent le joueur pendant cinq minutes puis disparaissent automatiquement.
-Utilisez cette commande lorsque vous explorez des zones dangereuses.
-
-### `/mineur`
-
-1. Tapez `/mineur` pour recevoir un bâton nommé « Sélecteur de mine ».
-2. Sélectionnez deux blocs au même niveau (clic gauche puis clic droit) : cela définit la largeur et la longueur de la zone.
-3. Un PNJ mineur et deux golems apparaissent, entourés de coffres placés aux coins.
-4. Le mineur creuse verticalement jusqu’à la couche -58 et dépose tous les minerais dans les coffres.
-5. Tant qu’au moins un coffre est présent, la session continue après un redémarrage du serveur.
-
-### `/champ`
-
-1. Exécutez `/champ` pour obtenir le bâton « Sélecteur de champ ».
-2. Cliquez deux blocs (même Y) pour délimiter l’emplacement de votre champ.
-3. Le plugin transforme la zone en terres labourées, ajoute un système d’irrigation, place des coffres et fait apparaître un fermier avec deux golems.
-4. Le fermier replante et récolte automatiquement les cultures qui sont stockées dans les coffres.
-5. Si tous les coffres sont détruits, le champ disparaît et la session est stoppée.
-
-### `/foret`
-
-1. Faites `/foret` pour recevoir un bâton « Sélecteur de forêt ».
-2. Sélectionnez deux coins au même niveau afin de délimiter la future forêt.
-3. Un forestier et deux golems sont générés. Les arbres poussent naturellement et sont récoltés dès qu’ils sont matures.
-4. Chaque sapling est replanté automatiquement. Les bûches et pousses récoltées sont stockées dans les coffres aux coins.
-5. Si les coffres sont retirés, la forêt n’est plus entretenue et les PNJ disparaissent.
-
-### `/village`
-
-Exécutez simplement `/village` à l’emplacement souhaité : plusieurs maisons, chemins et PNJ sont créés autour de vous afin de former un petit village vivant.
-
-### `/eleveur`
-
-1. Lancez `/eleveur` pour obtenir le bâton « Sélecteur d’élevage ».
-2. Sélectionnez deux blocs au même niveau pour définir la zone du ranch.
-3. Le plugin construit un enclos complet (clôtures, coffres, PNJ éleveur, spawners et golems de garde).
-4. Les animaux qui dépassent la limite configurée sont automatiquement abattus, et la viande est ramassée par le PNJ puis stockée dans les coffres.
-5. Tout comme les autres fonctionnalités, l’état du ranch est sauvegardé dans `ranches.yml`.
-
-### `/armure`
-
-La commande `/armure` vous donne un ensemble complet d’équipement. Tant que vous portez les quatre pièces (casque, plastron, pantalon et bottes du roi GIDON) vous bénéficiez de plusieurs effets permanents : vision nocturne, résistance au feu, respiration aquatique, augmentation de la vie maximale et force. Les effets disparaissent dès qu’une pièce est retirée.
+## Détails des commandes (aperçu)
+- `/mineur`, `/champ`, `/foret`, `/eleveur` : utilisez le bâton « Sélecteur » (clic gauche/droit) pour définir deux coins au même niveau, des PNJ et coffres sont générés, et l’activité est automatisée.
+- `/army` : protections temporaires (loups + golems) pendant quelques minutes.
 
 ## Persistance des données
-
-Les différentes fonctionnalités sauvegardent leurs informations dans le dossier `plugins/MinePlugin/` (fichiers YAML tels que `sessions.yml`, `farms.yml`, etc.). Ceci permet de restaurer PNJ et structures lors d'un redémarrage du serveur.
+Les fonctionnalités sauvegardent leurs informations (YAML) dans `plugins/MinePlugin/` (`sessions.yml`, `farms.yml`, etc.) pour restaurer PNJ et structures au redémarrage.
 
 ## Structure du projet
+- `src/main/java/` : code source du plugin.
+- `src/main/resources/` : `plugin.yml`, `config.yml` par défaut.
+- `docs/IDEES.md` : idées et notes.
+- `target/` : artefacts de build (ne pas modifier/committer).
 
-- Les sources Java se trouvent dans `src/main/java`.
-- Le fichier `plugin.yml` décrivant les commandes est situé dans `src/main/resources`.
-- Des notes et idées supplémentaires sont regroupées dans `docs/IDEES.md`.
+## Développement
+- Construire : `mvn -q package` (JAR dans `target/`). Tests optionnels : `mvn -q test` (JUnit 5 sous `src/test/java/`).
+- Lancer localement : copier le JAR dans `plugins/` d’un serveur Paper 1.20.x puis démarrer le serveur.
+- Style : Java 17, 4 espaces, accolades sur la même ligne, classes `PascalCase`, méthodes/champs `camelCase`, constantes `UPPER_SNAKE_CASE`.
+- Commits : français, présent, concis (ex. « Ajoute collecte du champ »). Ne modifiez jamais `target/*.jar`.
+- Voir `AGENTS.md` pour des consignes plus détaillées.
+
+## Guide développeur (amélioré)
+
+### Développement rapide
+- Cloner, utiliser Java 17, puis `mvn -q package` → JAR dans `target/`.
+- Tester localement: copier le JAR dans `plugins/` d’un Paper 1.20.x et démarrer.
+
+### Workflow de contribution
+- Créer une branche: `feat/...`, `fix/...`, ou `chore/...`.
+- Commits en français, au présent, concis (ex.: « Corrige spawn des golems », « Ajoute collecte du champ »).
+- Après chaque changement, exécuter `mvn -q package`. Ne pas modifier `target/*.jar`.
+- Ouvrir une PR avec: objectif, changements clés, résultat du build, étapes de test manuel (commandes essayées), captures si besoin.
+
+### Ajouter une commande (aperçu)
+- Déclarer la commande dans `src/main/resources/plugin.yml` (nom, description, permission si nécessaire).
+- Créer une classe d’exécuteur (CommandExecutor/TabExecutor) dans `src/main/java/` selon la structure existante.
+- Enregistrer l’exécuteur dans `onEnable()` ou via l’injection utilisée par le projet.
+- Mettre à jour la documentation des commandes dans le README.
+
+### Bonnes pratiques serveur
+- Éviter les opérations lourdes sur le thread principal; utiliser tâches planifiées/asynchrones.
+- Respecter la sécurité des mondes (chunks chargés, pas de force‑load inutile).
+- Ne pas utiliser `/reload`; préférer arrêter/redémarrer pour recharger le plugin proprement.
+
+Voir `AGENTS.md` pour plus de détails (structure, style, consignes de sécurité).
 
 ## Licence
-
-Ce projet est distribué sous la licence MIT. Consultez le fichier `LICENSE` pour plus de détails.
-
-Bon jeu !
+MIT — voir `LICENSE`.
