@@ -11,8 +11,14 @@ commands:
     description: Répond « Pong ! »
     usage: /ping
   mineur:
-    description: Fait apparaître un PNJ mineur pour creuser une zone <LxH>
-    usage: /mineur [Largeur]x[Hauteur]
+    description: Gestion du mineur automatisé
+    usage: |
+      /mineur wand
+      /mineur create
+      /mineur speed <slow|normal|fast>
+      /mineur pattern <quarry|branch|tunnel|vein_first>
+      /mineur pause|resume|stop|info|trust <joueur>
+    permission: mineplugin.mineur.use
   champ:
     description: Crée un champ automatisé (labour, plantation, récolte)
     usage: /champ [Largeur]x[Longueur]
@@ -28,3 +34,16 @@ commands:
   armure:
     description: Donne l'Armure du roi GIDON
     usage: /armure
+
+permissions:
+  mineplugin.mineur.use:
+    description: Utiliser les fonctionnalités du mineur automatisé
+    default: true
+  mineplugin.mineur.admin:
+    description: Administrer toutes les sessions du mineur
+    default: op
+
+softdepend:
+  - WorldGuard
+  - GriefPrevention
+  - Lands

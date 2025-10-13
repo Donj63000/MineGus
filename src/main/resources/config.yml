@@ -1,5 +1,22 @@
 # Configuration par défaut pour MinePlugin
 
+# Paramètres du mineur
+mineur:
+  max-size: 16
+  allowed-worlds: [world]
+  stop-at-y: -58
+  default:
+    pattern: QUARRY
+    speed: NORMAL
+    torch-every: 6
+    supports-every: 8
+    use-barrel-master: true
+  limits:
+    max-sessions-per-player: 1
+  economy:
+    enable: false
+    cost-per-layer: 0
+
 # Paramètres de l'éleveur
 # Limite d'animaux par espèce dans un enclos
 # Temps de restock du PNJ en ticks
