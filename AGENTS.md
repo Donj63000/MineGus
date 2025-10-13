@@ -1,37 +1,19 @@
-# Repository Guidelines
+﻿# Repository Guidelines
 
 ## Project Structure & Module Organization
-- `src/main/java/`: plugin source (commands, tasks, utilities).
-- `src/main/resources/`: `plugin.yml`, default `config.yml`.
-- `docs/IDEES.md`: ideas and notes.
-- `src/test/java/`: tests (JUnit 5) if present.
-- `target/`: build artifacts (do not commit or edit).
+Keep gameplay logic, listeners, and utilities inside `src/main/java/`. Handle Paper descriptors such as `plugin.yml` and `config.yml` under `src/main/resources/`. Manual notes belong in `docs/IDEES.md`. Add automated checks to `src/test/java/` using JUnit 5. Build output is written to `target/`; do not edit or commit files from that directory.
 
-## Build, Test, and Run Locally
-- Build: `mvn -q package` → `target/MineGus-<version>.jar`.
-- Tests: `mvn -q test` (if tests exist under `src/test/java/`).
-- Local run: copy the JAR to your Paper server `plugins/` directory and start the server.
-- Environment: Java 17; Paper 1.20.x API.
+## Build, Test, and Development Commands
+Use `mvn -q package` to compile and assemble `target/MineGus-<version>.jar`. Run `mvn -q test` to execute the current test suite. If dependencies appear stale or the build fails, reset with `mvn -q clean package`. Deploy locally by copying the generated jar into your Paper server `plugins/` folder, then restart the server.
 
 ## Coding Style & Naming Conventions
-- Indentation: 4 spaces; braces on the same line.
-- Naming: `PascalCase` classes, `camelCase` methods/fields, `UPPER_SNAKE_CASE` constants.
-- Keep code simple and aligned with existing patterns; avoid one-letter identifiers.
-- Never modify compiled artifacts (`target/*.jar`). Apply maintainer-provided code exactly as given.
+Target Java 17 and keep indentation at four spaces. Place opening braces on the same line as declarations. Follow `PascalCase` for classes, `camelCase` for methods and fields, and `UPPER_SNAKE_CASE` for constants. Reflect nearby patterns, avoid one-letter identifiers, and keep refactors scoped to the requested change set. When maintainers supply snippets, apply them verbatim.
 
-## Agent-Specific Instructions (Minecraft/Paper)
-- Declare commands in `src/main/resources/plugin.yml` (name, description, permissions).
-- Implement `CommandExecutor`/`TabExecutor` in `src/main/java/` and register in `onEnable()`.
-- Use Bukkit scheduler: run Bukkit API on main thread (`runTask`/`runTaskTimer`); offload heavy/IO work with async tasks (never call Bukkit API off-thread).
-- Avoid chunk thrashing: operate in loaded chunks; don’t force-load unless necessary; mirror existing safety checks.
-- Persist only needed data (YAML under `plugins/MinePlugin/`); avoid blocking IO on the main thread.
-- After each change, run `mvn -q package`. Do not edit `MinePlugin.jar` or any file in `target/`.
-
-## Testing Guidelines (Manual)
-- Verify `/ping` and `/army` (spawn, duration, cleanup).
-- Walk through flows for `/mineur`, `/champ`, `/foret`, `/village`, `/eleveur`.
-- Restart server to confirm persistence and restoration; removing all chests should stop zones.
+## Testing Guidelines
+Write JUnit 5 tests in `src/test/java/`, naming each class after the feature under test (for example `ArmyCommandTest`). Prefer focused unit tests; when automation is unavailable, manually verify `/ping`, `/army`, `/mineur`, `/champ`, `/foret`, `/village`, and `/eleveur`. Always restart the Paper server after deploying to confirm persistence and ensure that removing every chest disables its zone.
 
 ## Commit & Pull Request Guidelines
-- Commits: French, present tense, concise (e.g., « Ajoute collecte du champ », « Corrige orientation des escaliers »).
-- PRs include: goal, key changes, build result (`mvn -q package`), manual test steps, and screenshots if visuals change.
+Author commits in concise French, present tense (e.g., `Ajoute collecte du champ`, `Corrige orientation des escaliers`). Pull requests should explain the goal, summarize key modifications, report `mvn -q package` results, and document manual test steps. Attach screenshots for visual updates and reference related issues when applicable.
+
+## Agent-Specific Notes
+Read `instructions.txt` at startup and before any major edit; it supersedes this guide. Interact with Bukkit APIs on the main thread and schedule heavy or blocking work asynchronously. Keep operations within already loaded chunks and persist only essential YAML under `plugins/MinePlugin/`. Before destructive actions, outline the planned change and confirm intent when unsure.

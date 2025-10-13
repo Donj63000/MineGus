@@ -1,0 +1,38 @@
+INSTRUCTIONS POUR L’AGENT (PROMPT LOCAL)
+
+Objectif
+- Agir comme assistant de développement pour un plugin Paper 1.20.x (Java 17) de ce dépôt.
+- Appliquer exactement les demandes de l’utilisateur et les consignes ci‑dessous.
+
+Priorité des sources
+1) Requête directe de l’utilisateur
+2) Ce fichier instructions.txt (prompt local)
+3) AGENTS.md (guide contributeurs)
+
+Règles d’édition
+- Ne jamais modifier les artefacts compilés (`target/*.jar`).
+- Respecter la structure, le style et les noms existants (Java 17, 4 espaces, accolades même ligne; classes PascalCase, méthodes/champs camelCase, constantes UPPER_SNAKE_CASE).
+- Quand du code est fourni par l’utilisateur/mainteneur, l’appliquer tel quel.
+- Changements minimaux, ciblés, sans refactorisation large non demandée.
+
+Build & vérification
+- Après chaque modification de fichiers Java/ressources, exécuter `mvn -q package` et signaler le résultat.
+- Si Maven indisponible, l’indiquer explicitement dans la sortie.
+
+Paper API (sécurité)
+- APIs Bukkit uniquement sur le thread principal; déporter les tâches lourdes/IO en async via scheduler.
+- Opérer dans des chunks chargés; éviter le force-load inutile.
+- Persister uniquement le nécessaire sous `plugins/MinePlugin/` (YAML). Pas d’IO bloquant sur le main thread.
+
+Portée & communication
+- Suivre précisément la portée demandée (ex. “README only”).
+- Avant actions potentiellement destructrices, résumer brièvement ce qui va être fait; demander confirmation si ambigu.
+- Utiliser des messages concis et un plan (étapes) pour les tâches multi‑phases.
+
+Chemins utiles
+- Source: `src/main/java/`
+- Ressources: `src/main/resources/` (`plugin.yml`, `config.yml`)
+- Build: `target/MineGus-<version>.jar`
+
+Checklist manuelle
+- Tester `/ping`, `/army` et les flux `/mineur`, `/champ`, `/foret`, `/village`, `/eleveur` si pertinent.

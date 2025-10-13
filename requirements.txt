@@ -1,0 +1,28 @@
+# MinePlugin — Requirements (Development/Runtime)
+
+# Environment
+Java = 17  # OpenJDK/Temurin recommended
+Maven = 3.9+  # 3.x acceptable
+Paper = 1.20.x  # 1.20.6 recommended for runtime
+Encoding = UTF-8  # Configure IDE/project encoding
+IDE = IntelliJ IDEA (recommended) or any Java 17–compatible IDE
+
+# System setup
+Set JAVA_HOME to a JDK 17
+Ensure `java` and `mvn` are available on PATH
+
+# Build
+Command: mvn -q package
+Output: target/MineGus-<version>.jar
+
+# Run locally
+1) Copy the JAR to your Paper server `plugins/` directory
+2) Start the server and check `/plugins`
+
+# Manual test checklist
+- `/ping`, `/army`
+- Flows: `/mineur`, `/champ`, `/foret`, `/village`, `/eleveur`
+
+# Notes
+- Do not edit files under `target/`
+- Config is generated at `plugins/MinePlugin/config.yml`
