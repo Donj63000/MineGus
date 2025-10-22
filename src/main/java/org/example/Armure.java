@@ -79,8 +79,8 @@ public final class Armure implements CommandExecutor, Listener {
         ItemMeta  m  = it.getItemMeta();
         if (m != null) {
             m.setDisplayName(display);
-            m.addEnchant(Enchantment.PROTECTION_ENVIRONMENTAL, 4, true); // Protection IV
-            m.addEnchant(Enchantment.DURABILITY,               3, true); // Unbreaking III
+            m.addEnchant(Enchantment.PROTECTION, 4, true); // Protection IV
+            m.addEnchant(Enchantment.UNBREAKING, 3, true); // Unbreaking III
             m.addEnchant(Enchantment.MENDING,                  1, true);
             it.setItemMeta(m);
         }
@@ -114,7 +114,7 @@ public final class Armure implements CommandExecutor, Listener {
         p.addPotionEffect(new PotionEffect(PotionEffectType.FIRE_RESISTANCE, d, 0, false, false));
         p.addPotionEffect(new PotionEffect(PotionEffectType.WATER_BREATHING, d, 0, false, false));
         p.addPotionEffect(new PotionEffect(PotionEffectType.HEALTH_BOOST,    d, 1, false, false));
-        p.addPotionEffect(new PotionEffect(PotionEffectType.INCREASE_DAMAGE, d, 1, false, false)); // Strength
+        p.addPotionEffect(new PotionEffect(PotionEffectType.STRENGTH,        d, 1, false, false));
     }
 
     private void removeEffects(Player p) {
@@ -122,7 +122,7 @@ public final class Armure implements CommandExecutor, Listener {
         p.removePotionEffect(PotionEffectType.FIRE_RESISTANCE);
         p.removePotionEffect(PotionEffectType.WATER_BREATHING);
         p.removePotionEffect(PotionEffectType.HEALTH_BOOST);
-        p.removePotionEffect(PotionEffectType.INCREASE_DAMAGE);
+        p.removePotionEffect(PotionEffectType.STRENGTH);
     }
 
     private boolean hasFullArmor(Player p) {
@@ -163,8 +163,8 @@ public final class Armure implements CommandExecutor, Listener {
             w.setOwner(p);
             w.setCustomName(ChatColor.RED + "Garde du Roi");
             w.setAdult();
-            if (w.getAttribute(Attribute.GENERIC_ARMOR) != null)
-                w.getAttribute(Attribute.GENERIC_ARMOR).setBaseValue(40.0);
+            if (w.getAttribute(Attribute.ARMOR) != null)
+                w.getAttribute(Attribute.ARMOR).setBaseValue(40.0);
             w.setHealth(40.0);
             w.setCollarColor(DyeColor.RED);
             list.add(w);

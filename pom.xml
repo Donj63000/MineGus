@@ -8,7 +8,7 @@
 
     <properties>
         <java.version>17</java.version>
-        <paper.api.version>1.20.4-R0.1-SNAPSHOT</paper.api.version>
+        <paper.api.version>1.21.4-R0.1-SNAPSHOT</paper.api.version>
     </properties>
 
     <repositories>
@@ -31,8 +31,8 @@
         </dependency>
         <dependency>
             <groupId>com.github.seeseemelk</groupId>
-            <artifactId>MockBukkit-v1.20</artifactId>
-            <version>3.93.2</version>
+            <artifactId>MockBukkit-v1.21</artifactId>
+            <version>3.133.2</version>
             <scope>test</scope>
         </dependency>
         <dependency>
@@ -57,8 +57,7 @@
                 <artifactId>maven-compiler-plugin</artifactId>
                 <version>3.10.1</version>
                 <configuration>
-                    <source>${java.version}</source>
-                    <target>${java.version}</target>
+                    <release>${java.version}</release>
                 </configuration>
             </plugin>
             <plugin>
@@ -67,6 +66,7 @@
                 <version>3.2.5</version>
                 <configuration>
                     <useModulePath>false</useModulePath>
+                    <argLine>--enable-native-access=ALL-UNNAMED -Djdk.attach.allowAttachSelf=true</argLine>
                 </configuration>
             </plugin>
         </plugins>

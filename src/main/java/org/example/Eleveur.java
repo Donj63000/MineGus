@@ -789,7 +789,7 @@ public final class Eleveur implements CommandExecutor, Listener {
                     public void run() {
                         for (Block b : replaced) {
                             b.setType(Material.GRASS_BLOCK);
-                            world.spawnParticle(Particle.VILLAGER_HAPPY,
+                            world.spawnParticle(Particle.HAPPY_VILLAGER,
                                     b.getLocation().add(0.5, 1, 0.5),
                                     5, 0.2, 0.2, 0.2);
                         }

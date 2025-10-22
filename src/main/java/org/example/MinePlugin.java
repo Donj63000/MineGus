@@ -153,6 +153,7 @@ public final class MinePlugin extends JavaPlugin implements Listener {
         // 1) Messages de bienvenue
         player.sendMessage("§aBienvenue dans le monde d'Augustin !!!");
         player.sendTitle("§6§lBIENVENUE", "§eDans le monde d'Augustin", 20, 60, 40);
+
     }
 
     /**

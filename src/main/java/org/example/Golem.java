@@ -55,8 +55,8 @@ public final class Golem {
             }
 
             // Vitesse 0.35 si l’attribut existe sur la version courante
-            if (g.getAttribute(Attribute.GENERIC_MOVEMENT_SPEED) != null) {
-                g.getAttribute(Attribute.GENERIC_MOVEMENT_SPEED).setBaseValue(0.35);
+            if (g.getAttribute(Attribute.MOVEMENT_SPEED) != null) {
+                g.getAttribute(Attribute.MOVEMENT_SPEED).setBaseValue(0.35);
             }
         });
 

@@ -1,19 +1,64 @@
-﻿# Repository Guidelines
+# Repository Guidelines
 
-## Project Structure & Module Organization
-Keep gameplay logic, listeners, and utilities inside `src/main/java/`. Handle Paper descriptors such as `plugin.yml` and `config.yml` under `src/main/resources/`. Manual notes belong in `docs/IDEES.md`. Add automated checks to `src/test/java/` using JUnit 5. Build output is written to `target/`; do not edit or commit files from that directory.
+## Contexte actuel
+- Plugin Paper : `MinePlugin`
+- Version Minecraft ciblée : 1.21.4 (Java 17)
+- Objectif : automatiser minage, agriculture, forêt, élevage, villages PNJ et armure spéciale.
+- Build & tests : Maven 3.9+, JUnit 5, MockBukkit pour les tests unitaires.
 
-## Build, Test, and Development Commands
-Use `mvn -q package` to compile and assemble `target/MineGus-<version>.jar`. Run `mvn -q test` to execute the current test suite. If dependencies appear stale or the build fails, reset with `mvn -q clean package`. Deploy locally by copying the generated jar into your Paper server `plugins/` folder, then restart the server.
+## Priorités agent
+- 1️⃣ Requête directe de l’utilisateur.
+- 2️⃣ `instructions.txt` (prompt local) — à relire avant chaque modification majeure.
+- 3️⃣ Ce document (`AGENTS.md`).
+- Toujours confirmer les hypothèses ambiguës avant d’avancer.
 
-## Coding Style & Naming Conventions
-Target Java 17 and keep indentation at four spaces. Place opening braces on the same line as declarations. Follow `PascalCase` for classes, `camelCase` for methods and fields, and `UPPER_SNAKE_CASE` for constants. Reflect nearby patterns, avoid one-letter identifiers, and keep refactors scoped to the requested change set. When maintainers supply snippets, apply them verbatim.
+## Checklist rapide
+- Lire/relire `instructions.txt` au démarrage et après chaque nouvelle consigne.
+- Limiter la portée des changements aux demandes explicites.
+- Après modifications Java/ressources : exécuter `mvn -q package` (signaler toute erreur ou indisponibilité).
+- Documenter les tests manuels pertinents (`/ping`, `/army`, `/mineur`, `/champ`, `/foret`, `/village`, `/eleveur`).
+- Ne jamais modifier `target/` ni les artefacts générés.
 
-## Testing Guidelines
-Write JUnit 5 tests in `src/test/java/`, naming each class after the feature under test (for example `ArmyCommandTest`). Prefer focused unit tests; when automation is unavailable, manually verify `/ping`, `/army`, `/mineur`, `/champ`, `/foret`, `/village`, and `/eleveur`. Always restart the Paper server after deploying to confirm persistence and ensure that removing every chest disables its zone.
+## Structure du projet
+- Code Java : `src/main/java/`
+- Ressources Paper : `src/main/resources/` (`plugin.yml`, `config.yml` par défaut)
+- Tests automatisés : `src/test/java/`
+- Notes manuelles : `docs/IDEES.md`
+- Artefacts de build : `target/` (lecture seule)
 
-## Commit & Pull Request Guidelines
-Author commits in concise French, present tense (e.g., `Ajoute collecte du champ`, `Corrige orientation des escaliers`). Pull requests should explain the goal, summarize key modifications, report `mvn -q package` results, and document manual test steps. Attach screenshots for visual updates and reference related issues when applicable.
+## Flux de développement
+- Compiler : `mvn -q package` → `target/MineGus-<version>.jar`
+- Tests unitaires : `mvn -q test`
+- Nettoyage en cas d’incohérences : `mvn -q clean package`
+- Déploiement local : copier le JAR dans `plugins/` d’un serveur Paper 1.21.4 puis redémarrer.
 
-## Agent-Specific Notes
-Read `instructions.txt` at startup and before any major edit; it supersedes this guide. Interact with Bukkit APIs on the main thread and schedule heavy or blocking work asynchronously. Keep operations within already loaded chunks and persist only essential YAML under `plugins/MinePlugin/`. Before destructive actions, outline the planned change and confirm intent when unsure.
+## Style & nommage
+- Java 17, indentation 4 espaces, accolades sur la même ligne.
+- Classes en `PascalCase`, méthodes/champs en `camelCase`, constantes en `UPPER_SNAKE_CASE`.
+- Pas d’identifiants à une lettre ; suivre les patterns locaux.
+- Appliquer mot pour mot le code fourni par les mainteneurs si présent.
+
+## Tests recommandés
+- Unitaires : ajouter des tests JUnit 5 ciblés dans `src/test/java/` (ex. `ArmyCommandTest`).
+- Manuels : `/ping`, `/army`, `/mineur`, `/champ`, `/foret`, `/village`, `/eleveur`.
+- Vérifier que la suppression de tous les coffres désactive bien chaque zone.
+- Toujours redémarrer le serveur Paper après déploiement pour valider la persistance.
+
+## Modules clés
+- `MinePlugin` : point d’entrée, enregistre les commandes et orchestre les managers.
+- `Mineur`, `Agriculture`, `Foret`, `Eleveur` : gestion des zones automatisées + persistance YAML.
+- `Village` (+ sous-packages) : génération asynchrone du village, muraille, PNJ.
+- `Armure` : armure légendaire et gardiens.
+- `TeleportUtils`, `Batiments`, utilitaires divers.
+
+## Notes Paper/Bukkit
+- Interagir avec l’API Bukkit uniquement sur le thread principal.
+- Déléguer les tâches lourdes ou bloquantes via le scheduler (async).
+- Opérer uniquement dans des chunks déjà chargés ; pas de force-load gratuit.
+- Persister juste ce qui est nécessaire sous `plugins/MinePlugin/`.
+- Avant toute action destructive, décrire le plan et demander confirmation si doute.
+
+## Ressources à consulter
+- `README.md` : documentation détaillée du plugin et commandes.
+- `docs/IDEES.md` : cahier des charges gameplay (maisons, muraille, PNJ, etc.).
+- `target/surefire-reports/` : diagnostics en cas d’échec Maven.
