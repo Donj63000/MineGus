@@ -5,7 +5,7 @@ import org.bukkit.World;
 import org.bukkit.block.Block;
 
 /**
- * Places occasional wooden supports for visual variety and safety.
+ * Places occasional stone supports for visual variety and safety.
  */
 public final class SupportBuilder {
 
@@ -26,7 +26,7 @@ public final class SupportBuilder {
         for (int i = 0; i < depth; i++) {
             Block target = current.getRelative(0, i, 0);
             if (target.getType().isAir()) {
-                target.setType(Material.OAK_LOG, false);
+                target.setType(Material.STONE_BRICKS, false);
             }
         }
     }

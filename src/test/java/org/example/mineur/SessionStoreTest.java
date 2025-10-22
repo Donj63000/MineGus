@@ -49,7 +49,7 @@ class SessionStoreTest {
         state.cursor = new MiningCursor(state.base, state.width, state.length);
         state.minerY = 60;
         state.owner = UUID.randomUUID();
-        state.useBarrelMaster = true;
+        state.useBarrelMaster = false;
         state.containers.add(new Vector(8, 64, 9));
 
         store.saveAll(List.of(state));

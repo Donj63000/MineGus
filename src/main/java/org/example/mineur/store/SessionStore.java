@@ -105,7 +105,7 @@ public final class SessionStore {
         state.cursor.x = state.cursor.minX;
         state.cursor.z = state.cursor.minZ;
         state.minerY = minerY;
-        state.useBarrelMaster = true;
+        state.useBarrelMaster = false;
         Bukkit.getLogger().info("[mineur] migration de session v1 -> v2 effectuée");
         return state;
     }

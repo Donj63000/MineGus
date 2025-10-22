@@ -8,9 +8,9 @@ mineur:
   default:
     pattern: QUARRY
     speed: NORMAL
-    torch-every: 6
+    torch-layers: 4
     supports-every: 8
-    use-barrel-master: true
+    use-barrel-master: false
   limits:
     max-sessions-per-player: 1
   economy:

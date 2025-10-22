@@ -30,7 +30,7 @@ public final class MiningSessionState {
     public double minerY;
     public UUID owner;
     public final List<Vector> containers = new ArrayList<>();
-    public boolean useBarrelMaster = true;
+    public boolean useBarrelMaster = false;
     public boolean paused = false;
     public final Set<UUID> trusted = new HashSet<>();
 
@@ -100,7 +100,7 @@ public final class MiningSessionState {
             }
         }
         Object useBarrel = map.get("useBarrelMaster");
-        state.useBarrelMaster = useBarrel instanceof Boolean b ? b : true;
+        state.useBarrelMaster = useBarrel instanceof Boolean b ? b : false;
         Object pausedObj = map.get("paused");
         state.paused = pausedObj instanceof Boolean b ? b : false;
         Object trustedObj = map.get("trusted");

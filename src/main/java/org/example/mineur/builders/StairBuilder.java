@@ -25,7 +25,7 @@ public final class StairBuilder {
             if (!stairBlock.getType().isAir()) {
                 continue;
             }
-            stairBlock.setType(Material.OAK_STAIRS, false);
+            stairBlock.setType(Material.STONE_BRICK_STAIRS, false);
             BlockData data = stairBlock.getBlockData();
             if (data instanceof Stairs stairs) {
                 stairs.setFacing(facing);

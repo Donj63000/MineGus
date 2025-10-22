@@ -204,7 +204,7 @@ public class Mineur implements CommandExecutor, Listener {
         state.cursor = new MiningCursor(base, width, length);
         state.minerY = base.getY();
         state.owner = ownerId;
-        state.useBarrelMaster = plugin.getConfig().getBoolean("mineur.default.use-barrel-master", true);
+        state.useBarrelMaster = false;
         state.pattern = getDefaultPattern();
         state.speed = getDefaultSpeed();
 
@@ -617,74 +617,72 @@ public class Mineur implements CommandExecutor, Listener {
         int z2 = baseZ + state.length;
 
         for (int x = x1; x <= x2; x++) {
-            world.getBlockAt(x, baseY, z1).setType(Material.OAK_PLANKS, false);
-            world.getBlockAt(x, baseY, z2).setType(Material.OAK_PLANKS, false);
+            world.getBlockAt(x, baseY, z1).setType(Material.STONE_BRICKS, false);
+            world.getBlockAt(x, baseY, z2).setType(Material.STONE_BRICKS, false);
         }
         for (int z = z1; z <= z2; z++) {
-            world.getBlockAt(x1, baseY, z).setType(Material.OAK_PLANKS, false);
-            world.getBlockAt(x2, baseY, z).setType(Material.OAK_PLANKS, false);
+            world.getBlockAt(x1, baseY, z).setType(Material.STONE_BRICKS, false);
+            world.getBlockAt(x2, baseY, z).setType(Material.STONE_BRICKS, false);
         }
     }
 
     private void ensureContainers(MiningSessionState state, RuntimeSession runtime, boolean freshlyCreated) {
         runtime.containerLocations.clear();
         World world = state.base.getWorld();
-
-        if (freshlyCreated || state.containers.isEmpty()) {
-            state.containers.clear();
-            if (state.useBarrelMaster) {
-                Block barrel = placeBarrelMaster(state);
-                runtime.containerLocations.add(barrel.getLocation());
-                state.containers.add(barrel.getLocation().toVector());
-                markContainerOwner(barrel, state.owner);
-            } else {
-                List<Block> chests = placeCornerChests(state);
-                for (Block chest : chests) {
-                    runtime.containerLocations.add(chest.getLocation());
-                    state.containers.add(chest.getLocation().toVector());
-                    markContainerOwner(chest, state.owner);
-                }
-            }
+        if (world == null) {
             return;
         }
 
-        for (Vector vector : new ArrayList<>(state.containers)) {
-            Location location = vector.toLocation(world);
+        List<Location> storage = computeStorageLocations(state);
+        state.useBarrelMaster = false;
+        state.containers.clear();
+        for (Location location : storage) {
             Block block = world.getBlockAt(location.getBlockX(), location.getBlockY(), location.getBlockZ());
-            if (!(block.getState() instanceof Container)) {
-                block.setType(state.useBarrelMaster ? Material.BARREL : Material.CHEST, false);
+            if (block.getType() != Material.CHEST) {
+                block.setType(Material.CHEST, false);
             }
             runtime.containerLocations.add(block.getLocation());
+            state.containers.add(block.getLocation().toVector());
             markContainerOwner(block, state.owner);
         }
     }
 
-    private Block placeBarrelMaster(MiningSessionState state) {
-        Location location = state.base.clone().add(-2, 0, -2);
-        Block block = location.getBlock();
-        block.setType(Material.BARREL, false);
-        return block;
-    }
-
-    private List<Block> placeCornerChests(MiningSessionState state) {
-        List<Block> blocks = new ArrayList<>();
+    private List<Location> computeStorageLocations(MiningSessionState state) {
+        List<Location> locations = new ArrayList<>();
         World world = state.base.getWorld();
+        if (world == null) {
+            return locations;
+        }
         int baseX = state.base.getBlockX();
         int baseY = state.base.getBlockY();
         int baseZ = state.base.getBlockZ();
 
-        int[][] offsets = {
-                {-2, -2},
-                {state.width + 1, -2},
-                {-2, state.length + 1},
-                {state.width + 1, state.length + 1}
+        int westX = baseX - 2;
+        int eastX = baseX + state.width + 1;
+        int northZ = baseZ - 2;
+        int southZ = baseZ + state.length + 1;
+        int midX = baseX + Math.max(state.width, 1) / 2;
+        int midZ = baseZ + Math.max(state.length, 1) / 2;
+
+        int[][] points = {
+                {westX, northZ},
+                {eastX, northZ},
+                {westX, southZ},
+                {eastX, southZ},
+                {westX, midZ},
+                {eastX, midZ},
+                {midX, northZ},
+                {midX, southZ}
         };
-        for (int[] offset : offsets) {
-            Block block = world.getBlockAt(baseX + offset[0], baseY, baseZ + offset[1]);
-            block.setType(Material.CHEST, false);
-            blocks.add(block);
+
+        Set<String> seen = new HashSet<>();
+        for (int[] point : points) {
+            String key = point[0] + ":" + point[1];
+            if (seen.add(key)) {
+                locations.add(new Location(world, point[0], baseY, point[1]));
+            }
         }
-        return blocks;
+        return locations;
     }
 
     private void markContainerOwner(Block block, UUID owner) {
@@ -923,30 +921,55 @@ public class Mineur implements CommandExecutor, Listener {
 
     private final class DecorationDelegate {
         private final MiningSessionState state;
-        private final int torchSpacing;
         private final int supportSpacing;
+        private final int layerBlockCount;
+        private final int torchLayerInterval;
+        private final int ladderX;
+        private final int ladderZ;
+        private final int ladderSupportX;
+        private final BlockFace ladderFacing = BlockFace.EAST;
+        private final int torchX;
+        private final int torchSupportZ;
+        private final BlockFace torchFacing = BlockFace.SOUTH;
         private int minedBlocks = 0;
+        private int blocksInLayer = 0;
+        private int completedLayers = 0;
+        private int currentLayerY;
 
         DecorationDelegate(MiningSessionState state) {
             this.state = state;
-            this.torchSpacing = Math.max(0, plugin.getConfig().getInt("mineur.default.torch-every", 6));
             this.supportSpacing = Math.max(0, plugin.getConfig().getInt("mineur.default.supports-every", 8));
+            int safeWidth = Math.max(1, state.width);
+            int safeLength = Math.max(1, state.length);
+            this.layerBlockCount = Math.max(1, safeWidth * safeLength);
+            this.torchLayerInterval = Math.max(1, plugin.getConfig().getInt("mineur.default.torch-layers", 4));
+            this.ladderX = state.base.getBlockX() + Math.max(state.width - 1, 0);
+            this.ladderZ = state.base.getBlockZ() + Math.max(state.length, 1) / 2;
+            this.ladderSupportX = this.ladderX + 1;
+            this.torchX = state.base.getBlockX() + Math.max(state.width, 1) / 2;
+            this.torchSupportZ = state.base.getBlockZ() - 1;
+            this.currentLayerY = state.base.getBlockY();
+            prepareInitialAccess(state.base.getWorld());
         }
 
         void afterBlock(Block block) {
             minedBlocks++;
-            if (torchSpacing > 0 && minedBlocks % torchSpacing == 0) {
-                Block floor = block.getRelative(BlockFace.DOWN);
-                TorchPlacer.placeTorchIfNeeded(block.getWorld(), floor);
-            }
+            blocksInLayer++;
             if (supportSpacing > 0 && minedBlocks % supportSpacing == 0) {
                 Block floor = block.getRelative(BlockFace.DOWN);
                 SupportBuilder.placeSupportColumn(block.getWorld(), floor, 3);
             }
-            if (state.width > 0 && state.length > 0) {
-                int layerSize = state.width * state.length;
-                if (layerSize > 0 && minedBlocks % layerSize == 0) {
-                    buildAccessStair(block.getWorld(), state);
+            if (block.getY() < currentLayerY) {
+                currentLayerY = block.getY();
+                extendAccessLadder(block.getWorld(), currentLayerY);
+            }
+            if (blocksInLayer >= layerBlockCount) {
+                blocksInLayer = 0;
+                completedLayers++;
+                buildAccessStair(block.getWorld(), state);
+                extendAccessLadder(block.getWorld(), block.getY());
+                if (completedLayers % torchLayerInterval == 0) {
+                    placeWallTorch(block.getWorld(), block.getY());
                 }
             }
         }
@@ -958,6 +981,46 @@ public class Mineur implements CommandExecutor, Listener {
             Location base = state.base;
             Block stairBlock = world.getBlockAt(base.getBlockX() - 1, state.cursor.y, base.getBlockZ());
             StairBuilder.ensureStair(world, stairBlock, BlockFace.SOUTH, 3);
+        }
+
+        private void prepareInitialAccess(World world) {
+            if (world == null) {
+                return;
+            }
+            extendAccessLadder(world, currentLayerY);
+        }
+
+        private void extendAccessLadder(World world, int targetY) {
+            if (world == null) {
+                return;
+            }
+            int minY = Math.max(targetY, world.getMinHeight());
+            int startY = state.base.getBlockY();
+            for (int y = startY; y >= minY; y--) {
+                ensureSupportBlock(world, ladderSupportX, y, ladderZ);
+                Block ladderBlock = world.getBlockAt(ladderX, y, ladderZ);
+                ladderBlock.setType(Material.LADDER, false);
+                if (ladderBlock.getBlockData() instanceof org.bukkit.block.data.type.Ladder ladderData) {
+                    ladderData.setFacing(ladderFacing);
+                    ladderBlock.setBlockData(ladderData, false);
+                }
+            }
+        }
+
+        private void placeWallTorch(World world, int y) {
+            if (world == null) {
+                return;
+            }
+            ensureSupportBlock(world, torchX, y, torchSupportZ);
+            Block support = world.getBlockAt(torchX, y, torchSupportZ);
+            TorchPlacer.placeWallTorch(world, support, torchFacing);
+        }
+
+        private void ensureSupportBlock(World world, int x, int y, int z) {
+            Block block = world.getBlockAt(x, y, z);
+            if (!block.getType().isSolid()) {
+                block.setType(Material.STONE_BRICKS, false);
+            }
         }
     }
 }
