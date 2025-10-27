@@ -5,9 +5,10 @@ mineur:
   max-size: 16
   allowed-worlds: [world]
   stop-at-y: -58
+  allow-block-placement: false  # true = autoriser piliers, escaliers et torches automatiques
   default:
     pattern: QUARRY
-    speed: NORMAL
+    speed: FAST
     torch-layers: 4
     supports-every: 8
     use-barrel-master: false

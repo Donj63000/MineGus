@@ -93,69 +93,29 @@ public class Mineur implements CommandExecutor, Listener {
             return true;
         }
         if (args.length == 0) {
-            sendUsage(player);
+            giveMineSelector(player);
             return true;
         }
 
-        String sub = args[0].toLowerCase(Locale.ROOT);
-        return switch (sub) {
-            case "wand" -> {
-                giveMineSelector(player);
-                yield true;
-            }
-            case "create" -> {
-                handleCreate(player, args);
-                yield true;
-            }
-            case "speed" -> {
-                handleSpeed(player, args);
-                yield true;
-            }
-            case "pattern" -> {
-                handlePattern(player, args);
-                yield true;
-            }
-            case "pause" -> {
-                handlePause(player, true);
-                yield true;
-            }
-            case "resume" -> {
-                handlePause(player, false);
-                yield true;
-            }
-            case "stop" -> {
-                handleStop(player);
-                yield true;
-            }
-            case "info" -> {
-                handleInfo(player);
-                yield true;
-            }
-            case "trust" -> {
-                handleTrust(player, args);
-                yield true;
-            }
-            default -> {
-                sendUsage(player);
-                yield true;
-            }
-        };
+        if ("speed".equalsIgnoreCase(args[0])) {
+            handleSpeed(player, args);
+            return true;
+        }
+
+        sendUsage(player);
+        return true;
     }
 
     private void sendUsage(Player player) {
         player.sendMessage(CMD_PREFIX + ChatColor.YELLOW + "Usage:");
-        player.sendMessage(ChatColor.GOLD + "/mineur wand" + ChatColor.GRAY + " – reçois le bâton de sélection");
-        player.sendMessage(ChatColor.GOLD + "/mineur create" + ChatColor.GRAY + " – crée la mine à partir de ta sélection");
-        player.sendMessage(ChatColor.GOLD + "/mineur speed <slow|normal|fast>");
-        player.sendMessage(ChatColor.GOLD + "/mineur pattern <quarry|branch|tunnel|vein_first>");
-        player.sendMessage(ChatColor.GOLD + "/mineur pause|resume|stop|info");
-        player.sendMessage(ChatColor.GOLD + "/mineur trust <joueur>");
+        player.sendMessage(ChatColor.GOLD + "/mineur" + ChatColor.GRAY + " – reçois le bâton et clique deux blocs (même Y) pour lancer la mine");
+        player.sendMessage(ChatColor.GOLD + "/mineur speed <slow|normal|fast>" + ChatColor.GRAY + " – change la vitesse");
     }
 
-    private void handleCreate(Player player, String[] args) {
+    private void createMineFromSelection(Player player) {
         Selection selection = selections.get(player.getUniqueId());
         if (selection == null || !selection.isComplete()) {
-            player.sendMessage(CMD_PREFIX + ChatColor.RED + "Sélection invalide. Utilise /mineur wand et clique deux blocs à la même hauteur.");
+            player.sendMessage(CMD_PREFIX + ChatColor.RED + "Sélection invalide. Utilise /mineur et clique deux blocs à la même hauteur.");
             return;
         }
 
@@ -405,7 +365,7 @@ public class Mineur implements CommandExecutor, Listener {
                 player.sendMessage(CMD_PREFIX + ChatColor.RED + "Les blocs doivent être au même Y.");
                 selection.setCorner2(null);
             } else {
-                player.sendMessage(CMD_PREFIX + ChatColor.YELLOW + "Tape /mineur create pour lancer la mine.");
+                createMineFromSelection(player);
             }
         } else {
             selection.setCorner1(clicked);
@@ -476,11 +436,15 @@ public class Mineur implements CommandExecutor, Listener {
         RuntimeSession runtime = new RuntimeSession(state);
         runtimes.put(state.id, runtime);
 
+        boolean allowBlockPlacement = allowMinerBlockPlacement();
+
         clearZoneForState(state);
         registerChunks(state, runtime);
-        ensureFrame(state);
+        if (allowBlockPlacement) {
+            ensureFrame(state);
+        }
         ensureContainers(state, runtime, freshlyCreated);
-        runtime.decoration = new DecorationDelegate(state);
+        runtime.decoration = allowBlockPlacement ? new DecorationDelegate(state) : null;
         runtime.miner = spawnMiner(state);
         ensureGolems(runtime);
         runtime.router = new InventoryRouter(resolveContainerBlocks(runtime));
@@ -839,6 +803,10 @@ public class Mineur implements CommandExecutor, Listener {
         return plugin.getConfig().getInt("mineur.stop-at-y", -58);
     }
 
+    private boolean allowMinerBlockPlacement() {
+        return plugin.getConfig().getBoolean("mineur.allow-block-placement", false);
+    }
+
     private MiningPattern getDefaultPattern() {
         String value = plugin.getConfig().getString("mineur.default.pattern", "QUARRY");
         try {
@@ -849,7 +817,7 @@ public class Mineur implements CommandExecutor, Listener {
     }
 
     private MiningSpeed getDefaultSpeed() {
-        String value = plugin.getConfig().getString("mineur.default.speed", "NORMAL");
+        String value = plugin.getConfig().getString("mineur.default.speed", "FAST");
         MiningSpeed speed = parseSpeed(value);
         return speed != null ? speed : MiningSpeed.NORMAL;
     }
