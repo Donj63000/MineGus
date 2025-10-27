@@ -18,30 +18,20 @@ import org.bukkit.entity.Entity;
 import org.bukkit.entity.EntityType;
 import org.bukkit.entity.Golem;
 import org.bukkit.entity.ItemFrame;
-import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Player;
 import org.bukkit.entity.Villager;
-import org.example.TeleportUtils;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
 import org.bukkit.event.block.BlockBreakEvent;
 import org.bukkit.event.block.BlockPlaceEvent;
 import org.bukkit.event.player.PlayerInteractEvent;
-import org.bukkit.event.player.PlayerQuitEvent;
 import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.MerchantRecipe;
 import org.bukkit.inventory.meta.ItemMeta;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.bukkit.scheduler.BukkitRunnable;
-import org.bukkit.scoreboard.Criteria;
-import org.bukkit.scoreboard.DisplaySlot;
-import org.bukkit.scoreboard.Objective;
-import org.bukkit.scoreboard.Scoreboard;
 import org.bukkit.Particle;
-import org.bukkit.Sound;
-import net.md_5.bungee.api.ChatMessageType;
-import net.md_5.bungee.api.chat.TextComponent;
 
 import java.io.File;
 import java.io.FileWriter;
@@ -50,7 +40,6 @@ import java.io.PrintWriter;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
-import org.bukkit.util.BoundingBox;
 
 /**
  * =========================================================
@@ -64,17 +53,16 @@ import org.bukkit.util.BoundingBox;
  *       - Soubassement en deepslate, poteaux en bois écorcé
  *       - Murs en palette (planches, barils), toiture légère
  *       - Chemins, coffres, spawners, PNJ éleveur, golems
- *   4) Limite d’animaux (ANIMAL_LIMIT). Si dépassée :
- *      l’éleveur tue l’excès et fait tomber la viande au sol.
+ *   4) Population gérée uniquement par les spawners configurés.
  *   5) Le PNJ ramasse les items et les dépose dans les coffres.
- *   6) Scoreboard dans l’enclos, persistance dans ranches.yml
+ *   6) Persistance dans ranches.yml
  */
 public final class Eleveur implements CommandExecutor, Listener {
 
     // Nom du bâton de sélection
     private static final String RANCH_SELECTOR_NAME = ChatColor.GOLD + "Sélecteur d'élevage";
 
-    // Espèces concernées par la limitation (chargées depuis la config)
+    // Espèces gérées par l’enclos (chargées depuis la config)
     private static List<EntityType> MAIN_SPECIES;
 
     private final JavaPlugin plugin;
@@ -88,12 +76,6 @@ public final class Eleveur implements CommandExecutor, Listener {
 
     // Sélections en cours : (joueur) -> (coin1, coin2)
     private final Map<UUID, Selection> selections = new HashMap<>();
-
-    // Scoreboards en cours : (joueur) -> scoreboard
-    private final Map<UUID, Scoreboard> playerScoreboards = new HashMap<>();
-
-    // Task d’actualisation du scoreboard
-    private BukkitRunnable scoreboardTask;
 
     public Eleveur(JavaPlugin plugin) {
         this.plugin = plugin;
@@ -115,8 +97,6 @@ public final class Eleveur implements CommandExecutor, Listener {
         ranchFile = new File(plugin.getDataFolder(), "ranches.yml");
         ranchYaml = YamlConfiguration.loadConfiguration(ranchFile);
 
-        // Lancer la boucle d’affichage scoreboard
-        startScoreboardLoop();
     }
 
     /* ============================================================
@@ -257,13 +237,6 @@ public final class Eleveur implements CommandExecutor, Listener {
 
     private String coords(Block b) {
         return "(" + b.getX() + ", " + b.getY() + ", " + b.getZ() + ")";
-    }
-
-    /** Retourne un code couleur vert→rouge selon le ratio 0–1. */
-    private static ChatColor barColor(double ratio) {
-        if (ratio < 0.50) return ChatColor.GREEN;
-        if (ratio < 0.80) return ChatColor.GOLD;
-        return ChatColor.RED;
     }
 
     private void validateSelection(Player player, Selection sel) {
@@ -479,100 +452,10 @@ public final class Eleveur implements CommandExecutor, Listener {
     }
 
     public void stopAllRanches() {
-        if (scoreboardTask != null) {
-            scoreboardTask.cancel();
-        }
-        for (Player p : Bukkit.getOnlinePlayers()) {
-            removeScoreboard(p);
-        }
         for (RanchSession rs : sessions) {
             rs.stop();
         }
         sessions.clear();
-    }
-
-    /* ============================================================
-     *                    Boucle scoreboard
-     * ============================================================
-     */
-    private void startScoreboardLoop() {
-        scoreboardTask = new BukkitRunnable() {
-            @Override
-            public void run() {
-                for (Player p : Bukkit.getOnlinePlayers()) {
-                    RanchSession inside = findSessionForPlayer(p);
-                    if (inside == null) {
-                        removeScoreboard(p);
-                    } else {
-                        updateScoreboard(p, inside);
-                    }
-                }
-            }
-        };
-        scoreboardTask.runTaskTimer(plugin, 20L, 20L); // chaque seconde
-    }
-
-    private RanchSession findSessionForPlayer(Player p) {
-        Location loc = p.getLocation();
-        for (RanchSession rs : sessions) {
-            if (rs.isInside(loc)) return rs;
-        }
-        return null;
-    }
-
-    private void removeScoreboard(Player p) {
-        if (playerScoreboards.containsKey(p.getUniqueId())) {
-            p.setScoreboard(Bukkit.getScoreboardManager().getNewScoreboard());
-            playerScoreboards.remove(p.getUniqueId());
-        }
-    }
-
-    @EventHandler
-    public void onQuit(PlayerQuitEvent e) {
-        removeScoreboard(e.getPlayer());
-    }
-
-    private void updateScoreboard(Player p, RanchSession session) {
-        // Scoreboard existant ou nouveau
-        Scoreboard sb = playerScoreboards.get(p.getUniqueId());
-        if (sb == null) {
-            sb = Bukkit.getScoreboardManager().getNewScoreboard();
-            playerScoreboards.put(p.getUniqueId(), sb);
-        }
-
-        Objective obj = sb.getObjective("ranchInfo");
-        if (obj == null) {
-            obj = sb.registerNewObjective("ranchInfo", Criteria.DUMMY, ChatColor.GOLD + "Enclos");
-        }
-        obj.setDisplaySlot(DisplaySlot.SIDEBAR);
-
-        // Vider anciens scores
-        for (String entry : sb.getEntries()) {
-            sb.resetScores(entry);
-        }
-
-        // Titre
-        String title = ChatColor.YELLOW + "== Enclos ==";
-        obj.getScore(title).setScore(999);
-
-        // ----- animaux + limite -----
-        Map<EntityType,Integer> counts = session.countAnimals();
-        int max = session.animalLimit;
-        int line = 998;
-        for (EntityType type : MAIN_SPECIES) {
-            int c = counts.getOrDefault(type, 0);
-            double ratio = (double) c / max;
-            String txt = barColor(ratio) + type.name() + " " + c + "/" + max;
-            obj.getScore(txt).setScore(line--);
-        }
-
-        // ----- compteurs viande -----
-        String rawTxt = ChatColor.GRAY + "Cru : " + session.getRawCount();
-        obj.getScore(rawTxt).setScore(line--);
-        String cookTxt = ChatColor.GOLD + "Cuit : " + session.getCookedCount();
-        obj.getScore(cookTxt).setScore(line--);
-
-        p.setScoreboard(sb);
     }
 
     /* ============================================================
@@ -590,9 +473,6 @@ public final class Eleveur implements CommandExecutor, Listener {
         private final List<Block> chestBlocks = new ArrayList<>();
 
         private BukkitRunnable ranchTask;
-
-        // Limite d’animaux par espèce
-        private int animalLimit;
 
         // Délai de boucle de la tâche principale
         private int ranchLoopPeriodTicks;
@@ -622,13 +502,8 @@ public final class Eleveur implements CommandExecutor, Listener {
         // Fichier de log pour les enclos
         private final File logFile;
 
-        // Compteurs de viande
-        private int rawCount = 0;
-        private int cookedCount = 0;
-
         RanchSession(JavaPlugin plugin, Location origin, int width, int length) {
             this.plugin = plugin;
-            this.animalLimit = plugin.getConfig().getInt("eleveur.animal-limit", 5);
             this.ranchLoopPeriodTicks = plugin.getConfig()
                     .getInt("eleveur.villager-restock-ticks", 40);
             this.world = origin.getWorld();
@@ -976,7 +851,7 @@ public final class Eleveur implements CommandExecutor, Listener {
         }
 
         /* ========================================================
-         *   Boucle ranch : cull + PNJ stock
+         *   Boucle ranch : PNJ stock
          * ========================================================
          */
         private void runRanchLoop() {
@@ -989,11 +864,6 @@ public final class Eleveur implements CommandExecutor, Listener {
                     }
                     // Respawn golems
                     spawnOrRespawnGolems();
-
-                    // Tuer excès
-                    for (EntityType type : MAIN_SPECIES) {
-                        cullExcessAnimals(type);
-                    }
 
                     // Transférer inventaire PNJ vers coffres
                     if (rancher != null) {
@@ -1011,107 +881,6 @@ public final class Eleveur implements CommandExecutor, Listener {
             ranchTask.runTaskTimer(plugin, 20L, ranchLoopPeriodTicks);
         }
 
-        /**
-         * Tue l'excès d'animaux, fait tomber leur loot au sol.
-         * Le PNJ pourra le ramasser grâce à setCanPickupItems(true).
-         */
-        private void cullExcessAnimals(EntityType type) {
-            List<LivingEntity> inZone = getEntitiesInZone(type);
-            int surplus = inZone.size() - animalLimit;
-            if (surplus <= 0) return;
-
-            Location center = new Location(world,
-                    baseX + width / 2.0,
-                    baseY + 1,
-                    baseZ + length / 2.0);
-
-            for (int i = 0; i < surplus; i++) {
-                if (inZone.isEmpty()) break;
-                LivingEntity victim = inZone.remove(inZone.size() - 1);
-
-                // PNJ se TP au-dessus pour "l’effet"
-                if (rancher != null && !rancher.isDead()) {
-                    TeleportUtils.safeTeleport(rancher, victim.getLocation().add(0.5, 1, 0.5));
-                }
-
-                // Génère drops
-                List<ItemStack> drops = simulateLoot(type);
-                // On fait tomber les loots (et PNJ les ramassera)
-                for (ItemStack it : drops) {
-                    world.dropItemNaturally(victim.getLocation(), it);
-                }
-
-                // Effet visuel
-                world.spawnParticle(Particle.CRIT, victim.getLocation().add(0,1,0), 15, 0.3,0.2,0.3, 0.1);
-                world.playSound(victim, Sound.ENTITY_PLAYER_ATTACK_CRIT, 0.7f, 1.2f);
-
-                // Retirer l’animal
-                victim.remove();
-
-                for (Player p : world.getPlayers()) {
-                    if (p.getLocation().distanceSquared(center) <= 15 * 15) {
-                        p.spigot().sendMessage(ChatMessageType.ACTION_BAR,
-                                new TextComponent(ChatColor.RED + "Animal éliminé"));
-                    }
-                }
-            }
-        }
-
-        private List<LivingEntity> getEntitiesInZone(EntityType type) {
-            BoundingBox box = new BoundingBox(
-                    baseX, baseY, baseZ,
-                    baseX + width - 1 + 0.99, baseY + 10, baseZ + length - 1 + 0.99
-            );
-            return world.getNearbyEntities(box, e -> e.getType() == type)
-                    .stream()
-                    .map(e -> (LivingEntity) e)
-                    .toList();
-        }
-
-        /**
-         * Loot basique : 5% cuit.
-         */
-        private List<ItemStack> simulateLoot(EntityType type) {
-            List<ItemStack> loot = new ArrayList<>();
-            int chanceCooked = plugin.getConfig().getInt("eleveur.loot-cooked-chance", 5);
-            switch (type) {
-                case COW -> {
-                    int beef = 1 + RNG.nextInt(3);
-                    int leather = RNG.nextInt(3);
-                    Material rawBeef = (RNG.nextInt(100) < chanceCooked) ? Material.COOKED_BEEF : Material.BEEF;
-                    loot.add(new ItemStack(rawBeef, beef));
-                    if (rawBeef == Material.COOKED_BEEF) cookedCount += beef; else rawCount += beef;
-                    if (leather > 0) {
-                        loot.add(new ItemStack(Material.LEATHER, leather));
-                    }
-                }
-                case CHICKEN -> {
-                    int c = 1 + RNG.nextInt(2);
-                    int f = RNG.nextInt(3);
-                    Material raw = (RNG.nextInt(100) < chanceCooked) ? Material.COOKED_CHICKEN : Material.CHICKEN;
-                    loot.add(new ItemStack(raw, c));
-                    if (raw == Material.COOKED_CHICKEN) cookedCount += c; else rawCount += c;
-                    if (f > 0) {
-                        loot.add(new ItemStack(Material.FEATHER, f));
-                    }
-                }
-                case PIG -> {
-                    int p = 1 + RNG.nextInt(3);
-                    Material raw = (RNG.nextInt(100) < chanceCooked) ? Material.COOKED_PORKCHOP : Material.PORKCHOP;
-                    loot.add(new ItemStack(raw, p));
-                    if (raw == Material.COOKED_PORKCHOP) cookedCount += p; else rawCount += p;
-                }
-                case SHEEP -> {
-                    int m = 1 + RNG.nextInt(2);
-                    Material raw = (RNG.nextInt(100) < chanceCooked) ? Material.COOKED_MUTTON : Material.MUTTON;
-                    loot.add(new ItemStack(raw, m));
-                    if (raw == Material.COOKED_MUTTON) cookedCount += m; else rawCount += m;
-                    loot.add(new ItemStack(Material.WHITE_WOOL, 1));
-                }
-                default -> {}
-            }
-            return loot;
-        }
 
         /**
          * À chaque boucle, on vide l’inventaire du PNJ boucher dans les coffres.
@@ -1211,18 +980,6 @@ public final class Eleveur implements CommandExecutor, Listener {
         }
 
         /* ========================================================
-         *   Comptage des animaux (scoreboard)
-         * ========================================================
-         */
-        public Map<EntityType,Integer> countAnimals() {
-            Map<EntityType,Integer> map = new HashMap<>();
-            for (EntityType et : MAIN_SPECIES) {
-                map.put(et, getEntitiesInZone(et).size());
-            }
-            return map;
-        }
-
-        /* ========================================================
          *   Gestion coffres cassés
          * ========================================================
          */
@@ -1234,16 +991,6 @@ public final class Eleveur implements CommandExecutor, Listener {
         }
         public boolean hasChests() {
             return !chestBlocks.isEmpty();
-        }
-
-        /* ========================================================
-         *   Accès compteurs
-         * ======================================================== */
-        public int getRawCount() {
-            return rawCount;
-        }
-        public int getCookedCount() {
-            return cookedCount;
         }
 
         /* ========================================================

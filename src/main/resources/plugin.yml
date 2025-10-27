@@ -34,6 +34,10 @@ commands:
   armure:
     description: Donne l'Armure du roi GIDON
     usage: /armure
+  marchand:
+    description: Invoque un marchand PNJ personnalisé
+    usage: /marchand
+    permission: mineplugin.marchand.spawn
 
 permissions:
   mineplugin.mineur.use:
@@ -41,6 +45,9 @@ permissions:
     default: true
   mineplugin.mineur.admin:
     description: Administrer toutes les sessions du mineur
+    default: op
+  mineplugin.marchand.spawn:
+    description: Invoquer ou recharger le marchand
     default: op
 
 softdepend:

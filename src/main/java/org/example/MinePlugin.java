@@ -18,6 +18,8 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 
+import org.example.merchant.MerchantManager;
+
 /**
  * Plugin principal.
  */
@@ -65,6 +67,8 @@ public final class MinePlugin extends JavaPlugin implements Listener {
      */
     private Armure armure;
 
+    private MerchantManager merchantManager;
+
     public Mineur getMineur() { return mineur; }
     public Agriculture getAgriculture() { return agriculture; }
     public Foret getForet() { return foret; }
@@ -108,6 +112,8 @@ public final class MinePlugin extends JavaPlugin implements Listener {
 
         // Instancie /armure
         armure = new Armure(this);
+
+        merchantManager = new MerchantManager(this);
     }
 
     @Override
@@ -128,6 +134,9 @@ public final class MinePlugin extends JavaPlugin implements Listener {
         if (eleveur != null) {
             eleveur.saveAllSessions();
             eleveur.stopAllRanches();
+        }
+        if (merchantManager != null) {
+            merchantManager.shutdown();
         }
 
         // Nettoyage /army

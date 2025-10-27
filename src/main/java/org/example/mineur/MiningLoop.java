@@ -36,6 +36,9 @@ public final class MiningLoop extends BukkitRunnable {
     private final Villager miner;
     private final Consumer<Block> decorationCallback;
     private final Runnable completionCallback;
+    private final Runnable storageBlockedCallback;
+    private final Runnable storageFreedCallback;
+    private boolean storageBlockedNotified;
 
     private Block current;
     private Phase phase = Phase.IDLE;
@@ -47,7 +50,10 @@ public final class MiningLoop extends BukkitRunnable {
                       InventoryRouter router,
                       Villager miner,
                       Consumer<Block> decorationCallback,
-                      Runnable completionCallback) {
+                      Runnable completionCallback,
+                      Runnable storageBlockedCallback,
+                      Runnable storageFreedCallback,
+                      boolean initiallyBlocked) {
         this.plugin = plugin;
         this.state = state;
         this.iterator = iterator;
@@ -55,11 +61,17 @@ public final class MiningLoop extends BukkitRunnable {
         this.miner = miner;
         this.decorationCallback = decorationCallback;
         this.completionCallback = completionCallback;
+        this.storageBlockedCallback = storageBlockedCallback;
+        this.storageFreedCallback = storageFreedCallback;
+        this.storageBlockedNotified = initiallyBlocked;
     }
 
     @Override
     public void run() {
         if (state.paused) {
+            return;
+        }
+        if (!checkStorageAvailability()) {
             return;
         }
         if (miner == null || miner.isDead()) {
@@ -117,6 +129,9 @@ public final class MiningLoop extends BukkitRunnable {
             phase = Phase.IDLE;
             return;
         }
+        if (!checkStorageAvailability()) {
+            return;
+        }
         World world = current.getWorld();
         Material type = current.getType();
         if (type == Material.AIR || type == Material.BEDROCK) {
@@ -143,6 +158,34 @@ public final class MiningLoop extends BukkitRunnable {
 
     private void handleDepositing() {
         phase = Phase.IDLE;
+    }
+
+    private boolean checkStorageAvailability() {
+        if (router == null || !router.hasTargets()) {
+            if (storageBlockedNotified) {
+                storageBlockedNotified = false;
+                if (storageFreedCallback != null) {
+                    storageFreedCallback.run();
+                }
+            }
+            return true;
+        }
+        if (!router.hasFreeSpace()) {
+            if (!storageBlockedNotified) {
+                storageBlockedNotified = true;
+                if (storageBlockedCallback != null) {
+                    storageBlockedCallback.run();
+                }
+            }
+            return false;
+        }
+        if (storageBlockedNotified) {
+            storageBlockedNotified = false;
+            if (storageFreedCallback != null) {
+                storageFreedCallback.run();
+            }
+        }
+        return true;
     }
 
     private void moveMinerTowards(Block target) {

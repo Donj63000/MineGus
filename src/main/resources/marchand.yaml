@@ -1,0 +1,525 @@
+config_version: 1
+merchant:
+  id: minegus_trader
+  display_name: "Marchand de Blocs"
+  locale: fr_FR
+  reset_time_utc: "00:00"
+  ui:
+    categories_order: [BOIS, PIERRE, TUFF_DEEPSLATE, VERRE_BETON, TERRACOTTA, QUARTZ, CUIVRE, NETHER, OCEAN, END, VEGETAL, LAINE, RAILS, JOB_SITES, LUMIERE, PORTAILS, SCULK, SPECIAUX_ADMIN]
+
+rules:
+  allow_outputs_as_inputs: false    # empêche les boucles (une sortie ne peut pas être réutilisée en entrée)
+  return_unmatched_inputs: true     # rend les blocs non pris en charge au joueur
+  log_trades: true
+  sound_on_trade: "ENTITY_VILLAGER_YES"
+  default_caps:
+    per_player_per_day: 0           # 0 = illimité (sauf si override par offre)
+    per_server_per_day: 0
+
+# ────────────────────────────────────────────────────────────────────────────────
+# CATEGORIES & OFFRES
+# ────────────────────────────────────────────────────────────────────────────────
+categories:
+
+  # === BOIS : toutes essences (inclut Pale Oak 1.21.4) ========================
+  BOIS:
+    icon: OAK_LOG
+    description: "Convertit des bûches en formes bois (généreux) + signalisation."
+    input:
+      type: TAG
+      key: LOGS
+    offers:
+      - out: TAG:PLANKS
+        in_qty: 8
+        out_qty: 64
+        note: "8 logs -> 64 planches (x2 vanilla)"
+      - out: TAG:WOODEN_STAIRS
+        in_qty: 8
+        out_qty: 48
+      - out: TAG:WOODEN_SLABS
+        in_qty: 8
+        out_qty: 64
+      - out: TAG:WOODEN_FENCES
+        in_qty: 8
+        out_qty: 32
+      - out: TAG:FENCE_GATES
+        in_qty: 8
+        out_qty: 24
+      - out: TAG:WOODEN_DOORS
+        in_qty: 8
+        out_qty: 16
+      - out: TAG:WOODEN_TRAPDOORS
+        in_qty: 8
+        out_qty: 16
+      - out: TAG:ALL_SIGNS
+        in_qty: 8
+        out_qty: 32
+      - out: TAG:ALL_HANGING_SIGNS
+        in_qty: 8
+        out_qty: 16
+      # Bonus utilitaires liés au bois
+      - out: BARREL
+        in_qty: 8
+        out_qty: 12
+      - out: CHISELED_BOOKSHELF
+        in_qty: 8
+        out_qty: 8
+      - out: LECTERN
+        in_qty: 8
+        out_qty: 8
+
+  # === PIERRE (overworld) ======================================================
+  PIERRE:
+    icon: STONE
+    description: "Pierres classiques avec cuisson/taillage offerts."
+    offers:
+      - in: COBBLESTONE
+        in_qty: 32
+        out: STONE
+        out_qty: 64
+      - in: COBBLESTONE
+        in_qty: 32
+        out: STONE_BRICKS
+        out_qty: 64
+      - in: STONE
+        in_qty: 32
+        out: SMOOTH_STONE
+        out_qty: 64
+      - in: ANDESITE
+        in_qty: 32
+        out: POLISHED_ANDESITE
+        out_qty: 48
+      - in: DIORITE
+        in_qty: 32
+        out: POLISHED_DIORITE
+        out_qty: 48
+      - in: GRANITE
+        in_qty: 32
+        out: POLISHED_GRANITE
+        out_qty: 48
+      - in: SANDSTONE
+        in_qty: 16
+        out: SMOOTH_SANDSTONE
+        out_qty: 32
+      - in: RED_SANDSTONE
+        in_qty: 16
+        out: SMOOTH_RED_SANDSTONE
+        out_qty: 32
+      - in: CLAY
+        in_qty: 16
+        out: BRICKS
+        out_qty: 32
+
+  # === TUFF & DEEPSLATE (1.21 inclus) =========================================
+  TUFF_DEEPSLATE:
+    icon: TUFF
+    description: "Familles tuff & deepslate modernes (tailles/briques)."
+    offers:
+      - in: TUFF
+        in_qty: 32
+        out: TUFF_BRICKS
+        out_qty: 64
+      - in: TUFF
+        in_qty: 32
+        out: CHISELED_TUFF
+        out_qty: 64
+      - in: COBBLED_DEEPSLATE
+        in_qty: 32
+        out: DEEPSLATE_BRICKS
+        out_qty: 64
+      - in: COBBLED_DEEPSLATE
+        in_qty: 32
+        out: DEEPSLATE_TILES
+        out_qty: 64
+      - in: POLISHED_DEEPSLATE
+        in_qty: 32
+        out: CHISELED_DEEPSLATE
+        out_qty: 64
+
+  # === VERRE, TEINTE & BÉTON ==================================================
+  VERRE_BETON:
+    icon: GLASS
+    description: "Verre (couleurs offertes), béton (mélange sable+gravier auto)."
+    offers:
+      - in: SAND
+        in_qty: 16
+        out: GLASS
+        out_qty: 32
+      - in: SAND
+        in_qty: 32
+        out: ALIAS:ANY_STAINED_GLASS
+        out_qty: 64
+      - in_combo: { SAND: 32, GRAVEL: 32 }
+        out: ALIAS:ANY_CONCRETE
+        out_qty: 64
+      - in: AMETHYST_BLOCK
+        in_qty: 8
+        out: TINTED_GLASS
+        out_qty: 32
+      - in: RED_SAND
+        in_qty: 16
+        out: RED_SANDSTONE
+        out_qty: 32
+
+  # === TERRACOTTA & GLAZED ====================================================
+  TERRACOTTA:
+    icon: TERRACOTTA
+    description: "Argile cuite et émaillée (couleurs offertes)."
+    offers:
+      - in: CLAY_BLOCK
+        in_qty: 16
+        out: ALIAS:ANY_TERRACOTTA
+        out_qty: 32
+      - in: CLAY_BLOCK
+        in_qty: 16
+        out: ALIAS:ANY_GLAZED_TERRACOTTA
+        out_qty: 32
+
+  # === QUARTZ =================================================================
+  QUARTZ:
+    icon: QUARTZ_BLOCK
+    description: "Toutes variantes façonnées sans four."
+    offers:
+      - in: QUARTZ_BLOCK
+        in_qty: 16
+        out: SMOOTH_QUARTZ
+        out_qty: 32
+      - in: QUARTZ_BLOCK
+        in_qty: 16
+        out: QUARTZ_PILLAR
+        out_qty: 32
+      - in: QUARTZ_BLOCK
+        in_qty: 16
+        out: CHISELED_QUARTZ_BLOCK
+        out_qty: 24
+
+  # === CUIVRE (1.21) ==========================================================
+  CUIVRE:
+    icon: COPPER_BLOCK
+    description: "Tailles/rainures/grilles + ampoules cuivre (oxydation/cire au choix)."
+    offers:
+      - in: COPPER_BLOCK
+        in_qty: 16
+        out: ALIAS:ANY_CUT_COPPER
+        out_qty: 24
+        opts: { allow_waxed: true, allow_oxidation_any: true }
+      - in: COPPER_BLOCK
+        in_qty: 16
+        out: CHISELED_COPPER
+        out_qty: 24
+      - in: COPPER_BLOCK
+        in_qty: 16
+        out: COPPER_GRATE
+        out_qty: 24
+      - in: COPPER_BLOCK
+        in_qty: 16
+        out: ALIAS:ANY_COPPER_BULB
+        out_qty: 16
+        opts: { allow_waxed: true, allow_oxidation_any: true }
+
+  # === NETHER =================================================================
+  NETHER:
+    icon: NETHERRACK
+    description: "Pierres du Nether + luminaires."
+    offers:
+      - in: NETHERRACK
+        in_qty: 64
+        out: NETHER_BRICKS
+        out_qty: 32
+      - in: BASALT
+        in_qty: 16
+        out: POLISHED_BASALT
+        out_qty: 32
+      - in: BASALT
+        in_qty: 16
+        out: SMOOTH_BASALT
+        out_qty: 32
+      - in: BLACKSTONE
+        in_qty: 16
+        out: POLISHED_BLACKSTONE
+        out_qty: 32
+      - in: BLACKSTONE
+        in_qty: 16
+        out: POLISHED_BLACKSTONE_BRICKS
+        out_qty: 32
+      - in: BLACKSTONE
+        in_qty: 16
+        out: CHISELED_POLISHED_BLACKSTONE
+        out_qty: 16
+      - in: GLOWSTONE
+        in_qty: 16
+        out: REDSTONE_LAMP
+        out_qty: 32
+      - in: NETHER_WART_BLOCK
+        in_qty: 16
+        out: RED_NETHER_BRICKS
+        out_qty: 24
+
+  # === OCEAN / MONUMENTS ======================================================
+  OCEAN:
+    icon: PRISMARINE
+    description: "Prismarine & lanternes marines."
+    offers:
+      - in: PRISMARINE
+        in_qty: 16
+        out: PRISMARINE_BRICKS
+        out_qty: 24
+      - in: PRISMARINE
+        in_qty: 16
+        out: DARK_PRISMARINE
+        out_qty: 24
+      - in: PRISMARINE_BLOCK
+        in_qty: 16
+        out: SEA_LANTERN
+        out_qty: 16
+
+  # === END ====================================================================
+  END:
+    icon: END_STONE
+    description: "Famille End (bricks/purpur)."
+    offers:
+      - in: END_STONE
+        in_qty: 16
+        out: END_STONE_BRICKS
+        out_qty: 32
+      - in: PURPUR_BLOCK
+        in_qty: 16
+        out: PURPUR_PILLAR
+        out_qty: 24
+      - in: PURPUR_BLOCK
+        in_qty: 16
+        out: PURPUR_STAIRS
+        out_qty: 24
+      - in: PURPUR_BLOCK
+        in_qty: 16
+        out: PURPUR_SLAB
+        out_qty: 24
+
+  # === VÉGÉTAL (mousse/bambou/feuillage utile) ================================
+  VEGETAL:
+    icon: MOSS_BLOCK
+    description: "Mousses (1.21.4), bambou et tapis végétaux."
+    offers:
+      - in: MOSS_BLOCK
+        in_qty: 16
+        out: MOSS_CARPET
+        out_qty: 48
+      - in: PALE_MOSS
+        in_qty: 16
+        out: PALE_MOSS_CARPET
+        out_qty: 48
+      - in: PALE_MOSS
+        in_qty: 16
+        out: HANGING_MOSS
+        out_qty: 48
+      - in: BAMBOO_BLOCK
+        in_qty: 16
+        out: BAMBOO_PLANKS
+        out_qty: 64
+      - in: BAMBOO_BLOCK
+        in_qty: 16
+        out: BAMBOO_MOSAIC
+        out_qty: 48
+
+  # === LAINE & TAPIS (16 couleurs) ============================================
+  LAINE:
+    icon: WHITE_WOOL
+    description: "Laine ↔ tapis, toutes couleurs (bonus de rendement)."
+    offers:
+      - in: ALIAS:ANY_WOOL
+        in_qty: 16
+        out: ALIAS:ANY_CARPET
+        out_qty: 48
+      - in: ALIAS:ANY_WOOL
+        in_qty: 16
+        out: ALIAS:ANY_WOOL
+        out_qty: 24
+        note: "conversion couleur -> autre couleur (bonus)"
+
+  # === RAILS & TRANSPORT ======================================================
+  RAILS:
+    icon: RAIL
+    description: "Rails en quantité, combos de blocs uniquement."
+    offers:
+      - in: IRON_BLOCK
+        in_qty: 4
+        out: RAIL
+        out_qty: 64
+      - in_combo: { GOLD_BLOCK: 4, REDSTONE_BLOCK: 4 }
+        out: POWERED_RAIL
+        out_qty: 64
+      - in_combo: { IRON_BLOCK: 4, REDSTONE_BLOCK: 4 }
+        out: DETECTOR_RAIL
+        out_qty: 64
+      - in_combo: { IRON_BLOCK: 4, STONE: 4 }
+        out: ACTIVATOR_RAIL
+        out_qty: 64
+      - in: BAMBOO_BLOCK
+        in_qty: 8
+        out: SCAFFOLDING
+        out_qty: 64
+
+  # === POSTES DE MÉTIER (Villageois) ==========================================
+  JOB_SITES:
+    icon: SMITHING_TABLE
+    description: "Ateliers prêts à poser."
+    offers:
+      - in: STONE
+        in_qty: 16
+        out: STONECUTTER
+        out_qty: 8
+      - in: COBBLESTONE
+        in_qty: 16
+        out: FURNACE
+        out_qty: 8
+      - in: IRON_BLOCK
+        in_qty: 4
+        out: ANVIL
+        out_qty: 4
+      - in: OAK_PLANKS
+        in_qty: 16
+        out: CARTOGRAPHY_TABLE
+        out_qty: 8
+      - in: OAK_PLANKS
+        in_qty: 16
+        out: LOOM
+        out_qty: 8
+      - in: OAK_PLANKS
+        in_qty: 16
+        out: SMITHING_TABLE
+        out_qty: 8
+      - in: OAK_PLANKS
+        in_qty: 16
+        out: GRINDSTONE
+        out_qty: 8
+      - in: OAK_PLANKS
+        in_qty: 16
+        out: COMPOSTER
+        out_qty: 8
+      - in: OAK_PLANKS
+        in_qty: 16
+        out: LECTERN
+        out_qty: 8
+      - in: OAK_PLANKS
+        in_qty: 16
+        out: BARREL
+        out_qty: 12
+      - in: OAK_PLANKS
+        in_qty: 16
+        out: CHISELED_BOOKSHELF
+        out_qty: 8
+      - in: OAK_PLANKS
+        in_qty: 16
+        out: JUKEBOX
+        out_qty: 4
+
+  # === LUMIÈRE ================================================================
+  LUMIERE:
+    icon: SEA_LANTERN
+    description: "Sources lumineuses généreuses."
+    offers:
+      - in: COAL_BLOCK
+        in_qty: 8
+        out: TORCH
+        out_qty: 192
+      - in: GLOWSTONE
+        in_qty: 16
+        out: REDSTONE_LAMP
+        out_qty: 32
+      - in: PRISMARINE_BLOCK
+        in_qty: 16
+        out: SEA_LANTERN
+        out_qty: 16
+      - in: SHROOMLIGHT
+        in_qty: 8
+        out: ALIAS:ANY_CARPET
+        out_qty: 16
+        note: "bonus décor"
+      - in: COPPER_BLOCK
+        in_qty: 16
+        out: ALIAS:ANY_COPPER_BULB
+        out_qty: 16
+
+  # === PORTAILS & PROGRESSION ================================================
+  PORTAILS:
+    icon: LODESTONE
+    description: "Blocs de progression (coûts élevés, toujours gagnants)."
+    offers:
+      - in_combo: { NETHERITE_BLOCK: 1, STONE: 32 }
+        out: LODESTONE
+        out_qty: 1
+      - in_combo: { CRYING_OBSIDIAN: 16, GLOWSTONE: 8 }
+        out: RESPAWN_ANCHOR
+        out_qty: 2
+      - in: OBSIDIAN
+        in_qty: 64
+        out: ENCHANTING_TABLE
+        out_qty: 2
+
+  # === SCULK (capteurs) =======================================================
+  SCULK:
+    icon: SCULK_SENSOR
+    description: "Capteurs sculk, avec plafonds journaliers."
+    offers:
+      - in: SCULK
+        in_qty: 16
+        out: SCULK_SENSOR
+        out_qty: 8
+      - in: SCULK_CATALYST
+        in_qty: 8
+        out: CALIBRATED_SCULK_SENSOR
+        out_qty: 4
+        caps: { per_player_per_day: 1 }
+
+  # === SPÉCIAUX / CRÉATIF / STRUCTURE (DÉSACTIVÉ PAR DÉFAUT) ==================
+  SPECIAUX_ADMIN:
+    icon: STRUCTURE_BLOCK
+    disabled_by_default: true
+    requires_permission: "minegus.troc.special"
+    description: "Blocs techniques/administration, très limités."
+    offers:
+      - in: NETHERITE_BLOCK
+        in_qty: 1
+        out: TRIAL_SPAWNER
+        out_qty: 1
+        caps: { per_server_per_day: 1 }
+      - in: NETHERITE_BLOCK
+        in_qty: 1
+        out: OMINOUS_TRIAL_SPAWNER
+        out_qty: 1
+        caps: { per_server_per_day: 1 }
+      - in: NETHERITE_BLOCK
+        in_qty: 1
+        out: VAULT
+        out_qty: 1
+        caps: { per_server_per_day: 2 }
+      - in: NETHERITE_BLOCK
+        in_qty: 1
+        out: OMINOUS_VAULT
+        out_qty: 1
+        caps: { per_server_per_day: 2 }
+      - in: AMETHYST_BLOCK
+        in_qty: 64
+        out: LIGHT
+        out_qty: 64
+        caps: { per_player_per_day: 1 }
+      - in: BEDROCK
+        in_qty: 1
+        out: BARRIER
+        out_qty: 1
+        caps: { per_server_per_day: 1 }
+      - in: STRUCTURE_BLOCK
+        in_qty: 1
+        out: JIGSAW
+        out_qty: 1
+        caps: { per_server_per_day: 1 }
+      - in: COMMAND_BLOCK
+        in_qty: 1
+        out: CHAIN_COMMAND_BLOCK
+        out_qty: 1
+        caps: { per_server_per_day: 1 }
+      - in: CHAIN_COMMAND_BLOCK
+        in_qty: 1
+        out: REPEATING_COMMAND_BLOCK
+        out_qty: 1
+        caps: { per_server_per_day: 1 }

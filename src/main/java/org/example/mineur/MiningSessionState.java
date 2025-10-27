@@ -32,6 +32,7 @@ public final class MiningSessionState {
     public final List<Vector> containers = new ArrayList<>();
     public boolean useBarrelMaster = false;
     public boolean paused = false;
+    public boolean waitingStorage = false;
     public final Set<UUID> trusted = new HashSet<>();
 
     public Map<String, Object> toMap() {
@@ -53,6 +54,7 @@ public final class MiningSessionState {
         map.put("containers", cont);
         map.put("useBarrelMaster", useBarrelMaster);
         map.put("paused", paused);
+        map.put("waitingStorage", waitingStorage);
         List<String> trustedList = new ArrayList<>();
         for (UUID uuid : trusted) {
             trustedList.add(uuid.toString());
@@ -103,6 +105,8 @@ public final class MiningSessionState {
         state.useBarrelMaster = useBarrel instanceof Boolean b ? b : false;
         Object pausedObj = map.get("paused");
         state.paused = pausedObj instanceof Boolean b ? b : false;
+        Object waitingObj = map.get("waitingStorage");
+        state.waitingStorage = waitingObj instanceof Boolean b ? b : false;
         Object trustedObj = map.get("trusted");
         if (trustedObj instanceof List<?> list) {
             for (Object entry : list) {

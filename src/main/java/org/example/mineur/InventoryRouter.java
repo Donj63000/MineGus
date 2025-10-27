@@ -36,6 +36,27 @@ public final class InventoryRouter {
     }
 
     /**
+     * @return true s'il reste une place libre ou une stack incomplète dans les coffres.
+     */
+    public boolean hasFreeSpace() {
+        for (Block block : targets) {
+            if (!(block.getState() instanceof Container container)) {
+                continue;
+            }
+            Inventory inventory = container.getInventory();
+            if (inventory.firstEmpty() >= 0) {
+                return true;
+            }
+            for (ItemStack stack : inventory.getContents()) {
+                if (stack != null && stack.getAmount() < stack.getMaxStackSize()) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    /**
      * Attempts to deposit the provided items inside the targets.
      *
      * @return items that could not fit.

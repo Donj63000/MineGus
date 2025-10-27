@@ -71,7 +71,7 @@ public final class VillageEntityManager {
     /* ------------------- TÂCHE QUOTA (100 NPC) ------------------- */
     /** Lance (ou relance) la vérification périodique du quota de NPC pour ce village. */
     public static void startCapTask(Plugin plugin, Location center, int cap) {
-        int villageId = center.getBlockX() ^ center.getBlockZ() ^ center.getWorld().getUID().hashCode();
+        int villageId = computeVillageId(center);
 
         /* vérifie toutes les 10 s */
         new BukkitRunnable() {
@@ -104,12 +104,19 @@ public final class VillageEntityManager {
 
     /* ------------------- UTIL PUBLIC ------------------- */
     public static void cleanup(Plugin p, int villageId) {
+        GateGuardManager.stopGuardTask(villageId);
         for (World w : p.getServer().getWorlds()) {
             w.getEntities().stream()
                     .filter(e -> e.hasMetadata(TAG)
                             && e.getMetadata(TAG).get(0).asInt() == villageId)
                     .forEach(Entity::remove);
         }
+    }
+
+    public static int computeVillageId(Location center) {
+        World world = center.getWorld();
+        int worldHash = world != null ? world.getUID().hashCode() : 0;
+        return center.getBlockX() ^ center.getBlockZ() ^ worldHash;
     }
 
     public static void tagEntity(Entity e, Plugin p, int id) {

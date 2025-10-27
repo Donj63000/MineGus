@@ -264,7 +264,7 @@ public final class HouseBuilder {
         final int  wallHeight = (size <= 7 ? 4 : 5);
         final Material fundMat   = Material.STONE_BRICKS;
         final Material windowMat = Material.GLASS_PANE;
-        final Material roofMat   = roofs.get(rng.nextInt(roofs.size()));
+        final Material roofMat   = Material.STONE_BRICKS;
         final Material floorMat  = planks.get(rng.nextInt(planks.size()));
         final Material logMat    = logs.get(rng.nextInt(logs.size()));
         final Material wallMat   = planks.get(rng.nextInt(planks.size()));
@@ -330,14 +330,13 @@ public final class HouseBuilder {
         for (int layer = 0; layer < layers; layer++) {
             int y = roofBaseY + layer;
             int min = layer, max = size - 1 - layer;
-            for (int dx2 = min; dx2 <= max; dx2++)
+            for (int dx2 = min; dx2 <= max; dx2++) {
                 for (int dz2 = min; dz2 <= max; dz2++) {
-                    boolean edge = dx2 == min || dx2 == max || dz2 == min || dz2 == max;
-                    if (!edge) continue;
                     int[] p = rotate(dx2, dz2, rot);
                     int fx = ox + p[0], fz = oz + p[1];
                     tasks.add(() -> sb.set(fx, y, fz, roofMat));
                 }
+            }
         }
 
         /* 5) éclairage intérieur */

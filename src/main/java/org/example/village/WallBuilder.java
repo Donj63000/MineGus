@@ -3,18 +3,17 @@ package org.example.village;
 import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.World;
-import org.bukkit.block.BlockFace;
 
 import java.util.List;
 import java.util.Queue;
 import java.util.random.RandomGenerator;
 
 /**
- * Muraille périphérique “stylée” :
+ * Muraille périphérique renforcée :
  * └ 5 blocs de haut        (Stone / Mossy / Cracked mix)
  * └ Crenelage 1 sur 2      (WALL + SLAB)
- * └ Portes cardinales 3 × 5
- * └ Torches murales sur les piliers d’angle des portes
+ * └ Une seule porte principale (sud)
+ * └ Chemin de ronde + tours d’angle + gatehouse
  *
  * Tout est poussé dans {@code Queue<Runnable>} ; la méthode reste
  * entièrement thread-safe puisqu’elle ne touche pas directement au monde.
@@ -24,6 +23,9 @@ public final class WallBuilder {
     private WallBuilder() {}
     private static final int WALL_HEIGHT      = 5;
     private static final int CRENELLE_INTERVAL = 2;   // 0 1 (mur) 2 (cre) 3 4 …
+    private static final int GATE_HALF_WIDTH  = 2;
+    private static final int TOWER_RADIUS     = 1;
+    private static final int TOWER_EXTRA_HEIGHT = 3;
 
     /* palette « pierre » pour casser la monotonie */
     private static final List<Material> BODY = List.of(
@@ -61,13 +63,9 @@ public final class WallBuilder {
                 boolean edge = (x == minX || x == maxX || z == minZ || z == maxZ);
                 if (!edge) continue;
 
-                /* ——— PORTES 3 × 5 ——— */
-                boolean inNorthGate = (z == minZ) && Math.abs(x - cx) <= 1;
-                boolean inSouthGate = (z == maxZ) && Math.abs(x - cx) <= 1;
-                boolean inWestGate  = (x == minX) && Math.abs(z - cz) <= 1;
-                boolean inEastGate  = (x == maxX) && Math.abs(z - cz) <= 1;
-                if (inNorthGate || inSouthGate || inWestGate || inEastGate) {
-                    /* on laisse l’ouverture vide */
+                /* ——— Porte principale (sud uniquement) ——— */
+                boolean inSouthGate = (z == maxZ) && Math.abs(x - cx) <= GATE_HALF_WIDTH;
+                if (inSouthGate) {
                     continue;
                 }
 
@@ -92,41 +90,135 @@ public final class WallBuilder {
             }
         }
 
-        /* === 2. Torches sur les piliers latéraux des portes === */
-        addGateTorchPair(q, sb, cx - 2, baseY + 3, minZ, BlockFace.SOUTH); // Nord-Ouest
-        addGateTorchPair(q, sb, cx + 2, baseY + 3, minZ, BlockFace.SOUTH); // Nord-Est
+        /* chemin de ronde intérieur */
+        addInnerWalkway(q, sb, minX, maxX, minZ, maxZ, baseY);
 
-        addGateTorchPair(q, sb, cx - 2, baseY + 3, maxZ, BlockFace.NORTH); // Sud-Ouest
-        addGateTorchPair(q, sb, cx + 2, baseY + 3, maxZ, BlockFace.NORTH); // Sud-Est
+        /* tours d'angle */
+        buildCornerTowers(q, sb, minX, maxX, minZ, maxZ, baseY);
 
-        addGateTorchPair(q, sb, minX, baseY + 3, cz - 2, BlockFace.EAST);  // Ouest-Nord
-        addGateTorchPair(q, sb, minX, baseY + 3, cz + 2, BlockFace.EAST);  // Ouest-Sud
-
-        addGateTorchPair(q, sb, maxX, baseY + 3, cz - 2, BlockFace.WEST);  // Est-Nord
-        addGateTorchPair(q, sb, maxX, baseY + 3, cz + 2, BlockFace.WEST);  // Est-Sud
+        /* gatehouse + déco unique */
+        buildGatehouse(q, sb, cx, maxZ, baseY);
+        addGateLighting(q, sb, cx, maxZ, baseY);
     }
 
-    /* ------------------------------------------------------------------ */
-    /*  Torches murales : petit helper                                    */
-    /* ------------------------------------------------------------------ */
-    private static void addGateTorchPair(Queue<Runnable> q,
-                                         TerrainManager.SetBlock sb,
-                                         int x, int y, int z,
-                                         BlockFace facing) {
+    private static void addInnerWalkway(Queue<Runnable> q,
+                                        TerrainManager.SetBlock sb,
+                                        int minX, int maxX,
+                                        int minZ, int maxZ,
+                                        int baseY) {
+        int y = baseY + WALL_HEIGHT;
+        int innerMinX = minX + 1;
+        int innerMaxX = maxX - 1;
+        int innerMinZ = minZ + 1;
+        int innerMaxZ = maxZ - 1;
 
-        q.add(() -> sb.set(x, y, z, Material.WALL_TORCH));  // pose brute
-        /* Orientation correcte : si vous voulez affiner, activez la partie
-           ci-dessous ; elle nécessite un accès direct au monde, donc à
-           appeler dans le thread principal (d’où la lambda Runnable). */
-        /*
-        q.add(() -> {
-            Block b = Bukkit.getWorlds().get(0).getBlockAt(x, y, z);
-            if (b.getType() == Material.WALL_TORCH) {
-                WallTorch data = (WallTorch) b.getBlockData();
-                data.setFacing(facing);
-                b.setBlockData(data, false);
+        for (int x = innerMinX; x <= innerMaxX; x++) {
+            int fx = x;
+            q.add(() -> sb.set(fx, y, innerMinZ, Material.STONE_BRICKS));
+            q.add(() -> sb.set(fx, y, innerMaxZ, Material.STONE_BRICKS));
+        }
+        for (int z = innerMinZ; z <= innerMaxZ; z++) {
+            int fz = z;
+            q.add(() -> sb.set(innerMinX, y, fz, Material.STONE_BRICKS));
+            q.add(() -> sb.set(innerMaxX, y, fz, Material.STONE_BRICKS));
+        }
+    }
+
+    private static void buildCornerTowers(Queue<Runnable> q,
+                                          TerrainManager.SetBlock sb,
+                                          int minX, int maxX,
+                                          int minZ, int maxZ,
+                                          int baseY) {
+        buildTower(q, sb, minX, minZ, baseY);
+        buildTower(q, sb, minX, maxZ, baseY);
+        buildTower(q, sb, maxX, minZ, baseY);
+        buildTower(q, sb, maxX, maxZ, baseY);
+    }
+
+    private static void buildTower(Queue<Runnable> q,
+                                   TerrainManager.SetBlock sb,
+                                   int cx, int cz,
+                                   int baseY) {
+        int top = baseY + WALL_HEIGHT + TOWER_EXTRA_HEIGHT;
+        for (int dx = -TOWER_RADIUS; dx <= TOWER_RADIUS; dx++) {
+            for (int dz = -TOWER_RADIUS; dz <= TOWER_RADIUS; dz++) {
+                int fx = cx + dx;
+                int fz = cz + dz;
+                for (int y = baseY + 1; y <= top; y++) {
+                    int fy = y;
+                    q.add(() -> sb.set(fx, fy, fz, Material.STONE_BRICKS));
+                }
             }
-        });
-        */
+        }
+
+        int roofY = top + 1;
+        for (int dx = -TOWER_RADIUS - 1; dx <= TOWER_RADIUS + 1; dx++) {
+            for (int dz = -TOWER_RADIUS - 1; dz <= TOWER_RADIUS + 1; dz++) {
+                int fx = cx + dx;
+                int fz = cz + dz;
+                q.add(() -> sb.set(fx, roofY, fz, Material.SMOOTH_STONE_SLAB));
+            }
+        }
+
+        int torchY = roofY + 1;
+        q.add(() -> sb.set(cx, torchY, cz, Material.LANTERN));
+    }
+
+    private static void buildGatehouse(Queue<Runnable> q,
+                                       TerrainManager.SetBlock sb,
+                                       int centerX, int gateZ,
+                                       int baseY) {
+        int outerMinX = centerX - GATE_HALF_WIDTH - 1;
+        int outerMaxX = centerX + GATE_HALF_WIDTH + 1;
+        int outerMinZ = gateZ - 1;
+        int outerMaxZ = gateZ + 2;
+        int roofY = baseY + WALL_HEIGHT + 2;
+
+        for (int x = outerMinX; x <= outerMaxX; x++) {
+            for (int z = outerMinZ; z <= outerMaxZ; z++) {
+                boolean corridor = (Math.abs(x - centerX) <= GATE_HALF_WIDTH)
+                        && (z >= gateZ && z <= gateZ + 1);
+                if (corridor) {
+                    continue;
+                }
+                boolean wall = (x == outerMinX || x == outerMaxX || z == outerMinZ || z == outerMaxZ);
+                if (!wall) {
+                    continue;
+                }
+                for (int y = baseY + 1; y <= roofY; y++) {
+                    int fy = y;
+                    boolean archOpening = (y <= baseY + WALL_HEIGHT)
+                            && (z == gateZ || z == gateZ + 1)
+                            && Math.abs(x - centerX) <= GATE_HALF_WIDTH;
+                    if (archOpening) {
+                        continue;
+                    }
+                    Material mat = (y == roofY) ? Material.SMOOTH_STONE_SLAB : Material.STONE_BRICKS;
+                    int fx = x, fz = z;
+                    q.add(() -> sb.set(fx, fy, fz, mat));
+                }
+            }
+        }
+
+        /* rampe intérieure pour rejoindre la route centrale */
+        int walkwayY = baseY + 1;
+        for (int dz = 1; dz <= 3; dz++) {
+            int z = gateZ + dz;
+            for (int x = centerX - GATE_HALF_WIDTH; x <= centerX + GATE_HALF_WIDTH; x++) {
+                int fx = x, fz = z;
+                q.add(() -> sb.set(fx, walkwayY, fz, Material.STONE_BRICKS));
+            }
+        }
+    }
+
+    private static void addGateLighting(Queue<Runnable> q,
+                                        TerrainManager.SetBlock sb,
+                                        int centerX, int gateZ,
+                                        int baseY) {
+        int torchY = baseY + 3;
+        int left = centerX - GATE_HALF_WIDTH - 1;
+        int right = centerX + GATE_HALF_WIDTH + 1;
+        q.add(() -> sb.set(left, torchY, gateZ - 1, Material.TORCH));
+        q.add(() -> sb.set(right, torchY, gateZ - 1, Material.TORCH));
     }
 }

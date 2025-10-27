@@ -92,24 +92,18 @@ public class Mineur implements CommandExecutor, Listener {
             sender.sendMessage(ChatColor.RED + "Tu n'as pas la permission pour /mineur.");
             return true;
         }
-        if (args.length == 0) {
-            giveMineSelector(player);
+        if (args.length > 0) {
+            sendUsage(player);
             return true;
         }
 
-        if ("speed".equalsIgnoreCase(args[0])) {
-            handleSpeed(player, args);
-            return true;
-        }
-
-        sendUsage(player);
+        giveMineSelector(player);
         return true;
     }
 
     private void sendUsage(Player player) {
         player.sendMessage(CMD_PREFIX + ChatColor.YELLOW + "Usage:");
         player.sendMessage(ChatColor.GOLD + "/mineur" + ChatColor.GRAY + " – reçois le bâton et clique deux blocs (même Y) pour lancer la mine");
-        player.sendMessage(ChatColor.GOLD + "/mineur speed <slow|normal|fast>" + ChatColor.GRAY + " – change la vitesse");
     }
 
     private void createMineFromSelection(Player player) {
@@ -149,11 +143,6 @@ public class Mineur implements CommandExecutor, Listener {
         }
 
         UUID ownerId = player.getUniqueId();
-        long existing = sessions.stream().filter(s -> ownerId.equals(s.owner)).count();
-        if (existing >= getMaxSessionsPerPlayer()) {
-            player.sendMessage(CMD_PREFIX + ChatColor.RED + "Limite de sessions atteinte.");
-            return;
-        }
 
         Location base = new Location(world, minX, c1.getY(), minZ);
         MiningSessionState state = new MiningSessionState();
@@ -323,6 +312,24 @@ public class Mineur implements CommandExecutor, Listener {
         state.trusted.add(targetId);
         saveAllSessions();
         player.sendMessage(CMD_PREFIX + ChatColor.GREEN + targetName + " est autorisé à interagir avec ton mineur.");
+    }
+
+    private void onStorageBlocked(MiningSessionState state) {
+        if (state.waitingStorage) {
+            return;
+        }
+        state.waitingStorage = true;
+        saveAllSessions();
+        notifyOwner(state.owner, ChatColor.RED + "Stockage plein : le mineur attend qu'un coffre soit vidé.");
+    }
+
+    private void onStorageFreed(MiningSessionState state) {
+        if (!state.waitingStorage) {
+            return;
+        }
+        state.waitingStorage = false;
+        saveAllSessions();
+        notifyOwner(state.owner, ChatColor.GREEN + "Le mineur reprend, de la place a été libérée.");
     }
 
     private void giveMineSelector(Player player) {
@@ -719,7 +726,10 @@ public class Mineur implements CommandExecutor, Listener {
                         currentRuntime.decoration.afterBlock(block);
                     }
                 },
-                () -> onLoopCompletion(currentRuntime.state)
+                () -> onLoopCompletion(currentRuntime.state),
+                () -> onStorageBlocked(currentRuntime.state),
+                () -> onStorageFreed(currentRuntime.state),
+                runtime.state.waitingStorage
         );
         runtime.loop.runTaskTimer(plugin, 1L, Math.max(1L, runtime.state.speed.ticksPerStage));
     }
@@ -785,10 +795,6 @@ public class Mineur implements CommandExecutor, Listener {
 
     private int getMaxSize() {
         return Math.max(1, plugin.getConfig().getInt("mineur.max-size", 16));
-    }
-
-    private int getMaxSessionsPerPlayer() {
-        return Math.max(1, plugin.getConfig().getInt("mineur.limits.max-sessions-per-player", 1));
     }
 
     private boolean isWorldAllowed(World world) {

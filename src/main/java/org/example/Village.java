@@ -15,6 +15,7 @@ import org.bukkit.entity.Villager;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.bukkit.scheduler.BukkitRunnable;
 import org.example.village.VillageEntityManager;
+import org.example.village.GateGuardManager;
 import org.example.village.WallBuilder;
 import org.example.village.Disposition;
 import org.bukkit.configuration.file.FileConfiguration;
@@ -141,9 +142,12 @@ public final class Village implements CommandExecutor {
         int villageCenterX = (bounds[0] + bounds[1]) / 2;
         int villageCenterZ = (bounds[2] + bounds[3]) / 2;
         Location villageCenter = new Location(w, villageCenterX, baseY, villageCenterZ);
+        int villageId = VillageEntityManager.computeVillageId(villageCenter);
 
         int rx = (bounds[1] - bounds[0]) / 2 + WALL_GAP;
         int rz = (bounds[3] - bounds[2]) / 2 + WALL_GAP;
+        int southWallZ = villageCenterZ + rz + 1;
+        Location gateAnchor = new Location(w, villageCenterX, baseY + 1, southWallZ - 2);
 
         /* terrain : on dégage / remblaie y=baseY */
         todo.addAll(prepareGroundActions(w,
@@ -179,11 +183,12 @@ public final class Village implements CommandExecutor {
         /* spawners PNJ aux quatre coins */
         todo.addAll(buildQuarterVillagerSpawners(w, bounds, baseY));
 
-        /* muraille */
+        /* muraille + gardiens */
         todo.add(() ->
                 WallBuilder.build(villageCenter, rx, rz, baseY,
                         Material.STONE_BRICKS, todo,
                         (x, y, z, m) -> setBlockTracked(w, x, y, z, m)));
+        todo.add(() -> GateGuardManager.ensureGuards(plugin, gateAnchor, villageId));
 
         /* maire */
         todo.add(() -> spawnVillager(w, center.clone().add(1, 1, 1), "Maire"));
