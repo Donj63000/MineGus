@@ -1,15 +1,15 @@
 # MinePlugin
 
-Plugin Paper pour Minecraft 1.20.x qui automatise diverses tâches (minage, agriculture, forêt, élevage, etc.). Projet en bêta, expérimental, pensé pour de petits serveurs entre amis.
+Plugin Paper pour Minecraft 1.21.4 qui automatise diverses tâches (minage, agriculture, forêt, élevage, etc.). Projet en bêta, expérimental, pensé pour de petits serveurs entre amis.
 
 ## Prérequis
-- Java 17 (OpenJDK/Temurin). Vérifier: `java -version`
+- Java 21 (OpenJDK/Temurin). Vérifier: `java -version`
 - Maven 3.9+ (ou 3.x). Vérifier: `mvn -v`
-- Serveur Paper 1.20.x (recommandé: 1.20.6)
+- Serveur Paper 1.21.4
 - IDE recommandé: IntelliJ IDEA, encodage projet en UTF‑8
 
 Notes:
-- Assurez‑vous que `JAVA_HOME` pointe vers une JDK 17 et que `java`/`mvn` sont dans le `PATH`.
+- Assurez‑vous que `JAVA_HOME` pointe vers une JDK 21 et que `java`/`mvn` sont dans le `PATH`.
 - Mémoire serveur conseillée ≥ 2 Go pour les tests locaux.
 
 ## Compilation du plugin
@@ -83,16 +83,16 @@ Les fonctionnalités sauvegardent leurs informations (YAML) dans `plugins/MinePl
 
 ## Développement
 - Construire : `mvn -q package` (JAR dans `target/`). Tests optionnels : `mvn -q test` (JUnit 5 sous `src/test/java/`).
-- Lancer localement : copier le JAR dans `plugins/` d’un serveur Paper 1.20.x puis démarrer le serveur.
-- Style : Java 17, 4 espaces, accolades sur la même ligne, classes `PascalCase`, méthodes/champs `camelCase`, constantes `UPPER_SNAKE_CASE`.
+- Lancer localement : copier le JAR dans `plugins/` d’un serveur Paper 1.21.4 puis démarrer le serveur.
+- Style : Java 21, 4 espaces, accolades sur la même ligne, classes `PascalCase`, méthodes/champs `camelCase`, constantes `UPPER_SNAKE_CASE`.
 - Commits : français, présent, concis (ex. « Ajoute collecte du champ »). Ne modifiez jamais `target/*.jar`.
 - Voir `AGENTS.md` pour des consignes plus détaillées.
 
 ## Guide développeur (amélioré)
 
 ### Développement rapide
-- Cloner, utiliser Java 17, puis `mvn -q package` → JAR dans `target/`.
-- Tester localement: copier le JAR dans `plugins/` d’un Paper 1.20.x et démarrer.
+- Cloner, utiliser Java 21, puis `mvn -q package` → JAR dans `target/`.
+- Tester localement: copier le JAR dans `plugins/` d’un Paper 1.21.4 et démarrer.
 
 ### Workflow de contribution
 - Créer une branche: `feat/...`, `fix/...`, ou `chore/...`.

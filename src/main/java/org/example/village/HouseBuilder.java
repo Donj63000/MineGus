@@ -263,7 +263,7 @@ public final class HouseBuilder {
         /* --- matériaux aléatoires / palettes --- */
         final int  wallHeight = (size <= 7 ? 4 : 5);
         final Material fundMat   = Material.STONE_BRICKS;
-        final Material windowMat = Material.GLASS_PANE;
+        final Material windowMat = Material.GLASS;
         final Material roofMat   = Material.STONE_BRICKS;
         final Material floorMat  = planks.get(rng.nextInt(planks.size()));
         final Material logMat    = logs.get(rng.nextInt(logs.size()));

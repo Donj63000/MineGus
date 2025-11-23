@@ -10,6 +10,9 @@ import org.bukkit.command.CommandSender;
 import org.bukkit.configuration.ConfigurationSection;
 import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.entity.*;
+import org.bukkit.event.world.EntitiesLoadEvent;
+import org.bukkit.event.EventPriority;
+import org.bukkit.event.entity.CreatureSpawnEvent;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
 import org.bukkit.event.block.BlockBreakEvent;
@@ -19,9 +22,11 @@ import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.MerchantRecipe;
 import org.bukkit.inventory.meta.ItemMeta;
+import org.bukkit.persistence.PersistentDataContainer;
 import org.bukkit.persistence.PersistentDataType;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.bukkit.scheduler.BukkitRunnable;
+import org.bukkit.scheduler.BukkitTask;
 import org.bukkit.Tag;
 import org.bukkit.util.BoundingBox;
 import org.bukkit.util.Vector;
@@ -29,6 +34,8 @@ import org.bukkit.util.Vector;
 import java.io.File;
 import java.io.IOException;
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * /foret : micro-forêt automatisée (cadre, saplings, PNJ, golems, coupe haut->bas, capture drops, replant, torches).
@@ -73,6 +80,17 @@ public final class Foret implements CommandExecutor, Listener {
     /* persistance */
     private final File forestsFile;
     private final YamlConfiguration forestsYaml;
+    private final File forestersFile;
+    private final YamlConfiguration forestersYaml;
+
+    private final Map<UUID, ForesterRecord> forestersById = new HashMap<>();
+    private final Map<String, ForesterRecord> forestersByHut = new HashMap<>();
+    private final Map<String, ForestSession> sessionsByHut = new HashMap<>();
+    private final Map<String, AtomicBoolean> spawnLocks = new ConcurrentHashMap<>();
+    private final Map<UUID, ForestSession> sessionsByWorkerId = new HashMap<>();
+    private final Map<String, IronGolem> guardsByHut = new HashMap<>();
+
+    private BukkitTask missingWorkerTask;
 
     /* capture des drops durant la coupe */
     private final Set<UUID> activeCapture = new HashSet<>(); // ids de sessions actuellement en coupe
@@ -82,8 +100,11 @@ public final class Foret implements CommandExecutor, Listener {
         Objects.requireNonNull(plugin.getCommand("foret")).setExecutor(this);
         Bukkit.getPluginManager().registerEvents(this, plugin);
 
+        plugin.getDataFolder().mkdirs();
         forestsFile = new File(plugin.getDataFolder(), "forests.yml");
         forestsYaml = YamlConfiguration.loadConfiguration(forestsFile);
+        forestersFile = new File(plugin.getDataFolder(), "foresters.yml");
+        forestersYaml = YamlConfiguration.loadConfiguration(forestersFile);
     }
 
     /* ══════════════════ COMMANDE /foret (identique à ton flux) ══════════════════ */
@@ -151,6 +172,8 @@ public final class Foret implements CommandExecutor, Listener {
             if (fs.removeChestIfMatch(b) && !fs.hasChests()) {
                 fs.stop();
                 sessions.remove(fs);
+                sessionsByHut.remove(fs.getHutId());
+                discardForesterRecord(fs.getHutId());
                 saveSessions();
             }
         }
@@ -174,6 +197,26 @@ public final class Foret implements CommandExecutor, Listener {
         }
     }
 
+    @EventHandler
+    public void onEntitiesLoad(EntitiesLoadEvent event) {
+        for (Entity entity : event.getEntities()) {
+            if (entity instanceof Villager villager) {
+                handlePotentialForester(villager);
+            } else if (entity instanceof IronGolem golem) {
+                handlePotentialGuard(golem);
+            }
+        }
+    }
+
+    @EventHandler(ignoreCancelled = true, priority = EventPriority.HIGH)
+    public void onNaturalGolemSpawn(CreatureSpawnEvent event) {
+        if (event.getEntityType() != EntityType.IRON_GOLEM) return;
+        if (event.getSpawnReason() != CreatureSpawnEvent.SpawnReason.VILLAGE_DEFENSE) return;
+        if (isNearMinegusForester(event.getLocation(), 48)) {
+            event.setCancelled(true);
+        }
+    }
+
     /* ═════════════════ VALIDATION / CREATION ═════════════════ */
     private void validateAndCreate(Player p, Selection sel) {
         if (sel.corner1.getY() != sel.corner2.getY()) {
@@ -192,8 +235,7 @@ public final class Foret implements CommandExecutor, Listener {
                 w, new Location(w, minX, y, minZ),
                 maxX - minX + 1, maxZ - minZ + 1
         );
-        fs.start();
-        sessions.add(fs);
+        registerSession(fs, true);
         saveSessions();
 
         p.sendMessage(ChatColor.GREEN + "Forêt créée ! (" + fs.width + "×" + fs.length + ")");
@@ -211,6 +253,19 @@ public final class Foret implements CommandExecutor, Listener {
             forestsYaml.save(forestsFile);
         } catch (IOException ex) {
             plugin.getLogger().severe("[Foret] Erreur de sauvegarde forests.yml");
+            ex.printStackTrace();
+        }
+    }
+
+    private void saveForesters() {
+        forestersYaml.set("foresters", null);
+        for (ForesterRecord record : forestersById.values()) {
+            forestersYaml.createSection("foresters." + record.workerId(), record.serialize());
+        }
+        try {
+            forestersYaml.save(forestersFile);
+        } catch (IOException ex) {
+            plugin.getLogger().severe("[Foret] Erreur de sauvegarde foresters.yml");
             ex.printStackTrace();
         }
     }
@@ -270,19 +325,329 @@ public final class Foret implements CommandExecutor, Listener {
                 }
             }
 
-            fs.start();
-            sessions.add(fs);
+            registerSession(fs, false);
             restored++;
         }
         plugin.getLogger().info("[Foret] " + restored + " forêt(s) restaurée(s).");
+        Bukkit.getScheduler().runTask(plugin, this::scanLoadedEntities);
+    }
+
+    private void loadForesters() {
+        forestersById.clear();
+        forestersByHut.clear();
+        ConfigurationSection root = forestersYaml.getConfigurationSection("foresters");
+        if (root == null) return;
+
+        for (String key : root.getKeys(false)) {
+            try {
+                UUID workerId = UUID.fromString(key);
+                ConfigurationSection sec = root.getConfigurationSection(key);
+                if (sec == null) continue;
+                ForesterRecord record = ForesterRecord.deserialize(workerId, sec);
+                if (record == null) continue;
+                registerForester(record);
+            } catch (IllegalArgumentException ex) {
+                plugin.getLogger().warning("[Foret] UUID invalide dans foresters.yml: " + key);
+            }
+        }
+    }
+
+    private void registerForester(ForesterRecord record) {
+        forestersById.put(record.workerId(), record);
+        forestersByHut.put(record.hutId(), record);
+    }
+
+    private void registerSession(ForestSession session, boolean spawnFresh) {
+        sessions.add(session);
+        sessionsByHut.put(session.getHutId(), session);
+        ensureForesterRecord(session);
+        session.start(spawnFresh);
+        ensureMissingWorkerTask();
+    }
+
+    private void ensureMissingWorkerTask() {
+        if (missingWorkerTask != null && !missingWorkerTask.isCancelled()) {
+            return;
+        }
+        missingWorkerTask = Bukkit.getScheduler().runTaskTimer(plugin, this::checkMissingWorkers, 20L * 60, 20L * 60);
+    }
+
+    private void cancelMissingWorkerTask() {
+        if (missingWorkerTask != null) {
+            missingWorkerTask.cancel();
+            missingWorkerTask = null;
+        }
+    }
+
+    private void checkMissingWorkers() {
+        for (ForesterRecord record : forestersById.values()) {
+            ForestSession session = sessionsByHut.get(record.hutId());
+            if (session == null) {
+                continue;
+            }
+            if (session.ensureForesterBinding(false)) {
+                session.ensureGuardIntegrity();
+                continue;
+            }
+            requestSpawnForester(session);
+        }
+    }
+
+    private void requestSpawnForester(ForestSession session) {
+        AtomicBoolean lock = spawnLocks.computeIfAbsent(session.getHutId(), id -> new AtomicBoolean());
+        if (!lock.compareAndSet(false, true)) {
+            return;
+        }
+        try {
+            if (session.ensureForesterBinding(true)) {
+                session.ensureGuardIntegrity();
+            }
+        } finally {
+            lock.set(false);
+        }
+    }
+
+
+    private void handlePotentialForester(Villager villager) {
+        PersistentDataContainer pdc = villager.getPersistentDataContainer();
+        String type = pdc.get(Keys.workerType(), PersistentDataType.STRING);
+        if (!"FORESTER".equals(type)) {
+            return;
+        }
+        String hutId = pdc.get(Keys.hutId(), PersistentDataType.STRING);
+        if (hutId == null) {
+            return;
+        }
+        ForestSession session = sessionsByHut.get(hutId);
+        if (session == null) {
+            return;
+        }
+        ForesterRecord record = forestersByHut.get(hutId);
+        UUID workerId = null;
+        String workerRaw = pdc.get(Keys.workerId(), PersistentDataType.STRING);
+        if (workerRaw != null) {
+            try {
+                workerId = UUID.fromString(workerRaw);
+            } catch (IllegalArgumentException ignored) {
+            }
+        }
+        if (record == null) {
+            if (workerId == null) {
+                workerId = UUID.randomUUID();
+            }
+            record = ForesterRecord.fromExisting(workerId, hutId, villager.getWorld().getUID(), session.getHomeLocation(), villager.getUniqueId());
+            registerForester(record);
+        } else {
+            if (workerId == null || !workerId.equals(record.workerId())) {
+                workerId = record.workerId();
+            }
+            record.updateHome(session.getHomeLocation());
+        }
+        session.attachRecord(record);
+        sessionsByWorkerId.put(record.workerId(), session);
+        pdc.set(Keys.workerType(), PersistentDataType.STRING, "FORESTER");
+        pdc.set(Keys.workerId(), PersistentDataType.STRING, record.workerId().toString());
+        pdc.set(Keys.hutId(), PersistentDataType.STRING, hutId);
+        villager.addScoreboardTag("minegus.worker");
+        villager.addScoreboardTag("minegus.worker.forester");
+        session.bindForester(villager);
+        session.ensureGuardIntegrity();
+    }
+
+    private void handlePotentialGuard(IronGolem golem) {
+        PersistentDataContainer pdc = golem.getPersistentDataContainer();
+        String hutId = pdc.get(Keys.guardFor(), PersistentDataType.STRING);
+        if (hutId == null) {
+            return;
+        }
+        ForestSession session = sessionsByHut.get(hutId);
+        if (session == null) {
+            return;
+        }
+        session.bindGuard(golem);
+    }
+
+    private void scanLoadedEntities() {
+        for (World world : Bukkit.getWorlds()) {
+            for (Villager villager : world.getEntitiesByClass(Villager.class)) {
+                handlePotentialForester(villager);
+            }
+            for (IronGolem golem : world.getEntitiesByClass(IronGolem.class)) {
+                handlePotentialGuard(golem);
+            }
+        }
+    }
+
+    private boolean isNearMinegusForester(Location location, double radius) {
+        double radiusSq = radius * radius;
+        for (ForestSession session : sessions) {
+            Location home = session.getHomeLocation();
+            if (home.getWorld() == null || !home.getWorld().equals(location.getWorld())) {
+                continue;
+            }
+            if (home.distanceSquared(location) <= radiusSq) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+
+    private void discardForesterRecord(String hutId) {
+        ForesterRecord record = forestersByHut.remove(hutId);
+        if (record != null) {
+            forestersById.remove(record.workerId());
+            sessionsByWorkerId.remove(record.workerId());
+            saveForesters();
+        }
+    }
+
+    private ForesterRecord ensureForesterRecord(ForestSession session) {
+        String hutId = session.getHutId();
+        ForesterRecord existing = forestersByHut.get(hutId);
+        if (existing != null) {
+            if (existing.updateHome(session.getHomeLocation())) {
+                saveForesters();
+            }
+            session.attachRecord(existing);
+            sessionsByWorkerId.put(existing.workerId(), session);
+            return existing;
+        }
+        ForesterRecord record = ForesterRecord.create(session.getHutId(),
+                session.w.getUID(),
+                session.getHomeLocation());
+        registerForester(record);
+        session.attachRecord(record);
+        sessionsByWorkerId.put(record.workerId(), session);
+        saveForesters();
+        return record;
     }
 
     /* ══════════════════ API PUBLIQUE (rétro‑compat) ══════════════════ */
-    public void loadSavedSessions() { loadSessions(); }
-    public void saveAllSessions() { saveSessions(); }
+    public void loadSavedSessions() {
+        loadForesters();
+        loadSessions();
+    }
+
+    public void saveAllSessions() {
+        saveSessions();
+        saveForesters();
+    }
     public void stopAllForests() {
-        sessions.forEach(ForestSession::stop);
+        sessions.forEach(fs -> fs.stop(true));
         sessions.clear();
+        sessionsByHut.clear();
+        sessionsByWorkerId.clear();
+        guardsByHut.clear();
+        spawnLocks.clear();
+        cancelMissingWorkerTask();
+    }
+
+    public void pauseAllForests() {
+        sessions.forEach(fs -> fs.stop(false));
+        sessions.clear();
+        sessionsByHut.clear();
+        sessionsByWorkerId.clear();
+        guardsByHut.clear();
+        spawnLocks.clear();
+        cancelMissingWorkerTask();
+    }
+
+    private static String hutIdFor(World world, int x, int y, int z) {
+        return world.getUID() + ":" + x + ":" + y + ":" + z;
+    }
+
+    /* ══════════════════ PERSISTENCE DES FORESTIERS ══════════════════ */
+    private static final class ForesterRecord {
+        private final UUID workerId;
+        private final String hutId;
+        private final UUID worldId;
+        private int homeX;
+        private int homeY;
+        private int homeZ;
+        private UUID entityUuid;
+
+        private ForesterRecord(UUID workerId, String hutId, UUID worldId,
+                               int homeX, int homeY, int homeZ, UUID entityUuid) {
+            this.workerId = workerId;
+            this.hutId = hutId;
+            this.worldId = worldId;
+            this.homeX = homeX;
+            this.homeY = homeY;
+            this.homeZ = homeZ;
+            this.entityUuid = entityUuid;
+        }
+
+        static ForesterRecord create(String hutId, UUID worldId, Location home) {
+            UUID workerId = UUID.randomUUID();
+            return new ForesterRecord(workerId, hutId, worldId,
+                    home.getBlockX(), home.getBlockY(), home.getBlockZ(), null);
+        }
+
+        static ForesterRecord fromExisting(UUID workerId, String hutId, UUID worldId, Location home, UUID entityUuid) {
+            return new ForesterRecord(workerId, hutId, worldId,
+                    home.getBlockX(), home.getBlockY(), home.getBlockZ(), entityUuid);
+        }
+
+        static ForesterRecord deserialize(UUID workerId, ConfigurationSection sec) {
+            String hutId = sec.getString("hutId");
+            String worldStr = sec.getString("world");
+            List<Integer> homeList = sec.getIntegerList("home");
+            if (hutId == null || worldStr == null || homeList.size() != 3) {
+                return null;
+            }
+            UUID worldId;
+            try {
+                worldId = UUID.fromString(worldStr);
+            } catch (IllegalArgumentException ex) {
+                return null;
+            }
+            UUID entityUuid = null;
+            String entityStr = sec.getString("entityUuid");
+            if (entityStr != null && !entityStr.isEmpty()) {
+                try {
+                    entityUuid = UUID.fromString(entityStr);
+                } catch (IllegalArgumentException ignored) { }
+            }
+            return new ForesterRecord(workerId, hutId, worldId,
+                    homeList.get(0), homeList.get(1), homeList.get(2), entityUuid);
+        }
+
+        Map<String, Object> serialize() {
+            Map<String, Object> map = new LinkedHashMap<>();
+            map.put("hutId", hutId);
+            map.put("world", worldId.toString());
+            map.put("home", List.of(homeX, homeY, homeZ));
+            if (entityUuid != null) {
+                map.put("entityUuid", entityUuid.toString());
+            }
+            return map;
+        }
+
+        UUID workerId() { return workerId; }
+        String hutId() { return hutId; }
+        UUID worldId() { return worldId; }
+
+        UUID entityUuid() { return entityUuid; }
+        void setEntityUuid(UUID entityUuid) { this.entityUuid = entityUuid; }
+        void clearEntityUuid() { this.entityUuid = null; }
+
+        boolean updateHome(Location location) {
+            if (location == null) return false;
+            int x = location.getBlockX();
+            int y = location.getBlockY();
+            int z = location.getBlockZ();
+            if (x == homeX && y == homeY && z == homeZ) return false;
+            this.homeX = x;
+            this.homeY = y;
+            this.homeZ = z;
+            return true;
+        }
+
+        Location spawnLocation() {
+            World world = Bukkit.getWorld(worldId);
+            return new Location(world, homeX + 0.5, homeY + 1, homeZ + 0.5);
+        }
     }
 
     /* ══════════════════ CLASSE SESSION ══════════════════ */
@@ -290,6 +655,7 @@ public final class Foret implements CommandExecutor, Listener {
         final UUID id = UUID.randomUUID();
         final World w;
         final int x0, y0, z0, width, length;
+        final String hutId;
 
         // structures & logique
         final List<Block> chests = new ArrayList<>();
@@ -300,15 +666,17 @@ public final class Foret implements CommandExecutor, Listener {
 
         // entités
         Villager forester;
-        final List<IronGolem> golems = new ArrayList<>();
+        IronGolem guard;
         BukkitRunnable loop;
         Chunk loadedChunk;
         Location jobSite;
+        ForesterRecord record;
 
         // travail courant
         TreeJob current;
         int stepDelay = 0; // temporisation "humaine"
         int perTickBudget = 0; // budget restant dans le tick
+        int missingForesterCooldown = 0;
 
         ForestSession(World w, Location origin, int width, int length) {
             this.w = w;
@@ -317,10 +685,26 @@ public final class Foret implements CommandExecutor, Listener {
             this.z0 = origin.getBlockZ();
             this.width = width;
             this.length = length;
+            this.hutId = hutIdFor(w, this.x0, this.y0, this.z0);
+        }
+
+        String getHutId() { return hutId; }
+
+        Location getHomeLocation() {
+            if (jobSite != null) {
+                return new Location(w, jobSite.getBlockX(), jobSite.getBlockY(), jobSite.getBlockZ());
+            }
+            int hx = x0 + width / 2;
+            int hz = z0 + length / 2;
+            return new Location(w, hx, y0, hz);
+        }
+
+        void attachRecord(ForesterRecord record) {
+            this.record = record;
         }
 
         /* ---------- cycle de vie ---------- */
-        void start() {
+        void start(boolean spawnFresh) {
             loadedChunk = w.getChunkAt(x0 + width / 2, z0 + length / 2);
             loadedChunk.setForceLoaded(true);
             buildFrameGround();
@@ -328,16 +712,216 @@ public final class Foret implements CommandExecutor, Listener {
                 placeSaplings(); // génère nos PlantSite 1x1 et 2x2
             }
             createChestsIfMissing();
-            spawnEntities();
+            ensureForesterBinding(spawnFresh);
+            ensureGuardIntegrity();
             startLoop();
         }
+        private boolean hasActiveForester() {
+            return forester != null && forester.isValid() && !forester.isDead();
+        }
+
+        private void bindForester(Villager villager) {
+            forester = villager;
+            applyForesterMetadata(villager);
+            if (record != null) {
+                record.setEntityUuid(villager.getUniqueId());
+                saveForesters();
+            }
+        }
+
+        private void clearForesterReference(boolean keepEntityUuid) {
+            forester = null;
+            if (!keepEntityUuid && record != null) {
+                record.clearEntityUuid();
+                saveForesters();
+            }
+        }
+
+        private boolean tryBindExistingForester() {
+            if (record == null) return false;
+            if (hasActiveForester()) {
+                applyForesterMetadata(forester);
+                return true;
+            }
+            if (record.entityUuid() != null) {
+                Entity entity = Bukkit.getEntity(record.entityUuid());
+                if (entity instanceof Villager v && v.isValid() && !v.isDead()) {
+                    handlePotentialForester(v);
+                    return hasActiveForester();
+                }
+            }
+            Villager candidate = findForesterCandidate(32.0);
+            if (candidate != null) {
+                handlePotentialForester(candidate);
+                return hasActiveForester();
+            }
+            return false;
+        }
+
+        private Villager findForesterCandidate(double radius) {
+            if (jobSite == null) return null;
+            for (Entity ent : w.getNearbyEntities(jobSite, radius, 6, radius)) {
+                if (ent instanceof Villager villager && matchesForesterMetadata(villager)) {
+                    return villager;
+                }
+            }
+            return null;
+        }
+
+        private boolean matchesForesterMetadata(Villager villager) {
+            PersistentDataContainer pdc = villager.getPersistentDataContainer();
+            String type = pdc.get(Keys.workerType(), PersistentDataType.STRING);
+            if (!"FORESTER".equals(type)) return false;
+            String hut = pdc.get(Keys.hutId(), PersistentDataType.STRING);
+            if (hut == null || !hut.equals(hutId)) return false;
+            if (record != null) {
+                String worker = pdc.get(Keys.workerId(), PersistentDataType.STRING);
+                if (worker != null) {
+                    try {
+                        UUID workerUuid = UUID.fromString(worker);
+                        if (!workerUuid.equals(record.workerId())) {
+                            return false;
+                        }
+                    } catch (IllegalArgumentException ignored) {
+                    }
+                }
+            }
+            return true;
+        }
+
+        private void spawnFreshForester() {
+            if (record == null) return;
+            if (hasActiveForester()) {
+                applyForesterMetadata(forester);
+                return;
+            }
+            if (tryBindExistingForester()) return;
+            Location spawn = record.spawnLocation();
+            World world = spawn.getWorld();
+            if (world == null) return;
+            Villager villager = world.spawn(spawn, Villager.class, v -> {
+                applyForesterMetadata(v);
+                v.setRemoveWhenFarAway(false);
+            });
+            bindForester(villager);
+        }
+
+        boolean ensureForesterBinding(boolean allowSpawn) {
+            if (hasActiveForester()) return true;
+            if (tryBindExistingForester()) return true;
+            if (allowSpawn) {
+                spawnFreshForester();
+                return hasActiveForester();
+            }
+            return false;
+        }
+
+        private void applyForesterMetadata(Villager villager) {
+            villager.setCustomName("Forestier");
+            villager.setCustomNameVisible(true);
+            villager.setProfession(Villager.Profession.FLETCHER);
+            villager.setVillagerLevel(5);
+            villager.setInvulnerable(true);
+            villager.setRemoveWhenFarAway(false);
+            villager.setRecipes(List.of(createTrade()));
+            PersistentDataContainer pdc = villager.getPersistentDataContainer();
+            pdc.set(Keys.workerType(), PersistentDataType.STRING, "FORESTER");
+            if (record != null) {
+                pdc.set(Keys.workerId(), PersistentDataType.STRING, record.workerId().toString());
+            }
+            pdc.set(Keys.hutId(), PersistentDataType.STRING, hutId);
+            villager.addScoreboardTag("minegus.worker");
+            villager.addScoreboardTag("minegus.worker.forester");
+        }
+
+        private void ensureGuardIntegrity() {
+            maintainGuardReference();
+            if (!hasActiveForester()) return;
+            if (guard == null) {
+                spawnGuard();
+            } else {
+                applyGuardMetadata(guard);
+            }
+        }
+
+        private void maintainGuardReference() {
+            if (guard != null && (!guard.isValid() || guard.isDead())) {
+                releaseGuard();
+            }
+        }
+
+        private void releaseGuard() {
+            if (guard != null) {
+                guardsByHut.remove(hutId, guard);
+            } else {
+                guardsByHut.remove(hutId);
+            }
+            guard = null;
+        }
+
+        private void spawnGuard() {
+            if (jobSite == null) return;
+            Location spawn = jobSite.clone().add(2.0, 0, 0);
+            IronGolem golem = w.spawn(spawn, IronGolem.class, g -> {
+                g.setPlayerCreated(true);
+                g.setCustomName("Golem Forestier");
+                g.setCustomNameVisible(true);
+                g.setRemoveWhenFarAway(false);
+            });
+            bindGuard(golem);
+        }
+
+        private void bindGuard(IronGolem golem) {
+            if (guard != null && guard.isValid() && !guard.isDead()) {
+                if (guard.getUniqueId().equals(golem.getUniqueId())) {
+                    applyGuardMetadata(golem);
+                    guardsByHut.put(hutId, golem);
+                    return;
+                }
+                golem.remove();
+                return;
+            }
+            guard = golem;
+            applyGuardMetadata(golem);
+            guardsByHut.put(hutId, golem);
+        }
+
+        private void applyGuardMetadata(IronGolem golem) {
+            PersistentDataContainer pdc = golem.getPersistentDataContainer();
+            pdc.set(Keys.guardFor(), PersistentDataType.STRING, hutId);
+            golem.setPlayerCreated(true);
+            golem.setCustomName("Golem Forestier");
+            golem.setCustomNameVisible(true);
+            golem.setRemoveWhenFarAway(false);
+            golem.addScoreboardTag("minegus.guard");
+        }
+
 
         void stop() {
-            if (loop != null) loop.cancel();
-            if (forester != null) forester.remove();
-            golems.forEach(Entity::remove);
-            if (loadedChunk != null) loadedChunk.setForceLoaded(false);
+            stop(true);
+        }
+
+        void stop(boolean removeEntities) {
+            if (loop != null) {
+                loop.cancel();
+                loop = null;
+            }
+            boolean keepUuid = !removeEntities;
+            if (removeEntities && hasActiveForester()) {
+                forester.remove();
+                keepUuid = false;
+            }
+            if (removeEntities && guard != null && guard.isValid() && !guard.isDead()) {
+                guard.remove();
+            }
+            clearForesterReference(keepUuid);
+            releaseGuard();
+            if (loadedChunk != null) {
+                loadedChunk.setForceLoaded(false);
+                loadedChunk = null;
+            }
             activeCapture.remove(id);
+            missingForesterCooldown = 0;
         }
 
         /* ---------- structures ---------- */
@@ -439,32 +1023,6 @@ public final class Foret implements CommandExecutor, Listener {
         }
 
         /* ---------- entités ---------- */
-        private void spawnEntities() {
-            // Nettoie un éventuel ancien PNJ
-            for (Entity e : w.getNearbyEntities(jobSite, 6, 4, 6)) {
-                if (e instanceof Villager v && "Forestier".equals(ChatColor.stripColor(Objects.toString(v.getCustomName(), "")))) {
-                    v.remove();
-                }
-            }
-            forester = (Villager) w.spawnEntity(jobSite.clone().add(0.5, 1, 0.5), EntityType.VILLAGER);
-            forester.setCustomName("Forestier");
-            forester.setCustomNameVisible(true);
-            forester.setProfession(Villager.Profession.FLETCHER);
-            forester.setVillagerLevel(5);
-            forester.setInvulnerable(true);
-            forester.setRecipes(List.of(createTrade()));
-
-            int wanted = Math.max(2, (width * length) / 512);
-            golems.removeIf(Entity::isDead);
-            while (golems.size() < wanted) {
-                Location l = jobSite.clone().add((golems.size() % 2 == 0 ? 2 : -2), 0, (golems.size() < 2 ? 2 : -2));
-                IronGolem g = (IronGolem) w.spawnEntity(l, EntityType.IRON_GOLEM);
-                g.setPlayerCreated(true);
-                g.setCustomName("Golem Forestier");
-                golems.add(g);
-            }
-        }
-
         private MerchantRecipe createTrade() {
             MerchantRecipe r = new MerchantRecipe(new ItemStack(Material.OAK_LOG, 64), 9999999);
             r.addIngredient(new ItemStack(Material.IRON_INGOT, 32));
@@ -478,11 +1036,24 @@ public final class Foret implements CommandExecutor, Listener {
                 int siteIndex = 0;
 
                 @Override public void run() {
-                    if (forester == null || forester.isDead()) spawnEntities();
-                    maintainForesterAtJob();
+                    if (!hasActiveForester()) {
+                        if (forester != null && (!forester.isValid() || forester.isDead())) {
+                            clearForesterReference(false);
+                        }
+                        if (missingForesterCooldown <= 0) {
+                            ensureForesterBinding(false);
+                            missingForesterCooldown = 40;
+                        } else {
+                            missingForesterCooldown--;
+                        }
+                    } else {
+                        missingForesterCooldown = 0;
+                        maintainForesterAtJob();
+                    }
+
+                    ensureGuardIntegrity();
 
                     perTickBudget = MAX_BLOCKS_PER_TICK;
-
                     // priorité 1 : travail en cours
                     if (current != null) {
                         workOnCurrentJob();

@@ -2,7 +2,6 @@
 
 # Paramètres du mineur
 mineur:
-  max-size: 16
   allowed-worlds: [world]
   stop-at-y: -58
   allow-block-placement: false  # true = autoriser piliers, escaliers et torches automatiques

@@ -78,7 +78,9 @@ public final class MinePlugin extends JavaPlugin implements Listener {
     @Override
     public void onEnable() {
         getLogger().info("MinePlugin chargé !");
+        saveDefaultConfig();
         Bukkit.getPluginManager().registerEvents(this, this);
+        Keys.init(this);
 
         // Commandes /army, /ping
         if (getCommand("army") != null) {
@@ -87,6 +89,10 @@ public final class MinePlugin extends JavaPlugin implements Listener {
         if (getCommand("ping") != null) {
             getCommand("ping").setExecutor(this);
         }
+        if (getCommand("minegus") != null) {
+            getCommand("minegus").setExecutor(new MinegusCommand(this));
+        }
+
 
         // Instancie /mineur
         mineur = new Mineur(this);
@@ -102,9 +108,6 @@ public final class MinePlugin extends JavaPlugin implements Listener {
 
         // Instancie /village
         village = new Village(this);
-
-        // Charge la configuration par défaut avant l'éleveur
-        saveDefaultConfig();
 
         // Instancie /eleveur
         eleveur = new Eleveur(this);
@@ -129,7 +132,7 @@ public final class MinePlugin extends JavaPlugin implements Listener {
         }
         if (foret != null) {
             foret.saveAllSessions();
-            foret.stopAllForests();
+            foret.pauseAllForests();
         }
         if (eleveur != null) {
             eleveur.saveAllSessions();

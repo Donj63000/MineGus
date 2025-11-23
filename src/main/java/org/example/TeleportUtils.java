@@ -23,8 +23,8 @@ public final class TeleportUtils {
      */
     public static void safeTeleport(Entity entity, Location location) {
         try {
-            Method m = entity.getClass().getMethod("teleportAsync", Location.class);
-            m.invoke(entity, location);
+            Method teleportAsync = Entity.class.getMethod("teleportAsync", Location.class);
+            teleportAsync.invoke(entity, location);
         } catch (NoSuchMethodException e) {
             entity.teleport(location);
         } catch (Exception e) {

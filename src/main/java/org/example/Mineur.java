@@ -136,11 +136,6 @@ public class Mineur implements CommandExecutor, Listener {
         int maxZ = Math.max(c1.getZ(), c2.getZ());
         int width = (maxX - minX) + 1;
         int length = (maxZ - minZ) + 1;
-        int maxSize = getMaxSize();
-        if (width > maxSize || length > maxSize) {
-            player.sendMessage(CMD_PREFIX + ChatColor.RED + "Zone trop grande (" + width + "x" + length + "). Limite: " + maxSize + "x" + maxSize + ".");
-            return;
-        }
 
         UUID ownerId = player.getUniqueId();
 
@@ -791,10 +786,6 @@ public class Mineur implements CommandExecutor, Listener {
         if (issuer != null) {
             issuer.sendMessage(CMD_PREFIX + ChatColor.YELLOW + "Session arrêtée.");
         }
-    }
-
-    private int getMaxSize() {
-        return Math.max(1, plugin.getConfig().getInt("mineur.max-size", 16));
     }
 
     private boolean isWorldAllowed(World world) {

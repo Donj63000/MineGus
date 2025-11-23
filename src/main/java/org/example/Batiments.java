@@ -51,7 +51,7 @@ public final class Batiments {
         Material foundationMat = RNG.nextBoolean() ? Material.COBBLESTONE : Material.STONE_BRICKS;
         Material stairMat      = Material.valueOf(plankMat.name().replace("_PLANKS", "_STAIRS"));
         Material slabMat       = Material.valueOf(plankMat.name().replace("_PLANKS", "_SLAB"));
-        Material windowMat     = RNG.nextBoolean() ? Material.GLASS_PANE : Material.WHITE_STAINED_GLASS_PANE;
+        Material windowMat     = Material.GLASS;
         Material doorMat       = doorFromPlanks(plankMat);
         Material shutterMat    = trapdoorFromPlanks(plankMat);
 

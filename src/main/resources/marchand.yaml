@@ -166,11 +166,11 @@ categories:
     icon: TERRACOTTA
     description: "Argile cuite et émaillée (couleurs offertes)."
     offers:
-      - in: CLAY_BLOCK
+      - in: CLAY
         in_qty: 16
         out: ALIAS:ANY_TERRACOTTA
         out_qty: 32
-      - in: CLAY_BLOCK
+      - in: CLAY
         in_qty: 16
         out: ALIAS:ANY_GLAZED_TERRACOTTA
         out_qty: 32
@@ -268,7 +268,7 @@ categories:
         in_qty: 16
         out: DARK_PRISMARINE
         out_qty: 24
-      - in: PRISMARINE_BLOCK
+      - in: PRISMARINE
         in_qty: 16
         out: SEA_LANTERN
         out_qty: 16
@@ -304,13 +304,13 @@ categories:
         in_qty: 16
         out: MOSS_CARPET
         out_qty: 48
-      - in: PALE_MOSS
+      - in: PALE_MOSS_BLOCK
         in_qty: 16
         out: PALE_MOSS_CARPET
         out_qty: 48
-      - in: PALE_MOSS
+      - in: PALE_MOSS_BLOCK
         in_qty: 16
-        out: HANGING_MOSS
+        out: PALE_HANGING_MOSS
         out_qty: 48
       - in: BAMBOO_BLOCK
         in_qty: 16
@@ -426,7 +426,7 @@ categories:
         in_qty: 16
         out: REDSTONE_LAMP
         out_qty: 32
-      - in: PRISMARINE_BLOCK
+      - in: PRISMARINE
         in_qty: 16
         out: SEA_LANTERN
         out_qty: 16
@@ -485,8 +485,9 @@ categories:
         caps: { per_server_per_day: 1 }
       - in: NETHERITE_BLOCK
         in_qty: 1
-        out: OMINOUS_TRIAL_SPAWNER
+        out: TRIAL_SPAWNER
         out_qty: 1
+        note: "Configurer en version ominous via commande admin si besoin."
         caps: { per_server_per_day: 1 }
       - in: NETHERITE_BLOCK
         in_qty: 1
@@ -495,8 +496,9 @@ categories:
         caps: { per_server_per_day: 2 }
       - in: NETHERITE_BLOCK
         in_qty: 1
-        out: OMINOUS_VAULT
+        out: VAULT
         out_qty: 1
+        note: "Convertir en vault sinistre manuellement après placement."
         caps: { per_server_per_day: 2 }
       - in: AMETHYST_BLOCK
         in_qty: 64

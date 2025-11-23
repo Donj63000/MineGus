@@ -38,6 +38,10 @@ commands:
     description: Invoque un marchand PNJ personnalisé
     usage: /marchand
     permission: mineplugin.marchand.spawn
+  minegus:
+    description: Outils d'administration MineGus
+    usage: /minegus fix <forestier|golems>
+    permission: mineplugin.admin
 
 permissions:
   mineplugin.mineur.use:
@@ -48,6 +52,9 @@ permissions:
     default: op
   mineplugin.marchand.spawn:
     description: Invoquer ou recharger le marchand
+    default: op
+  mineplugin.admin:
+    description: Accéder aux commandes d'administration MineGus
     default: op
 
 softdepend:
