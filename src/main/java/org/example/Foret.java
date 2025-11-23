@@ -1264,11 +1264,48 @@ public final class Foret implements CommandExecutor, Listener {
         /* ---------- util ---------- */
         boolean isProtectedStructure(Block b) {
             Material m = b.getType();
-            if (chests.contains(b)) return true;
-            if (m == FRAME || m == LIGHT || m == JOB_TABLE) {
-                return inBounds(b.getLocation());
+
+            // 1) Les coffres NE SONT PAS une structure protégée
+            if (chests.contains(b)) {
+                return false;
             }
+
+            // 2) Table de métier + lanternes dans la zone
+            if ((m == LIGHT || m == JOB_TABLE) && inBounds(b.getLocation())) {
+                return true;
+            }
+
+            // 3) Cadre en OAK_LOG uniquement sur l'anneau extérieur
+            if (m == FRAME && isFrameBlock(b)) {
+                return true;
+            }
+
+            // 4) Le reste (troncs, feuilles…) n'est pas protégé
             return false;
+        }
+
+        private boolean isFrameBlock(Block b) {
+            int x = b.getX();
+            int y = b.getY();
+            int z = b.getZ();
+
+            // cadre uniquement sur le plan y0
+            if (y != y0) {
+                return false;
+            }
+
+            boolean onXBorder = (x == x0 - 1 || x == x0 + width);
+            boolean onZBorder = (z == z0 - 1 || z == z0 + length);
+
+            if (!onXBorder && !onZBorder) {
+                return false;
+            }
+
+            if (onXBorder) { // bords Nord/Sud
+                return (z >= z0 - 1 && z <= z0 + length);
+            } else { // bords Est/Ouest
+                return (x >= x0 - 1 && x <= x0 + width);
+            }
         }
 
         boolean removeChestIfMatch(Block b) { return chests.remove(b); }
