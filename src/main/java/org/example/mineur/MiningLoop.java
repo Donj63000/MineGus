@@ -6,7 +6,6 @@ import org.bukkit.Particle;
 import org.bukkit.Sound;
 import org.bukkit.World;
 import org.bukkit.block.Block;
-import org.bukkit.entity.Player;
 import org.bukkit.entity.Villager;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.plugin.java.JavaPlugin;
@@ -112,15 +111,37 @@ public final class MiningLoop extends BukkitRunnable {
             phase = Phase.IDLE;
             return;
         }
-        showMiningEffects(current, stage);
-        try {
+
+        World world = current.getWorld();
+        Location blockCenter = current.getLocation().add(0.5, 0.5, 0.5);
+
+        Location minerTarget = blockCenter.clone().add(0, 0.5, 0);
+        TeleportUtils.safeTeleport(miner, minerTarget);
+
+        if (miner != null && !miner.isDead()) {
+            Location look = miner.getLocation();
+            look.setDirection(blockCenter.toVector().subtract(look.toVector()));
+            miner.teleport(look);
             miner.swingMainHand();
-        } catch (NoSuchMethodError ignored) {
-            // API without swing animation method.
         }
+
+        Material type = current.getType();
+        boolean ore = isOre(type);
+
+        Particle particle = ore ? Particle.CRIT : Particle.BLOCK;
+        Object data = ore ? null : current.getBlockData();
+        world.spawnParticle(particle, blockCenter, 10, 0.3, 0.3, 0.3, 0.1, data);
+        world.playSound(
+                blockCenter,
+                ore ? Sound.ENTITY_VILLAGER_WORK_TOOLSMITH : Sound.BLOCK_STONE_HIT,
+                0.6f,
+                1.0f
+        );
+
         stage++;
-        if (stage >= 10) {
+        if (stage >= 2) {
             phase = Phase.BREAKING;
+            stage = 0;
         }
     }
 
@@ -139,21 +160,48 @@ public final class MiningLoop extends BukkitRunnable {
             return;
         }
 
-        List<ItemStack> drops = new ArrayList<>(current.getDrops(new ItemStack(Material.IRON_PICKAXE)));
+        if (miner != null && !miner.isDead()) {
+            miner.swingMainHand();
+        }
+
+        Location loc = current.getLocation();
+        List<ItemStack> drops = new ArrayList<>(current.getDrops());
         current.setType(Material.AIR, false);
 
-        if (!drops.isEmpty()) {
-            phase = Phase.DEPOSITING;
-            List<ItemStack> leftover = router.deposit(drops);
-            if (!leftover.isEmpty()) {
-                router.dropOnGround(world, current.getLocation().add(0.5, 0.5, 0.5), leftover);
-            }
-        } else {
-            phase = Phase.IDLE;
-        }
+        world.spawnParticle(
+                Particle.BLOCK,
+                loc.add(0.5, 0.5, 0.5),
+                20,
+                0.3, 0.3, 0.3,
+                0.1,
+                type.createBlockData()
+        );
+
+        boolean ore = isOre(type);
+        world.playSound(
+                loc,
+                ore ? Sound.ENTITY_VILLAGER_WORK_TOOLSMITH : Sound.BLOCK_STONE_BREAK,
+                0.7f,
+                1.0f
+        );
+
         if (decorationCallback != null) {
             decorationCallback.accept(current);
         }
+
+        if (router != null && !drops.isEmpty()) {
+            List<ItemStack> leftovers = router.deposit(drops);
+            if (!leftovers.isEmpty()) {
+                for (ItemStack stack : leftovers) {
+                    if (stack != null && stack.getAmount() > 0) {
+                        world.dropItemNaturally(loc, stack);
+                    }
+                }
+            }
+        }
+
+        phase = Phase.DEPOSITING;
+        stage = 0;
     }
 
     private void handleDepositing() {
@@ -202,14 +250,14 @@ public final class MiningLoop extends BukkitRunnable {
         state.minerY = miner.getLocation().getY();
     }
 
-    private void showMiningEffects(Block block, int tickStage) {
-        Location loc = block.getLocation().add(0.5, 0.5, 0.5);
-        World world = block.getWorld();
-        world.playSound(loc, Sound.BLOCK_STONE_BREAK, 0.6f, 1.0f);
-        world.spawnParticle(Particle.BLOCK, loc, 8, 0.2, 0.2, 0.2, block.getBlockData());
-        float progress = Math.min(1f, Math.max(0f, tickStage / 9f));
-        for (Player player : world.getPlayers()) {
-            player.sendBlockDamage(block.getLocation(), progress);
+    private boolean isOre(Material type) {
+        if (type == null) {
+            return false;
         }
+        String name = type.name();
+        if (name.endsWith("_ORE")) {
+            return true;
+        }
+        return type == Material.ANCIENT_DEBRIS;
     }
 }

@@ -44,6 +44,7 @@ import org.example.mineur.builders.StairBuilder;
 import org.example.mineur.builders.SupportBuilder;
 import org.example.mineur.builders.TorchPlacer;
 import org.example.mineur.store.SessionStore;
+import org.example.mineur.ui.Hologram;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -93,18 +94,56 @@ public class Mineur implements CommandExecutor, Listener {
             sender.sendMessage(ChatColor.RED + "Tu n'as pas la permission pour /mineur.");
             return true;
         }
-        if (args.length > 0) {
-            sendUsage(player);
+
+        // /mineur => donne simplement le bâton
+        if (args.length == 0) {
+            giveMineSelector(player);
             return true;
         }
 
-        giveMineSelector(player);
+        String sub = args[0].toLowerCase(Locale.ROOT);
+        switch (sub) {
+            case "aide", "help" -> {
+                sendUsage(player);
+                return true;
+            }
+            case "vitesse", "speed" -> handleSpeed(player, args);
+            case "pattern", "mode", "patron" -> handlePattern(player, args);
+            case "pause" -> handlePause(player, true);
+            case "reprendre", "resume", "play" -> handlePause(player, false);
+            case "stop", "arreter", "off" -> handleStop(player);
+            case "info", "status" -> handleInfo(player);
+            case "autoriser", "trust" -> handleTrust(player, args);
+            default -> sendUsage(player);
+        }
         return true;
     }
 
     private void sendUsage(Player player) {
-        player.sendMessage(CMD_PREFIX + ChatColor.YELLOW + "Usage:");
-        player.sendMessage(ChatColor.GOLD + "/mineur" + ChatColor.GRAY + " – reçois le bâton et clique deux blocs (même Y) pour lancer la mine");
+        player.sendMessage(CMD_PREFIX + ChatColor.YELLOW + "Usage :");
+        player.sendMessage(ChatColor.GOLD + "/mineur aide" + ChatColor.GRAY
+                + " : affiche cette aide détaillée.");
+        player.sendMessage(ChatColor.GOLD + "/mineur" + ChatColor.GRAY
+                + " : reçois le bâton de sélection, puis clique 2 blocs (même Y) pour définir la zone.");
+
+        player.sendMessage(ChatColor.GOLD + "/mineur vitesse <lent|normal|rapide>" + ChatColor.GRAY
+                + " : change la vitesse du mineur.");
+
+        player.sendMessage(ChatColor.GOLD + "/mineur pattern <carriere|branche|tunnel|veine>" + ChatColor.GRAY
+                + " : change le mode de minage (tunnel/veine retombent sur carrière pour l’instant).");
+
+        player.sendMessage(ChatColor.GOLD + "/mineur pause" + ChatColor.GRAY + " / "
+                + ChatColor.GOLD + "reprendre" + ChatColor.GRAY + " : met en pause ou relance la session.");
+
+        player.sendMessage(ChatColor.GOLD + "/mineur stop" + ChatColor.GRAY + " / "
+                + ChatColor.GOLD + "arreter" + ChatColor.GRAY
+                + " : arrête complètement la session en cours.");
+
+        player.sendMessage(ChatColor.GOLD + "/mineur info" + ChatColor.GRAY
+                + " : affiche les infos de ta session (monde, zone, pattern, vitesse, Y, etc.).");
+
+        player.sendMessage(ChatColor.GOLD + "/mineur autoriser <joueur>" + ChatColor.GRAY
+                + " : autorise un joueur à interagir avec ton mineur.");
     }
 
     private void createMineFromSelection(Player player) {
@@ -204,10 +243,8 @@ public class Mineur implements CommandExecutor, Listener {
             return;
         }
 
-        MiningPattern pattern;
-        try {
-            pattern = MiningPattern.valueOf(args[1].toUpperCase(Locale.ROOT));
-        } catch (IllegalArgumentException ex) {
+        MiningPattern pattern = parsePattern(args[1]);
+        if (pattern == null) {
             player.sendMessage(CMD_PREFIX + ChatColor.RED + "Pattern inconnu: " + args[1]);
             return;
         }
@@ -323,6 +360,14 @@ public class Mineur implements CommandExecutor, Listener {
         state.waitingStorage = true;
         saveAllSessions();
         notifyOwner(state.owner, ChatColor.RED + "Stockage plein : le mineur attend qu'un coffre soit vidé.");
+
+        RuntimeSession runtime = runtimeOf(state.id);
+        if (runtime != null && runtime.miner != null && !runtime.miner.isDead()) {
+            if (runtime.storageHologram == null) {
+                runtime.storageHologram = new Hologram();
+            }
+            runtime.storageHologram.show(runtime.miner.getLocation(), ChatColor.RED + "Stockage plein");
+        }
     }
 
     private void onStorageFreed(MiningSessionState state) {
@@ -332,6 +377,11 @@ public class Mineur implements CommandExecutor, Listener {
         state.waitingStorage = false;
         saveAllSessions();
         notifyOwner(state.owner, ChatColor.GREEN + "Le mineur reprend, de la place a été libérée.");
+
+        RuntimeSession runtime = runtimeOf(state.id);
+        if (runtime != null && runtime.storageHologram != null) {
+            runtime.storageHologram.hide();
+        }
     }
 
     private void giveMineSelector(Player player) {
@@ -868,11 +918,36 @@ public class Mineur implements CommandExecutor, Listener {
     }
 
     private MiningSpeed parseSpeed(String value) {
-        try {
-            return MiningSpeed.valueOf(value.toUpperCase(Locale.ROOT));
-        } catch (IllegalArgumentException ex) {
-            return null;
-        }
+        String v = value.toLowerCase(Locale.ROOT);
+        return switch (v) {
+            case "slow", "lent" -> MiningSpeed.SLOW;
+            case "normal" -> MiningSpeed.NORMAL;
+            case "fast", "rapide" -> MiningSpeed.FAST;
+            default -> {
+                try {
+                    yield MiningSpeed.valueOf(value.toUpperCase(Locale.ROOT));
+                } catch (IllegalArgumentException ex) {
+                    yield null;
+                }
+            }
+        };
+    }
+
+    private MiningPattern parsePattern(String value) {
+        String v = value.toLowerCase(Locale.ROOT);
+        return switch (v) {
+            case "quarry", "carriere" -> MiningPattern.QUARRY;
+            case "branch", "branche" -> MiningPattern.BRANCH;
+            case "tunnel" -> MiningPattern.TUNNEL;
+            case "vein_first", "veine", "vein", "veine_first" -> MiningPattern.VEIN_FIRST;
+            default -> {
+                try {
+                    yield MiningPattern.valueOf(value.toUpperCase(Locale.ROOT));
+                } catch (IllegalArgumentException ex) {
+                    yield null;
+                }
+            }
+        };
     }
 
     private static class Selection {
@@ -909,6 +984,7 @@ public class Mineur implements CommandExecutor, Listener {
         private MiningLoop loop;
         private InventoryRouter router;
         private DecorationDelegate decoration;
+        private Hologram storageHologram;
 
         RuntimeSession(MiningSessionState state) {
             this.state = state;
@@ -925,6 +1001,9 @@ public class Mineur implements CommandExecutor, Listener {
                 golem.remove();
             }
             golems.clear();
+            if (storageHologram != null) {
+                storageHologram.hide();
+            }
             for (Chunk chunk : ticketChunks) {
                 chunk.removePluginChunkTicket(plugin);
             }
