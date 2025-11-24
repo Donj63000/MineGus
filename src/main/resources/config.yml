@@ -11,6 +11,9 @@ mineur:
     torch-layers: 4
     supports-every: 8
     use-barrel-master: false
+  branch:
+    spacing: 6        # espacement entre deux branches sur l'axe X
+    gallery-width: 3  # largeur de la galerie principale (en blocs)
   limits:
     max-sessions-per-player: 1
   economy:

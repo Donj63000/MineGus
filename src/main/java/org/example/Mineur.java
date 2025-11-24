@@ -31,6 +31,7 @@ import org.bukkit.persistence.PersistentDataType;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.bukkit.scheduler.BukkitRunnable;
 import org.bukkit.util.Vector;
+import org.example.mineur.BranchIterator;
 import org.example.mineur.InventoryRouter;
 import org.example.mineur.MiningCursor;
 import org.example.mineur.MiningIterator;
@@ -148,7 +149,9 @@ public class Mineur implements CommandExecutor, Listener {
         state.cursor = new MiningCursor(base, width, length);
         state.minerY = base.getY();
         state.owner = ownerId;
-        state.useBarrelMaster = false;
+        boolean defaultUseBarrel = plugin.getConfig()
+                .getBoolean("mineur.default.use-barrel-master", false);
+        state.useBarrelMaster = defaultUseBarrel;
         state.pattern = getDefaultPattern();
         state.speed = getDefaultSpeed();
 
@@ -209,14 +212,18 @@ public class Mineur implements CommandExecutor, Listener {
             return;
         }
 
-        if (pattern != MiningPattern.QUARRY) {
-            player.sendMessage(CMD_PREFIX + ChatColor.YELLOW + "Ce pattern n'est pas encore disponible. Mode QUARRY conservé.");
-            return;
+        if (pattern == MiningPattern.TUNNEL || pattern == MiningPattern.VEIN_FIRST) {
+            player.sendMessage(CMD_PREFIX + ChatColor.YELLOW + "Ce pattern n'est pas encore implémenté, QUARRY sera utilisé à la place.");
         }
 
         state.pattern = pattern;
         saveAllSessions();
-        player.sendMessage(CMD_PREFIX + ChatColor.GREEN + "Pattern défini sur QUARRY.");
+        player.sendMessage(CMD_PREFIX + ChatColor.GREEN + "Pattern défini sur " + pattern.name().toLowerCase(Locale.ROOT) + ".");
+
+        RuntimeSession runtime = runtimeOf(state.id);
+        if (runtime != null && !state.paused) {
+            restartLoop(runtime);
+        }
     }
 
     private void handlePause(Player player, boolean pause) {
@@ -599,17 +606,38 @@ public class Mineur implements CommandExecutor, Listener {
             return;
         }
 
-        List<Location> storage = computeStorageLocations(state);
-        state.useBarrelMaster = false;
         state.containers.clear();
-        for (Location location : storage) {
-            Block block = world.getBlockAt(location.getBlockX(), location.getBlockY(), location.getBlockZ());
-            if (block.getType() != Material.CHEST) {
-                block.setType(Material.CHEST, false);
+
+        if (!state.useBarrelMaster) {
+            List<Location> storage = computeStorageLocations(state);
+            for (Location location : storage) {
+                Block block = world.getBlockAt(location.getBlockX(), location.getBlockY(), location.getBlockZ());
+                if (block.getType() != Material.CHEST) {
+                    block.setType(Material.CHEST, false);
+                }
+                runtime.containerLocations.add(block.getLocation());
+                state.containers.add(block.getLocation().toVector());
+                markContainerOwner(block, state.owner);
             }
-            runtime.containerLocations.add(block.getLocation());
-            state.containers.add(block.getLocation().toVector());
-            markContainerOwner(block, state.owner);
+            return;
+        }
+
+        int radius = 6;
+        int baseX = state.base.getBlockX();
+        int baseY = state.base.getBlockY();
+        int baseZ = state.base.getBlockZ();
+
+        for (int x = baseX - radius; x <= baseX + radius; x++) {
+            for (int y = baseY - 2; y <= baseY + 2; y++) {
+                for (int z = baseZ - radius; z <= baseZ + radius; z++) {
+                    Block block = world.getBlockAt(x, y, z);
+                    if (block.getType() == Material.BARREL) {
+                        runtime.containerLocations.add(block.getLocation());
+                        state.containers.add(block.getLocation().toVector());
+                        markContainerOwner(block, state.owner);
+                    }
+                }
+            }
         }
     }
 
@@ -708,7 +736,8 @@ public class Mineur implements CommandExecutor, Listener {
             runtime.state.cursor = new MiningCursor(runtime.state.base, runtime.state.width, runtime.state.length);
         }
         runtime.router = new InventoryRouter(resolveContainerBlocks(runtime));
-        MiningIterator iterator = new QuarryIterator(runtime.state.base.getWorld(), runtime.state.cursor, getStopY());
+        World world = runtime.state.base.getWorld();
+        MiningIterator iterator = createIteratorFor(world, runtime.state.pattern, runtime.state.cursor);
         RuntimeSession currentRuntime = runtime;
         runtime.loop = new MiningLoop(
                 plugin,
@@ -758,7 +787,8 @@ public class Mineur implements CommandExecutor, Listener {
         MiningCursor cursorSnapshot = state.cursor != null
                 ? state.cursor.copy()
                 : new MiningCursor(state.base, state.width, state.length);
-        MiningIterator iterator = new QuarryIterator(state.base.getWorld(), cursorSnapshot, getStopY());
+        World world = state.base.getWorld();
+        MiningIterator iterator = createIteratorFor(world, state.pattern, cursorSnapshot);
         while (iterator.hasNext()) {
             Block block = iterator.next();
             if (block != null) {
@@ -798,6 +828,24 @@ public class Mineur implements CommandExecutor, Listener {
 
     private int getStopY() {
         return plugin.getConfig().getInt("mineur.stop-at-y", -58);
+    }
+
+    private MiningIterator createIteratorFor(World world,
+                                             MiningPattern pattern,
+                                             MiningCursor cursor) {
+        int stopY = getStopY();
+        if (world == null) {
+            throw new IllegalStateException("World null dans createIteratorFor");
+        }
+        return switch (pattern) {
+            case QUARRY -> new QuarryIterator(world, cursor, stopY);
+            case BRANCH -> {
+                int spacing = plugin.getConfig().getInt("mineur.branch.spacing", 6);
+                int galleryWidth = plugin.getConfig().getInt("mineur.branch.gallery-width", 3);
+                yield new BranchIterator(world, cursor, stopY, spacing, galleryWidth);
+            }
+            case TUNNEL, VEIN_FIRST -> new QuarryIterator(world, cursor, stopY);
+        };
     }
 
     private boolean allowMinerBlockPlacement() {
