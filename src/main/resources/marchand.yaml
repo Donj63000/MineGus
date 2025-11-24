@@ -24,6 +24,7 @@ categories:
   # === BOIS : toutes essences (inclut Pale Oak 1.21.4) ========================
   BOIS:
     icon: OAK_LOG
+    display_name: "Bois & panneaux"
     description: "Convertit des bûches en formes bois (généreux) + signalisation."
     input:
       type: TAG
@@ -71,6 +72,7 @@ categories:
   # === PIERRE (overworld) ======================================================
   PIERRE:
     icon: STONE
+    display_name: "Pierres et taillage"
     description: "Pierres classiques avec cuisson/taillage offerts."
     offers:
       - in: COBBLESTONE
@@ -113,6 +115,7 @@ categories:
   # === TUFF & DEEPSLATE (1.21 inclus) =========================================
   TUFF_DEEPSLATE:
     icon: TUFF
+    display_name: "Tuf & deepslate"
     description: "Familles tuff & deepslate modernes (tailles/briques)."
     offers:
       - in: TUFF
@@ -139,6 +142,7 @@ categories:
   # === VERRE, TEINTE & BÉTON ==================================================
   VERRE_BETON:
     icon: GLASS
+    display_name: "Verre, teintes & béton"
     description: "Verre (couleurs offertes), béton (mélange sable+gravier auto)."
     offers:
       - in: SAND
@@ -164,6 +168,7 @@ categories:
   # === TERRACOTTA & GLAZED ====================================================
   TERRACOTTA:
     icon: TERRACOTTA
+    display_name: "Terre cuite & émail"
     description: "Argile cuite et émaillée (couleurs offertes)."
     offers:
       - in: CLAY
@@ -178,6 +183,7 @@ categories:
   # === QUARTZ =================================================================
   QUARTZ:
     icon: QUARTZ_BLOCK
+    display_name: "Quartz travaillé"
     description: "Toutes variantes façonnées sans four."
     offers:
       - in: QUARTZ_BLOCK
@@ -196,6 +202,7 @@ categories:
   # === CUIVRE (1.21) ==========================================================
   CUIVRE:
     icon: COPPER_BLOCK
+    display_name: "Cuivre travaillé"
     description: "Tailles/rainures/grilles + ampoules cuivre (oxydation/cire au choix)."
     offers:
       - in: COPPER_BLOCK
@@ -220,6 +227,7 @@ categories:
   # === NETHER =================================================================
   NETHER:
     icon: NETHERRACK
+    display_name: "Blocs du Nether"
     description: "Pierres du Nether + luminaires."
     offers:
       - in: NETHERRACK
@@ -258,6 +266,7 @@ categories:
   # === OCEAN / MONUMENTS ======================================================
   OCEAN:
     icon: PRISMARINE
+    display_name: "Océan & prismarine"
     description: "Prismarine & lanternes marines."
     offers:
       - in: PRISMARINE
@@ -276,6 +285,7 @@ categories:
   # === END ====================================================================
   END:
     icon: END_STONE
+    display_name: "Blocs de l'End"
     description: "Famille End (bricks/purpur)."
     offers:
       - in: END_STONE
@@ -298,6 +308,7 @@ categories:
   # === VÉGÉTAL (mousse/bambou/feuillage utile) ================================
   VEGETAL:
     icon: MOSS_BLOCK
+    display_name: "Végétal & bambou"
     description: "Mousses (1.21.4), bambou et tapis végétaux."
     offers:
       - in: MOSS_BLOCK
@@ -324,6 +335,7 @@ categories:
   # === LAINE & TAPIS (16 couleurs) ============================================
   LAINE:
     icon: WHITE_WOOL
+    display_name: "Laines et tapis"
     description: "Laine ↔ tapis, toutes couleurs (bonus de rendement)."
     offers:
       - in: ALIAS:ANY_WOOL
@@ -339,6 +351,7 @@ categories:
   # === RAILS & TRANSPORT ======================================================
   RAILS:
     icon: RAIL
+    display_name: "Rails & transport"
     description: "Rails en quantité, combos de blocs uniquement."
     offers:
       - in: IRON_BLOCK
@@ -362,6 +375,7 @@ categories:
   # === POSTES DE MÉTIER (Villageois) ==========================================
   JOB_SITES:
     icon: SMITHING_TABLE
+    display_name: "Postes de métier"
     description: "Ateliers prêts à poser."
     offers:
       - in: STONE
@@ -416,6 +430,7 @@ categories:
   # === LUMIÈRE ================================================================
   LUMIERE:
     icon: SEA_LANTERN
+    display_name: "Lumière"
     description: "Sources lumineuses généreuses."
     offers:
       - in: COAL_BLOCK
@@ -443,6 +458,7 @@ categories:
   # === PORTAILS & PROGRESSION ================================================
   PORTAILS:
     icon: LODESTONE
+    display_name: "Portails & progression"
     description: "Blocs de progression (coûts élevés, toujours gagnants)."
     offers:
       - in_combo: { NETHERITE_BLOCK: 1, STONE: 32 }
@@ -459,6 +475,7 @@ categories:
   # === SCULK (capteurs) =======================================================
   SCULK:
     icon: SCULK_SENSOR
+    display_name: "Sculk & redstone"
     description: "Capteurs sculk, avec plafonds journaliers."
     offers:
       - in: SCULK
@@ -474,6 +491,7 @@ categories:
   # === SPÉCIAUX / CRÉATIF / STRUCTURE (DÉSACTIVÉ PAR DÉFAUT) ==================
   SPECIAUX_ADMIN:
     icon: STRUCTURE_BLOCK
+    display_name: "Spéciaux / admin"
     disabled_by_default: true
     requires_permission: "minegus.troc.special"
     description: "Blocs techniques/administration, très limités."

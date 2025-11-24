@@ -201,9 +201,10 @@ public final class MerchantManager implements CommandExecutor, Listener {
             icon = Material.BARRIER;
         }
         String description = section.getString("description", "");
+        String displayName = section.getString("display_name", null);
         IngredientDescriptor defaultInput = parseCategoryInput(section.getConfigurationSection("input"), resolver);
         List<Map<?, ?>> offerMaps = section.getMapList("offers");
-        MerchantCategory category = new MerchantCategory(id, icon, description, defaultInput);
+        MerchantCategory category = new MerchantCategory(id, icon, description, displayName, defaultInput);
         AtomicInteger counter = new AtomicInteger();
         for (Map<?, ?> raw : offerMaps) {
             OfferDefinition definition = OfferDefinition.fromMap(raw);
@@ -302,13 +303,13 @@ public final class MerchantManager implements CommandExecutor, Listener {
     private ItemStack buildCategoryItem(MerchantCategory category) {
         ItemStack item = new ItemStack(category.icon);
         ItemMeta meta = item.getItemMeta();
-        meta.setDisplayName(ChatColor.GOLD + formatId(category.id));
+        meta.setDisplayName(ChatColor.GOLD + category.displayName);
         List<String> lore = new ArrayList<>();
         if (!category.description.isEmpty()) {
             lore.addAll(wrapText(ChatColor.GRAY + category.description, 40));
             lore.add("");
         }
-        lore.add(ChatColor.YELLOW + "Offres: " + category.offers.size());
+        lore.add(ChatColor.YELLOW + "Offres : " + category.offers.size());
         meta.setLore(lore);
         meta.getPersistentDataContainer().set(itemKey, PersistentDataType.STRING, "cat:" + category.id);
         item.setItemMeta(meta);
@@ -321,7 +322,7 @@ public final class MerchantManager implements CommandExecutor, Listener {
         if (page >= maxPages) page = maxPages - 1;
         MenuHolder holder = new MenuHolder(MenuType.OFFERS, category.id, page);
         Inventory inv = Bukkit.createInventory(holder, MENU_SIZE,
-                merchantDisplayName + " - " + formatId(category.id) + " (" + (page + 1) + "/" + maxPages + ")");
+                merchantDisplayName + " - " + category.displayName + " (" + (page + 1) + "/" + maxPages + ")");
         holder.setInventory(inv);
         int startIndex = page * OFFERS_PER_PAGE;
         for (int slot = 0; slot < OFFERS_PER_PAGE; slot++) {
@@ -558,7 +559,157 @@ public final class MerchantManager implements CommandExecutor, Listener {
                 .collect(Collectors.joining(" "));
     }
 
+    private static final Map<Material, String> MATERIAL_FR = Map.ofEntries(
+            Map.entry(Material.OAK_LOG, "Bûche de chêne"),
+            Map.entry(Material.SPRUCE_LOG, "Bûche de sapin"),
+            Map.entry(Material.BIRCH_LOG, "Bûche de bouleau"),
+            Map.entry(Material.JUNGLE_LOG, "Bûche d'acajou"),
+            Map.entry(Material.ACACIA_LOG, "Bûche d'acacia"),
+            Map.entry(Material.DARK_OAK_LOG, "Bûche de chêne noir"),
+            Map.entry(Material.MANGROVE_LOG, "Bûche de palétuvier"),
+            Map.entry(Material.CHERRY_LOG, "Bûche de cerisier"),
+            Map.entry(Material.PALE_OAK_LOG, "Bûche de chêne pâle"),
+            Map.entry(Material.BAMBOO_BLOCK, "Bloc de bambou"),
+            Map.entry(Material.BAMBOO_PLANKS, "Planches de bambou"),
+            Map.entry(Material.BAMBOO_MOSAIC, "Mosaïque de bambou"),
+
+            Map.entry(Material.OAK_PLANKS, "Planches de chêne"),
+            Map.entry(Material.BARREL, "Tonneau"),
+            Map.entry(Material.CHISELED_BOOKSHELF, "Bibliothèque sculptée"),
+            Map.entry(Material.LECTERN, "Pupitre"),
+
+            Map.entry(Material.STONE, "Pierre"),
+            Map.entry(Material.COBBLESTONE, "Pierre taillée"),
+            Map.entry(Material.STONE_BRICKS, "Briques de pierre"),
+            Map.entry(Material.SMOOTH_STONE, "Pierre lisse"),
+            Map.entry(Material.ANDESITE, "Andésite"),
+            Map.entry(Material.POLISHED_ANDESITE, "Andésite polie"),
+            Map.entry(Material.DIORITE, "Diorite"),
+            Map.entry(Material.POLISHED_DIORITE, "Diorite polie"),
+            Map.entry(Material.GRANITE, "Granite"),
+            Map.entry(Material.POLISHED_GRANITE, "Granite poli"),
+            Map.entry(Material.SANDSTONE, "Grès"),
+            Map.entry(Material.SMOOTH_SANDSTONE, "Grès lisse"),
+            Map.entry(Material.RED_SANDSTONE, "Grès rouge"),
+            Map.entry(Material.SMOOTH_RED_SANDSTONE, "Grès rouge lisse"),
+            Map.entry(Material.CLAY, "Argile"),
+            Map.entry(Material.BRICKS, "Briques"),
+
+            Map.entry(Material.TUFF, "Tuf"),
+            Map.entry(Material.TUFF_BRICKS, "Briques de tuf"),
+            Map.entry(Material.CHISELED_TUFF, "Tuf sculpté"),
+            Map.entry(Material.COBBLED_DEEPSLATE, "Deepslate taillée"),
+            Map.entry(Material.DEEPSLATE_BRICKS, "Briques de deepslate"),
+            Map.entry(Material.DEEPSLATE_TILES, "Carreaux de deepslate"),
+            Map.entry(Material.POLISHED_DEEPSLATE, "Deepslate polie"),
+            Map.entry(Material.CHISELED_DEEPSLATE, "Deepslate sculptée"),
+
+            Map.entry(Material.SAND, "Sable"),
+            Map.entry(Material.RED_SAND, "Sable rouge"),
+            Map.entry(Material.GRAVEL, "Gravier"),
+            Map.entry(Material.GLASS, "Verre"),
+            Map.entry(Material.TINTED_GLASS, "Verre teinté"),
+            Map.entry(Material.AMETHYST_BLOCK, "Bloc d'améthyste"),
+            Map.entry(Material.TERRACOTTA, "Terre cuite"),
+
+            Map.entry(Material.QUARTZ_BLOCK, "Bloc de quartz"),
+            Map.entry(Material.SMOOTH_QUARTZ, "Quartz lisse"),
+            Map.entry(Material.QUARTZ_PILLAR, "Pilier de quartz"),
+            Map.entry(Material.CHISELED_QUARTZ_BLOCK, "Quartz ciselé"),
+
+            Map.entry(Material.COPPER_BLOCK, "Bloc de cuivre"),
+            Map.entry(Material.CUT_COPPER, "Cuivre taillé"),
+            Map.entry(Material.EXPOSED_CUT_COPPER, "Cuivre taillé exposé"),
+            Map.entry(Material.WEATHERED_CUT_COPPER, "Cuivre taillé altéré"),
+            Map.entry(Material.OXIDIZED_CUT_COPPER, "Cuivre taillé oxydé"),
+            Map.entry(Material.WAXED_CUT_COPPER, "Cuivre taillé ciré"),
+            Map.entry(Material.WAXED_EXPOSED_CUT_COPPER, "Cuivre taillé exposé ciré"),
+            Map.entry(Material.WAXED_WEATHERED_CUT_COPPER, "Cuivre taillé altéré ciré"),
+            Map.entry(Material.WAXED_OXIDIZED_CUT_COPPER, "Cuivre taillé oxydé ciré"),
+            Map.entry(Material.CHISELED_COPPER, "Cuivre sculpté"),
+            Map.entry(Material.COPPER_GRATE, "Grille en cuivre"),
+            Map.entry(Material.COPPER_BULB, "Ampoule en cuivre"),
+            Map.entry(Material.EXPOSED_COPPER_BULB, "Ampoule en cuivre exposée"),
+            Map.entry(Material.WEATHERED_COPPER_BULB, "Ampoule en cuivre altérée"),
+            Map.entry(Material.OXIDIZED_COPPER_BULB, "Ampoule en cuivre oxydée"),
+            Map.entry(Material.WAXED_COPPER_BULB, "Ampoule en cuivre cirée"),
+            Map.entry(Material.WAXED_EXPOSED_COPPER_BULB, "Ampoule en cuivre exposée cirée"),
+            Map.entry(Material.WAXED_WEATHERED_COPPER_BULB, "Ampoule en cuivre altérée cirée"),
+            Map.entry(Material.WAXED_OXIDIZED_COPPER_BULB, "Ampoule en cuivre oxydée cirée"),
+
+            Map.entry(Material.NETHERRACK, "Netherrack"),
+            Map.entry(Material.NETHER_BRICKS, "Briques du Nether"),
+            Map.entry(Material.BASALT, "Basalte"),
+            Map.entry(Material.POLISHED_BASALT, "Basalte poli"),
+            Map.entry(Material.SMOOTH_BASALT, "Basalte lisse"),
+            Map.entry(Material.BLACKSTONE, "Pierre noire"),
+            Map.entry(Material.POLISHED_BLACKSTONE, "Pierre noire polie"),
+            Map.entry(Material.POLISHED_BLACKSTONE_BRICKS, "Briques de pierre noire polie"),
+            Map.entry(Material.CHISELED_POLISHED_BLACKSTONE, "Pierre noire polie sculptée"),
+            Map.entry(Material.GLOWSTONE, "Pierre lumineuse"),
+            Map.entry(Material.REDSTONE_LAMP, "Lampe de redstone"),
+            Map.entry(Material.NETHER_WART_BLOCK, "Bloc de verrues du Nether"),
+            Map.entry(Material.RED_NETHER_BRICKS, "Briques du Nether rouges"),
+
+            Map.entry(Material.PRISMARINE, "Prismarine"),
+            Map.entry(Material.PRISMARINE_BRICKS, "Briques de prismarine"),
+            Map.entry(Material.DARK_PRISMARINE, "Prismarine sombre"),
+            Map.entry(Material.SEA_LANTERN, "Lanterne marine"),
+
+            Map.entry(Material.END_STONE, "Pierre de l'End"),
+            Map.entry(Material.END_STONE_BRICKS, "Briques de l'End"),
+            Map.entry(Material.PURPUR_BLOCK, "Bloc de purpur"),
+            Map.entry(Material.PURPUR_PILLAR, "Pilier de purpur"),
+            Map.entry(Material.PURPUR_STAIRS, "Escaliers en purpur"),
+            Map.entry(Material.PURPUR_SLAB, "Dalle de purpur"),
+
+            Map.entry(Material.MOSS_BLOCK, "Bloc de mousse"),
+            Map.entry(Material.MOSS_CARPET, "Tapis de mousse"),
+            Map.entry(Material.PALE_MOSS_BLOCK, "Bloc de mousse pâle"),
+            Map.entry(Material.PALE_MOSS_CARPET, "Tapis de mousse pâle"),
+            Map.entry(Material.PALE_HANGING_MOSS, "Mousse pâle suspendue"),
+
+            Map.entry(Material.IRON_BLOCK, "Bloc de fer"),
+            Map.entry(Material.RAIL, "Rail"),
+            Map.entry(Material.GOLD_BLOCK, "Bloc d'or"),
+            Map.entry(Material.REDSTONE_BLOCK, "Bloc de redstone"),
+            Map.entry(Material.POWERED_RAIL, "Rails propulseurs"),
+            Map.entry(Material.DETECTOR_RAIL, "Rails détecteurs"),
+            Map.entry(Material.ACTIVATOR_RAIL, "Rails déclencheurs"),
+            Map.entry(Material.SCAFFOLDING, "Échafaudage"),
+
+            Map.entry(Material.STONECUTTER, "Tailleur de pierre"),
+            Map.entry(Material.FURNACE, "Fourneau"),
+            Map.entry(Material.ANVIL, "Enclume"),
+            Map.entry(Material.CARTOGRAPHY_TABLE, "Table de cartographie"),
+            Map.entry(Material.LOOM, "Métier à tisser"),
+            Map.entry(Material.SMITHING_TABLE, "Table de forgeron"),
+            Map.entry(Material.GRINDSTONE, "Meule"),
+            Map.entry(Material.COMPOSTER, "Composteur"),
+            Map.entry(Material.JUKEBOX, "Jukebox"),
+
+            Map.entry(Material.COAL_BLOCK, "Bloc de charbon"),
+            Map.entry(Material.TORCH, "Torche"),
+            Map.entry(Material.SHROOMLIGHT, "Champilampe"),
+
+            Map.entry(Material.NETHERITE_BLOCK, "Bloc de Netherite"),
+            Map.entry(Material.LODESTONE, "Magnétite"),
+            Map.entry(Material.CRYING_OBSIDIAN, "Obsidienne pleureuse"),
+            Map.entry(Material.RESPAWN_ANCHOR, "Ancre de réapparition"),
+            Map.entry(Material.OBSIDIAN, "Obsidienne"),
+            Map.entry(Material.ENCHANTING_TABLE, "Table d'enchantement"),
+
+            Map.entry(Material.SCULK, "Sculk"),
+            Map.entry(Material.SCULK_SENSOR, "Capteur de sculk"),
+            Map.entry(Material.CALIBRATED_SCULK_SENSOR, "Capteur de sculk calibré"),
+            Map.entry(Material.SCULK_CATALYST, "Catalyseur de sculk")
+    );
+
     private static String formatMaterialName(Material material) {
+        String fr = MATERIAL_FR.get(material);
+        if (fr != null) {
+            return fr;
+        }
         return Arrays.stream(material.name().split("_"))
                 .map(word -> word.substring(0, 1) + word.substring(1).toLowerCase(Locale.ROOT))
                 .collect(Collectors.joining(" "));
@@ -568,13 +719,16 @@ public final class MerchantManager implements CommandExecutor, Listener {
         private final String id;
         private final Material icon;
         private final String description;
+        private final String displayName;
         private final IngredientDescriptor defaultInput;
         private final List<ResolvedOffer> offers = new ArrayList<>();
 
-        private MerchantCategory(String id, Material icon, String description, IngredientDescriptor defaultInput) {
+        private MerchantCategory(String id, Material icon, @Nullable String description,
+                                 @Nullable String displayName, @Nullable IngredientDescriptor defaultInput) {
             this.id = id;
             this.icon = icon;
             this.description = description == null ? "" : description;
+            this.displayName = (displayName == null || displayName.isEmpty()) ? formatId(id) : displayName;
             this.defaultInput = defaultInput;
         }
     }
