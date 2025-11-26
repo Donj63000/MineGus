@@ -42,6 +42,11 @@ commands:
     description: Outils d'administration MineGus
     usage: /minegus fix <forestier|golems>
     permission: mineplugin.admin
+  job:
+    description: Gestion des métiers (mineur, etc.)
+    usage: |
+      /job mineur
+      /job info
 
 permissions:
   mineplugin.mineur.use:

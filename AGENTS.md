@@ -33,6 +33,7 @@
 - Préparer les fichiers à toucher (classes Java, YAML, docs) et noter les impacts attendus
 - Utiliser `rg` pour chercher et `apply_patch` pour des edits ciblés; ne jamais modifier `target/` ni les artefacts générés
 - Après toute modification Java/ressource : `mvn -q package` (remonter les erreurs)
+- Chaque modification doit etre accompagnee de tests unitaires pertinents
 - Documenter les tests unitaires/manuels exécutés (`/ping`, `/army`, `/mineur`, `/champ`, `/foret`, `/village`, `/eleveur`)
 
 ## Flux de travail conseillé

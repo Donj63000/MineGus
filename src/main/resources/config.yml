@@ -45,3 +45,38 @@ village:
   rows: 4
   cols: 5
   wallGap: 6        # marge entre les maisons et la muraille
+
+# Paramètres des métiers
+jobs:
+  mineur:
+    xp-per-block:
+      STONE: 1
+      COBBLESTONE: 1
+      DEEPSLATE: 1
+
+      COAL_ORE: 3
+      DEEPSLATE_COAL_ORE: 3
+
+      COPPER_ORE: 4
+      DEEPSLATE_COPPER_ORE: 4
+
+      IRON_ORE: 5
+      DEEPSLATE_IRON_ORE: 5
+
+      GOLD_ORE: 6
+      DEEPSLATE_GOLD_ORE: 6
+
+      REDSTONE_ORE: 6
+      DEEPSLATE_REDSTONE_ORE: 6
+
+      LAPIS_ORE: 7
+      DEEPSLATE_LAPIS_ORE: 7
+
+      DIAMOND_ORE: 10
+      DEEPSLATE_DIAMOND_ORE: 10
+
+      EMERALD_ORE: 12
+      DEEPSLATE_EMERALD_ORE: 12
+
+      NETHER_QUARTZ_ORE: 4
+      NETHER_GOLD_ORE: 6

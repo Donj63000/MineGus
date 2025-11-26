@@ -67,12 +67,18 @@ public final class MinePlugin extends JavaPlugin implements Listener {
      */
     private Armure armure;
 
+    /**
+     * Gère les métiers (XP, /job).
+     */
+    private JobManager jobManager;
+
     private MerchantManager merchantManager;
 
     public Mineur getMineur() { return mineur; }
     public Agriculture getAgriculture() { return agriculture; }
     public Foret getForet() { return foret; }
     public Eleveur getEleveur() { return eleveur; }
+    public JobManager getJobManager() { return jobManager; }
 
 
     @Override
@@ -116,6 +122,9 @@ public final class MinePlugin extends JavaPlugin implements Listener {
         // Instancie /armure
         armure = new Armure(this);
 
+        // Instancie le gestionnaire de métiers (/job)
+        jobManager = new JobManager(this);
+
         merchantManager = new MerchantManager(this);
     }
 
@@ -137,6 +146,9 @@ public final class MinePlugin extends JavaPlugin implements Listener {
         if (eleveur != null) {
             eleveur.saveAllSessions();
             eleveur.stopAllRanches();
+        }
+        if (jobManager != null) {
+            jobManager.saveJobsSync();
         }
         if (merchantManager != null) {
             merchantManager.shutdown();
