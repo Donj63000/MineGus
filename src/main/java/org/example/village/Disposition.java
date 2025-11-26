@@ -56,6 +56,8 @@ public final class Disposition {
 
         int churchRow = 0;
         int churchCol = cols / 2;
+        int forgeRow  = rows - 1;
+        int forgeCol  = cols / 2;
 
         /* --- grille routes + lots --- */
         for (int r = 0; r < rows; r++) {
@@ -79,6 +81,11 @@ public final class Disposition {
                     q.addAll(SpecialBuildings.buildChurch(
                             lotX, baseY + 1, lotZ, sb));
 
+                } else if (r == forgeRow && c == forgeCol) {
+                    int lotX = baseX - lot / 2;
+                    int lotZ = baseZ - lot / 2;
+                    q.addAll(SpecialBuildings.buildForge(lotX, baseY + 1, lotZ, sb));
+
                 } else if (roll < 0.50) {                     // petite maison
                     int size = smallSize;
                     int lotX = baseX - size / 2;
@@ -90,7 +97,7 @@ public final class Disposition {
                             wallLogs, wallPlanks, roofPalette,
                             sb, random, villageId));
 
-                } else if (roll < 0.70) {              // grande maison
+                } else if (roll < 0.65) {              // grande maison
                     int size = bigSize;
                     int lotX = baseX - size / 2;
                     int lotZ = baseZ - size / 2;
@@ -101,24 +108,23 @@ public final class Disposition {
                             wallLogs, wallPlanks, roofPalette,
                             sb, random, villageId));
 
-                } else if (roll < 0.85) {
+                } else if (roll < 0.80) {              // fermes
                     int lotX = baseX - lot / 2;
                     int lotZ = baseZ - lot / 2;
                     q.addAll(HouseBuilder.buildFarm(
                             new Location(center.getWorld(), lotX, baseY + 1, lotZ),
                             cropSeeds, sb, random));
 
-                } else if (roll < 0.95) {
+                } else if (roll < 0.90) {              // enclos
                     int lotX = baseX - lot / 2;
                     int lotZ = baseZ - lot / 2;
                     q.addAll(HouseBuilder.buildPen(
                             plugin,
                             new Location(center.getWorld(), lotX, baseY + 1, lotZ),
                             villageId, sb));
-                } else {
+                } else {                                 // lot libre
                     int lotX = baseX - lot / 2;
                     int lotZ = baseZ - lot / 2;
-                    /* NOUVEAU : lot laissé libre = lampadaire central pour la lumière */
                     q.addAll(HouseBuilder.buildLampPost(lotX, baseY + 1, lotZ, sb));
                 }
             }

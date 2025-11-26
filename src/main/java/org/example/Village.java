@@ -140,12 +140,10 @@ public final class Village implements CommandExecutor {
         );
         /* mix chemin/pavés (duplication = pondération) */
         List<Material> roadPalette = Arrays.asList(
-                Material.DIRT_PATH, Material.DIRT_PATH, Material.DIRT_PATH,
+                Material.DIRT_PATH, Material.DIRT_PATH, Material.DIRT_PATH, Material.DIRT_PATH, Material.DIRT_PATH,
+                Material.COARSE_DIRT, Material.COARSE_DIRT,
                 Material.GRAVEL, Material.GRAVEL,
-                Material.COARSE_DIRT,
-                Material.STONE_BRICKS, Material.STONE_BRICKS, Material.STONE_BRICKS,
-                Material.CRACKED_STONE_BRICKS,
-                Material.MOSSY_STONE_BRICKS
+                Material.COBBLESTONE
         );
         List<Material> cropPalette = List.of(
                 Material.WHEAT_SEEDS,
@@ -217,7 +215,7 @@ public final class Village implements CommandExecutor {
         todo.add(() -> GateGuardManager.ensureGuards(plugin, gateAnchor, villageId));
 
         /* population initiale + cap */
-        int ttlTicks = 20 * 60 * 60; // 1h
+        int ttlTicks = 20 * 60 * 30; // 30 min
         todo.add(() -> VillageEntityManager.spawnInitial(plugin, villageCenter, villageId, ttlTicks));
 
         /* maire */
@@ -375,19 +373,16 @@ public final class Village implements CommandExecutor {
             }
         return a;
     }
-    /** Chemins 60 %, pavés 40 %. */
     private Material pickRoadMaterial() {
         double roll = rng.nextDouble();
-        if (roll < 0.4) {
-            double sub = rng.nextDouble();
-            if (sub < 0.7) return Material.STONE_BRICKS;
-            if (sub < 0.85) return Material.CRACKED_STONE_BRICKS;
-            return Material.MOSSY_STONE_BRICKS;
-        } else {
-            double sub = rng.nextDouble();
-            if (sub < 0.6) return Material.DIRT_PATH;
-            if (sub < 0.85) return Material.GRAVEL;
+        if (roll < 0.55) {
+            return Material.DIRT_PATH;
+        } else if (roll < 0.75) {
             return Material.COARSE_DIRT;
+        } else if (roll < 0.90) {
+            return Material.GRAVEL;
+        } else {
+            return Material.COBBLESTONE;
         }
     }
 
