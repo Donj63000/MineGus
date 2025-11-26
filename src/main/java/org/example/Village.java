@@ -32,7 +32,7 @@ public final class Village implements CommandExecutor {
     /* ────────────────────────── QUOTAS / CONSTANTES ────────────────────────── */
     private static final int VIL_SPAWNERS   = 4;   // exactement 4 spawners PNJ
     private static final int GOLEM_SPAWNERS = 2;   // deux générateurs de golems
-    private static final int NPC_CAP        = 100; // plafond global pour éviter le lag
+    private static final int NPC_CAP        = 40;  // plafond global pour éviter le lag
     private static final int WALL_GAP       = 6;   // espace maisons ↔ muraille
     /* ───────────────────────────────────────────────────────────────────────── */
 
@@ -120,13 +120,38 @@ public final class Village implements CommandExecutor {
         int grid   = houseW + spacing;
         int baseY  = center.getBlockY();
 
-        /* palette « route pierre taillée » + éclairage incrusté */
-        final List<Material> roadPalette = List.of(
-                Material.STONE_BRICKS,          // ~80 %
-                Material.MOSSY_STONE_BRICKS,    // ~5 %
-                Material.CRACKED_STONE_BRICKS,  // ~5 %
-                Material.CHISELED_STONE_BRICKS, // ~5 %
-                Material.SEA_LANTERN           // ~5 %
+        /* palettes variées pour les maisons et routes */
+        List<Material> wallLogs = List.of(
+                Material.OAK_LOG,
+                Material.SPRUCE_LOG,
+                Material.BIRCH_LOG,
+                Material.DARK_OAK_LOG
+        );
+        List<Material> wallPlanks = List.of(
+                Material.OAK_PLANKS,
+                Material.SPRUCE_PLANKS,
+                Material.BIRCH_PLANKS,
+                Material.DARK_OAK_PLANKS
+        );
+        List<Material> roofPalette = List.of(
+                Material.SPRUCE_STAIRS,
+                Material.DARK_OAK_STAIRS,
+                Material.BRICK_STAIRS
+        );
+        /* mix chemin/pavés (duplication = pondération) */
+        List<Material> roadPalette = Arrays.asList(
+                Material.DIRT_PATH, Material.DIRT_PATH, Material.DIRT_PATH,
+                Material.GRAVEL, Material.GRAVEL,
+                Material.COARSE_DIRT,
+                Material.STONE_BRICKS, Material.STONE_BRICKS, Material.STONE_BRICKS,
+                Material.CRACKED_STONE_BRICKS,
+                Material.MOSSY_STONE_BRICKS
+        );
+        List<Material> cropPalette = List.of(
+                Material.WHEAT_SEEDS,
+                Material.CARROT,
+                Material.POTATO,
+                Material.BEETROOT_SEEDS
         );
 
         /* aucun spawner dans les maisons */
@@ -168,13 +193,14 @@ public final class Village implements CommandExecutor {
                 center,
                 rows, cols, baseY,
                 houseSmall, houseBig, spacing, roadHalf,
-                List.of(Material.OAK_LOG),
-                List.of(Material.OAK_PLANKS),
-                List.of(Material.OAK_STAIRS),
+                wallLogs,
+                wallPlanks,
+                roofPalette,
                 roadPalette,
-                List.of(Material.WHEAT_SEEDS),
+                cropPalette,
                 todo,
                 (x, y, z, m) -> setBlockTracked(w, x, y, z, m),
+                rng,
                 rng.nextInt());
 
         /* lampadaires de carrefour */
@@ -190,6 +216,10 @@ public final class Village implements CommandExecutor {
                         (x, y, z, m) -> setBlockTracked(w, x, y, z, m)));
         todo.add(() -> GateGuardManager.ensureGuards(plugin, gateAnchor, villageId));
 
+        /* population initiale + cap */
+        int ttlTicks = 20 * 60 * 60; // 1h
+        todo.add(() -> VillageEntityManager.spawnInitial(plugin, villageCenter, villageId, ttlTicks));
+
         /* maire */
         todo.add(() -> spawnVillager(w, center.clone().add(1, 1, 1), "Maire"));
 
@@ -204,9 +234,6 @@ public final class Village implements CommandExecutor {
 
         /* exécution asynchrone (250 blocs / tick) */
         buildActionsInBatches(todo, 250);
-
-        /* quota NPC global */
-        VillageEntityManager.startCapTask(plugin, villageCenter, NPC_CAP);
     }
 
     /* ====================== I/O BLOCS TRACKÉS ====================== */
@@ -348,14 +375,20 @@ public final class Village implements CommandExecutor {
             }
         return a;
     }
-    /** 80 % pierre taillée, 15 % variantes, 5 % lanterne. */
+    /** Chemins 60 %, pavés 40 %. */
     private Material pickRoadMaterial() {
-        int v = rng.nextInt(100);
-        return v < 5  ? Material.SEA_LANTERN
-                : v < 20 ? Material.CHISELED_STONE_BRICKS
-                : v < 35 ? Material.CRACKED_STONE_BRICKS
-                : v < 50 ? Material.MOSSY_STONE_BRICKS
-                : Material.STONE_BRICKS;
+        double roll = rng.nextDouble();
+        if (roll < 0.4) {
+            double sub = rng.nextDouble();
+            if (sub < 0.7) return Material.STONE_BRICKS;
+            if (sub < 0.85) return Material.CRACKED_STONE_BRICKS;
+            return Material.MOSSY_STONE_BRICKS;
+        } else {
+            double sub = rng.nextDouble();
+            if (sub < 0.6) return Material.DIRT_PATH;
+            if (sub < 0.85) return Material.GRAVEL;
+            return Material.COARSE_DIRT;
+        }
     }
 
     /* -------------------------- Lampadaires de croisement -------------------------- */

@@ -25,12 +25,13 @@ public final class Disposition {
                                     List<Material> cropSeeds,
                                     Queue<Runnable> tasks,
                                     TerrainManager.SetBlock sb,
+                                    Random rng,
                                     int villageId) {
 
         scheduleLayout(plugin, center, rows, cols, baseY, villageId,
                 smallSize, bigSize, spacing, roadHalf,
                 roadPalette, roofPalette, wallLogs, wallPlanks, cropSeeds,
-                tasks, sb);
+                tasks, sb, rng);
     }
 
     /* ------------------------------------------------------------------ */
@@ -44,13 +45,17 @@ public final class Disposition {
                                        List<Material> wallLogs,     List<Material> wallPlanks,
                                        List<Material> cropSeeds,
                                        Queue<Runnable> q,
-                                       TerrainManager.SetBlock sb) {
+                                       TerrainManager.SetBlock sb,
+                                       Random rng) {
 
         int lot  = smallSize;                // largeur standard d’une maison
         int grid = lot + spacing;            // centre-à-centre (lot + rue)
         int cx   = center.getBlockX();       // repère 0,0 = centre de la place
         int cz   = center.getBlockZ();
-        Random rng  = new Random();
+        Random random  = rng != null ? rng : new Random();
+
+        int churchRow = 0;
+        int churchCol = cols / 2;
 
         /* --- grille routes + lots --- */
         for (int r = 0; r < rows; r++) {
@@ -66,18 +71,24 @@ public final class Disposition {
                         baseZ - roadHalf, baseZ + roadHalf, sb);
 
                 /* 2) choix bâtiment sur le lot */
-                double roll = rng.nextDouble();
+                double roll = random.nextDouble();
 
-                if (roll < 0.50) {                     // petite maison
+                if (r == churchRow && c == churchCol) {
+                    int lotX = baseX - lot / 2;
+                    int lotZ = baseZ - lot / 2;
+                    q.addAll(SpecialBuildings.buildChurch(
+                            lotX, baseY + 1, lotZ, sb));
+
+                } else if (roll < 0.50) {                     // petite maison
                     int size = smallSize;
                     int lotX = baseX - size / 2;
                     int lotZ = baseZ - size / 2;
                     q.addAll(HouseBuilder.buildHouse(
                             plugin,
                             new Location(center.getWorld(), lotX, baseY + 1, lotZ),
-                            size, rng.nextInt(4),
+                            size, random.nextInt(4),
                             wallLogs, wallPlanks, roofPalette,
-                            sb, rng, villageId));
+                            sb, random, villageId));
 
                 } else if (roll < 0.70) {              // grande maison
                     int size = bigSize;
@@ -86,17 +97,24 @@ public final class Disposition {
                     q.addAll(HouseBuilder.buildHouse(
                             plugin,
                             new Location(center.getWorld(), lotX, baseY + 1, lotZ),
-                            size, rng.nextInt(4),
+                            size, random.nextInt(4),
                             wallLogs, wallPlanks, roofPalette,
-                            sb, rng, villageId));
+                            sb, random, villageId));
 
                 } else if (roll < 0.85) {
                     int lotX = baseX - lot / 2;
                     int lotZ = baseZ - lot / 2;
                     q.addAll(HouseBuilder.buildFarm(
                             new Location(center.getWorld(), lotX, baseY + 1, lotZ),
-                            cropSeeds, sb));
+                            cropSeeds, sb, random));
 
+                } else if (roll < 0.95) {
+                    int lotX = baseX - lot / 2;
+                    int lotZ = baseZ - lot / 2;
+                    q.addAll(HouseBuilder.buildPen(
+                            plugin,
+                            new Location(center.getWorld(), lotX, baseY + 1, lotZ),
+                            villageId, sb));
                 } else {
                     int lotX = baseX - lot / 2;
                     int lotZ = baseZ - lot / 2;

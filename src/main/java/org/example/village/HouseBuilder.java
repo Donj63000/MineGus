@@ -142,10 +142,11 @@ public final class HouseBuilder {
     /* -------------------------------------------------------------- */
     public static List<Runnable> buildFarm(Location base,
                                            List<Material> crops,
-                                           TerrainManager.SetBlock sb) {
+                                           TerrainManager.SetBlock sb,
+                                           Random rng) {
 
         List<Runnable> l = new ArrayList<>();
-        Random R = new Random();
+        Random R = rng != null ? rng : new Random();
         final int ox = base.getBlockX(), oy = base.getBlockY(), oz = base.getBlockZ();
 
         /* cadre 9 × 9 en troncs */
@@ -171,6 +172,7 @@ public final class HouseBuilder {
                         case WHEAT_SEEDS -> Material.WHEAT;
                         case CARROT      -> Material.CARROTS;
                         case POTATO      -> Material.POTATOES;
+                        case BEETROOT_SEEDS -> Material.BEETROOTS;
                         default          -> Material.WHEAT;
                     };
                     l.add(() -> sb.set(fx, oy + 1, fz, plant));
@@ -264,7 +266,7 @@ public final class HouseBuilder {
         final int  wallHeight = (size <= 7 ? 4 : 5);
         final Material fundMat   = Material.STONE_BRICKS;
         final Material windowMat = Material.GLASS;
-        final Material roofMat   = Material.STONE_BRICKS;
+        final Material roofMat   = pickRandom(roofs, rng, Material.STONE_BRICKS);
         final Material floorMat  = planks.get(rng.nextInt(planks.size()));
         final Material logMat    = logs.get(rng.nextInt(logs.size()));
         final Material wallMat   = planks.get(rng.nextInt(planks.size()));
@@ -345,11 +347,8 @@ public final class HouseBuilder {
         tasks.add(() -> sb.set(cx, oy + wallHeight + 1, cz, Material.CHAIN));
         tasks.add(() -> sb.set(cx, oy + wallHeight    , cz, Material.LANTERN));
 
-        /* 6) mobilier de base */
-        int[] chestL = rotate(1, 1, rot);
-        tasks.add(() -> sb.set(ox + chestL[0], oy + 1, oz + chestL[1], Material.CHEST));
-        int[] craftL = rotate(size - 2, 1, rot);
-        tasks.add(() -> sb.set(ox + craftL[0], oy + 1, oz + craftL[1], Material.CRAFTING_TABLE));
+        /* 6) mobilier plus riche */
+        tasks.addAll(furnishHouse(ox, oy, oz, size, rot, sb));
 
         return tasks;
     }
@@ -382,5 +381,54 @@ public final class HouseBuilder {
             case 270 -> new int[]{-dz,  dx};
             default  -> new int[]{ dx,  dz};
         };
+    }
+
+    private static Material pickRandom(List<Material> mats, Random rng, Material fallback) {
+        if (mats == null || mats.isEmpty()) {
+            return fallback;
+        }
+        Random r = rng != null ? rng : new Random();
+        return mats.get(r.nextInt(mats.size()));
+    }
+
+    private static List<Runnable> furnishHouse(int ox, int oy, int oz, int size, int rot, TerrainManager.SetBlock sb) {
+        List<Runnable> tasks = new ArrayList<>();
+        int floorY = oy + 1;
+
+        int innerMin = 1;
+        int innerMax = size - 2;
+
+        /* table centrale + chaises (stairs par défaut) */
+        int[] centre = rotate(size / 2, size / 2, rot);
+        int cx = ox + centre[0];
+        int cz = oz + centre[1];
+        tasks.add(() -> sb.set(cx, floorY, cz, Material.OAK_SLAB));
+        tasks.add(() -> sb.set(cx + 1, floorY, cz, Material.OAK_STAIRS));
+        tasks.add(() -> sb.set(cx - 1, floorY, cz, Material.OAK_STAIRS));
+        tasks.add(() -> sb.set(cx, floorY, cz + 1, Material.OAK_STAIRS));
+        tasks.add(() -> sb.set(cx, floorY, cz - 1, Material.OAK_STAIRS));
+
+        /* coin repos (laine = lit simplifié pour rester compatible SetBlock) */
+        int bedX = ox + rotate(innerMin, innerMin, rot)[0];
+        int bedZ = oz + rotate(innerMin, innerMin, rot)[1];
+        tasks.add(() -> sb.set(bedX, floorY, bedZ, Material.WHITE_WOOL));
+        tasks.add(() -> sb.set(bedX, floorY + 1, bedZ, Material.WHITE_WOOL));
+
+        /* coin cuisine */
+        int[] furnaceL = rotate(innerMax, innerMin, rot);
+        tasks.add(() -> sb.set(ox + furnaceL[0], floorY, oz + furnaceL[1], Material.FURNACE));
+        int[] craftingL = rotate(innerMax, innerMin + 1, rot);
+        tasks.add(() -> sb.set(ox + craftingL[0], floorY, oz + craftingL[1], Material.CRAFTING_TABLE));
+
+        /* coffre + déco */
+        int[] chestL = rotate(innerMin, innerMax, rot);
+        tasks.add(() -> sb.set(ox + chestL[0], floorY, oz + chestL[1], Material.CHEST));
+        tasks.add(() -> sb.set(ox + chestL[0], floorY + 1, oz + chestL[1], Material.FLOWER_POT));
+
+        /* éclairage mural */
+        tasks.add(() -> sb.set(cx, floorY + 2, oz + innerMin, Material.WALL_TORCH));
+        tasks.add(() -> sb.set(cx, floorY + 2, oz + innerMax, Material.WALL_TORCH));
+
+        return tasks;
     }
 }

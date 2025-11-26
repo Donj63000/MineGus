@@ -18,7 +18,7 @@ public final class VillageEntityManager {
     private VillageEntityManager() {}
 
     /* ====== Quota global ====== */
-    private static final int DEFAULT_CAP = 100;
+    private static final int DEFAULT_CAP = 40;
 
     /* professions « génériques » utilisées pour la population de base */
     private static final List<Villager.Profession> GENERIC = List.of(
