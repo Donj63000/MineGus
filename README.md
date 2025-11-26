@@ -3,13 +3,13 @@
 Plugin Paper pour Minecraft 1.21.4 qui automatise diverses tâches (minage, agriculture, forêt, élevage, etc.). Projet en bêta, expérimental, pensé pour de petits serveurs entre amis.
 
 ## Prérequis
-- Java 21 (OpenJDK/Temurin). Vérifier: `java -version`
+- Java 17 (OpenJDK/Temurin). Vérifier: `java -version`
 - Maven 3.9+ (ou 3.x). Vérifier: `mvn -v`
 - Serveur Paper 1.21.4
 - IDE recommandé: IntelliJ IDEA, encodage projet en UTF‑8
 
 Notes:
-- Assurez‑vous que `JAVA_HOME` pointe vers une JDK 21 et que `java`/`mvn` sont dans le `PATH`.
+- Assurez‑vous que `JAVA_HOME` pointe vers une JDK 17 et que `java`/`mvn` sont dans le `PATH`.
 - Mémoire serveur conseillée ≥ 2 Go pour les tests locaux.
 
 ## Compilation du plugin
@@ -25,13 +25,11 @@ Notes:
 
 ## Configuration
 Après le premier démarrage, éditez `plugins/MinePlugin/config.yml` :
-- limites d’animaux et temps de recharge pour `/eleveur` ;
-- prix en émeraudes des piles vendues ;
-- chance d’obtenir de la viande cuite ;
-- taille des maisons/grille du village pour `/village` ;
-- marge par défaut autour de la muraille.
+- `/mineur` : `stop-at-y` (Y cible), `default.pattern`, `default.speed`, `default.supports-every`, `default.torch-layers`, `default.use-barrel-master`, `branch.spacing`, `branch.gallery-width`, `limits.max-sessions-per-player`, `economy.*`.
+- `/eleveur` : limites d’animaux, temps de recharge, chances de loot cuit, prix en émeraudes.
+- `/village` : tailles des maisons/grille (`houseSmall`, `houseBig`, `roadHalf`, `spacing`, `plazaSize`, `rows`, `cols`, `wallGap`).
 
-La section `village` expose notamment `houseSmall`, `houseBig`, `roadHalf`, `spacing`, `plazaSize`, `rows`, `cols`, `wallGap`. Le fichier de référence est `src/main/resources/config.yml` (ne modifiez pas celui‑ci, utilisez la copie dans `plugins/MinePlugin/`).
+Référence par défaut : `src/main/resources/config.yml`. Modifiez seulement la copie dans `plugins/MinePlugin/`.
 
 ## Mode en jeu
 1. Connectez‑vous (opérateur) et tapez `/ping` pour vérifier le chargement.
@@ -44,7 +42,7 @@ La section `village` expose notamment `houseSmall`, `houseBig`, `roadHalf`, `spa
 |-------------|-------------------------------------------------------------------|
 | `/ping`     | Vérifie que le plugin répond (renvoie « Pong! »).                 |
 | `/army`     | Invoque temporairement 5 loups et 2 golems protecteurs.           |
-| `/mineur`   | Lance un mineur automatique dans une zone sélectionnée.           |
+| `/mineur`   | Lance un mineur automatique : carrière jusqu’à `stop-at-y`, puis tunnel infini 10×10. |
 | `/champ`    | Crée un champ agricole automatisé.                                |
 | `/foret`    | Met en place une forêt avec récolte et replantation automatiques. |
 | `/village`  | Génère un petit village complet près du joueur.                   |
@@ -52,7 +50,8 @@ La section `village` expose notamment `houseSmall`, `houseBig`, `roadHalf`, `spa
 | `/armure`   | Donne l’armure légendaire du roi GIDON.                           |
 
 ## Détails des commandes (aperçu)
-- `/mineur`, `/champ`, `/foret`, `/eleveur` : utilisez le bâton « Sélecteur » (clic gauche/droit) pour définir deux coins au même niveau, des PNJ et coffres sont générés, et l’activité est automatisée.
+- `/mineur` : bâton « Sélecteur » (2 clics même Y) pour définir la zone. Par défaut : pattern `QUARRY` qui creuse la carrière jusqu’à `stop-at-y`, puis bascule automatiquement en tunnel infini 10×10 (largeur/hauteur) dans une direction aléatoire. Un bloc de repère est posé sur la paroi tous les 5 blocs de profondeur, 2 golems de garde et un PNJ mineur sont présents. Changer le pattern via `/mineur pattern ...` désactive le chaînage auto.
+- `/champ`, `/foret`, `/eleveur` : bâton « Sélecteur » (clic gauche/droit) pour définir deux coins au même niveau, des PNJ et coffres sont générés, et l’activité est automatisée.
 - `/army` : protections temporaires (loups + golems) pendant quelques minutes.
 
 ## Persistance des données
@@ -84,14 +83,14 @@ Les fonctionnalités sauvegardent leurs informations (YAML) dans `plugins/MinePl
 ## Développement
 - Construire : `mvn -q package` (JAR dans `target/`). Tests optionnels : `mvn -q test` (JUnit 5 sous `src/test/java/`).
 - Lancer localement : copier le JAR dans `plugins/` d’un serveur Paper 1.21.4 puis démarrer le serveur.
-- Style : Java 21, 4 espaces, accolades sur la même ligne, classes `PascalCase`, méthodes/champs `camelCase`, constantes `UPPER_SNAKE_CASE`.
+- Style : Java 17, 4 espaces, accolades sur la même ligne, classes `PascalCase`, méthodes/champs `camelCase`, constantes `UPPER_SNAKE_CASE`.
 - Commits : français, présent, concis (ex. « Ajoute collecte du champ »). Ne modifiez jamais `target/*.jar`.
 - Voir `AGENTS.md` pour des consignes plus détaillées.
 
 ## Guide développeur (amélioré)
 
 ### Développement rapide
-- Cloner, utiliser Java 21, puis `mvn -q package` → JAR dans `target/`.
+- Cloner, utiliser Java 17, puis `mvn -q package` → JAR dans `target/`.
 - Tester localement: copier le JAR dans `plugins/` d’un Paper 1.21.4 et démarrer.
 
 ### Workflow de contribution

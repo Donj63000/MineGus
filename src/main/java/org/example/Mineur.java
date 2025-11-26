@@ -56,6 +56,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.ThreadLocalRandom;
 
 public class Mineur implements CommandExecutor, Listener {
 
@@ -194,6 +195,18 @@ public class Mineur implements CommandExecutor, Listener {
         state.pattern = getDefaultPattern();
         state.speed = getDefaultSpeed();
 
+        // Mode "mineur complet" : carrière puis tunnel infini
+        if (state.pattern == MiningPattern.QUARRY) {
+            state.chainTunnelAfterQuarry = true;
+        } else {
+            state.chainTunnelAfterQuarry = false;
+        }
+        state.infiniteTunnel = false;
+        state.tunnelDirection = BlockFace.SOUTH;
+        state.tunnelSectionSize = 10;
+        state.tunnelSectionsMined = 0;
+        state.maxTunnelSections = 0;
+
         selections.remove(ownerId);
 
         sessions.add(state);
@@ -249,11 +262,15 @@ public class Mineur implements CommandExecutor, Listener {
             return;
         }
 
-        if (pattern == MiningPattern.TUNNEL || pattern == MiningPattern.VEIN_FIRST) {
+        if (pattern == MiningPattern.VEIN_FIRST) {
             player.sendMessage(CMD_PREFIX + ChatColor.YELLOW + "Ce pattern n'est pas encore implémenté, QUARRY sera utilisé à la place.");
         }
 
         state.pattern = pattern;
+
+        // Comportement manuel : pas de chaînage automatique
+        state.chainTunnelAfterQuarry = false;
+        state.infiniteTunnel = false;
         saveAllSessions();
         player.sendMessage(CMD_PREFIX + ChatColor.GREEN + "Pattern défini sur " + pattern.name().toLowerCase(Locale.ROOT) + ".");
 
@@ -845,7 +862,142 @@ public class Mineur implements CommandExecutor, Listener {
                 return true;
             }
         }
+
+        if (state.pattern == MiningPattern.QUARRY && state.chainTunnelAfterQuarry) {
+            if (initializeTunnelPhase(state)) {
+                return true;
+            }
+        }
+
+        if (state.pattern == MiningPattern.TUNNEL && state.infiniteTunnel) {
+            if (extendTunnelSection(state)) {
+                return true;
+            }
+        }
+
         return false;
+    }
+
+    /**
+     * Initialise le tunnel infini une fois la carrière terminée.
+     * On place un premier tronçon 10x10 au fond de la carrière,
+     * collé sur un côté, dans une direction aléatoire.
+     */
+    private boolean initializeTunnelPhase(MiningSessionState state) {
+        World world = state.base != null ? state.base.getWorld() : null;
+        if (world == null) {
+            return false;
+        }
+
+        int tunnelSize = 10;
+
+        int stopY = getStopY();
+        int tunnelY = Math.max(world.getMinHeight(), stopY);
+
+        int centerX = state.base.getBlockX() + Math.max(state.width, 1) / 2;
+        int centerZ = state.base.getBlockZ() + Math.max(state.length, 1) / 2;
+
+        BlockFace[] faces = {
+                BlockFace.NORTH,
+                BlockFace.SOUTH,
+                BlockFace.EAST,
+                BlockFace.WEST
+        };
+        BlockFace face = faces[ThreadLocalRandom.current().nextInt(faces.length)];
+
+        int minX;
+        int minZ;
+
+        switch (face) {
+            case NORTH -> {
+                minX = centerX - tunnelSize / 2;
+                minZ = state.base.getBlockZ() - tunnelSize;
+            }
+            case SOUTH -> {
+                minX = centerX - tunnelSize / 2;
+                minZ = state.base.getBlockZ() + state.length;
+            }
+            case WEST -> {
+                minX = state.base.getBlockX() - tunnelSize;
+                minZ = centerZ - tunnelSize / 2;
+            }
+            case EAST -> {
+                minX = state.base.getBlockX() + state.width;
+                minZ = centerZ - tunnelSize / 2;
+            }
+            default -> {
+                minX = centerX - tunnelSize / 2;
+                minZ = state.base.getBlockZ() + state.length;
+            }
+        }
+
+        Location tunnelBase = new Location(world, minX, tunnelY, minZ);
+
+        // On garde state.base pour la carrière initiale,
+        // on ne change que le curseur et le pattern.
+        state.cursor = new MiningCursor(tunnelBase, tunnelSize, tunnelSize);
+        int topY = Math.min(world.getMaxHeight() - 1, tunnelY + tunnelSize - 1);
+        state.cursor.y = topY;
+        state.minerY = tunnelY;
+        state.pattern = MiningPattern.TUNNEL;
+        state.chainTunnelAfterQuarry = false;
+        state.infiniteTunnel = true;
+        state.tunnelDirection = face;
+        state.tunnelSectionSize = tunnelSize;
+        state.tunnelSectionsMined = 0;
+        state.maxTunnelSections = 0;
+
+        saveAllSessions();
+        return true;
+    }
+
+    /**
+     * Prolonge le tunnel infini en ajoutant une nouvelle section 10x10
+     * dans la même direction que la précédente.
+     *
+     * @return true si une nouvelle section a été créée, false sinon.
+     */
+    private boolean extendTunnelSection(MiningSessionState state) {
+        if (state.cursor == null || state.tunnelDirection == null) {
+            return false;
+        }
+
+        World world = state.base != null ? state.base.getWorld() : null;
+        if (world == null) {
+            return false;
+        }
+
+        if (state.maxTunnelSections > 0
+                && state.tunnelSectionsMined >= state.maxTunnelSections) {
+            state.infiniteTunnel = false;
+            saveAllSessions();
+            return false;
+        }
+
+        int section = state.tunnelSectionSize > 0 ? state.tunnelSectionSize : 10;
+
+        int x = state.cursor.minX;
+        int y = Math.max(world.getMinHeight(), getStopY());
+        int z = state.cursor.minZ;
+
+        switch (state.tunnelDirection) {
+            case NORTH -> z -= section;
+            case SOUTH -> z += section;
+            case WEST -> x -= section;
+            case EAST -> x += section;
+            default -> z += section;
+        }
+
+        Location newBase = new Location(world, x, y, z);
+
+        // Nouvelle section alignée sur la précédente
+        state.cursor = new MiningCursor(newBase, section, section);
+        int topY = Math.min(world.getMaxHeight() - 1, y + section - 1);
+        state.cursor.y = topY;
+        state.tunnelSectionsMined++;
+
+        saveAllSessions();
+        return true;
     }
 
     private void stopSession(UUID sessionId, boolean removeState, Player issuer) {
@@ -1023,6 +1175,7 @@ public class Mineur implements CommandExecutor, Listener {
         private final int torchX;
         private final int torchSupportZ;
         private final BlockFace torchFacing = BlockFace.SOUTH;
+        private final int depthMarkerInterval = 5;
         private int minedBlocks = 0;
         private int blocksInLayer = 0;
         private int completedLayers = 0;
@@ -1054,6 +1207,9 @@ public class Mineur implements CommandExecutor, Listener {
             if (block.getY() < currentLayerY) {
                 currentLayerY = block.getY();
                 extendAccessLadder(block.getWorld(), currentLayerY);
+                if (shouldPlaceDepthMarker(currentLayerY)) {
+                    placeDepthMarker(block.getWorld(), currentLayerY);
+                }
             }
             if (blocksInLayer >= layerBlockCount) {
                 blocksInLayer = 0;
@@ -1106,6 +1262,21 @@ public class Mineur implements CommandExecutor, Listener {
             ensureSupportBlock(world, torchX, y, torchSupportZ);
             Block support = world.getBlockAt(torchX, y, torchSupportZ);
             TorchPlacer.placeWallTorch(world, support, torchFacing);
+        }
+
+        private boolean shouldPlaceDepthMarker(int y) {
+            if (depthMarkerInterval <= 0) {
+                return false;
+            }
+            int delta = state.base.getBlockY() - y;
+            return delta > 0 && delta % depthMarkerInterval == 0;
+        }
+
+        private void placeDepthMarker(World world, int y) {
+            if (world == null) {
+                return;
+            }
+            ensureSupportBlock(world, torchX, y, torchSupportZ);
         }
 
         private void ensureSupportBlock(World world, int x, int y, int z) {

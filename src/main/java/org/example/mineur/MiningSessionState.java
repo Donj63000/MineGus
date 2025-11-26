@@ -2,6 +2,7 @@ package org.example.mineur;
 
 import org.bukkit.Location;
 import org.bukkit.World;
+import org.bukkit.block.BlockFace;
 import org.bukkit.util.Vector;
 
 import java.util.ArrayList;
@@ -35,6 +36,16 @@ public final class MiningSessionState {
     public boolean waitingStorage = false;
     public final Set<UUID> trusted = new HashSet<>();
 
+    // Mode "carrière puis tunnel"
+    public boolean chainTunnelAfterQuarry = false;
+
+    // Tunnel infini : paramètres
+    public boolean infiniteTunnel = false;
+    public BlockFace tunnelDirection = BlockFace.SOUTH;
+    public int tunnelSectionSize = 10;
+    public int tunnelSectionsMined = 0;
+    public int maxTunnelSections = 0;
+
     public Map<String, Object> toMap() {
         Map<String, Object> map = new LinkedHashMap<>();
         map.put("id", id.toString());
@@ -55,6 +66,12 @@ public final class MiningSessionState {
         map.put("useBarrelMaster", useBarrelMaster);
         map.put("paused", paused);
         map.put("waitingStorage", waitingStorage);
+        map.put("chainTunnelAfterQuarry", chainTunnelAfterQuarry);
+        map.put("infiniteTunnel", infiniteTunnel);
+        map.put("tunnelDirection", tunnelDirection != null ? tunnelDirection.name() : null);
+        map.put("tunnelSectionSize", tunnelSectionSize);
+        map.put("tunnelSectionsMined", tunnelSectionsMined);
+        map.put("maxTunnelSections", maxTunnelSections);
         List<String> trustedList = new ArrayList<>();
         for (UUID uuid : trusted) {
             trustedList.add(uuid.toString());
@@ -107,6 +124,30 @@ public final class MiningSessionState {
         state.paused = pausedObj instanceof Boolean b ? b : false;
         Object waitingObj = map.get("waitingStorage");
         state.waitingStorage = waitingObj instanceof Boolean b ? b : false;
+        Object chainObj = map.get("chainTunnelAfterQuarry");
+        state.chainTunnelAfterQuarry = chainObj instanceof Boolean b ? b : false;
+        Object infiniteObj = map.get("infiniteTunnel");
+        state.infiniteTunnel = infiniteObj instanceof Boolean b ? b : false;
+        Object dirObj = map.get("tunnelDirection");
+        if (dirObj instanceof String s && s != null) {
+            try {
+                state.tunnelDirection = BlockFace.valueOf(s);
+            } catch (IllegalArgumentException ex) {
+                // Keep default direction
+            }
+        }
+        Object sizeObj = map.get("tunnelSectionSize");
+        if (sizeObj instanceof Number n) {
+            state.tunnelSectionSize = n.intValue();
+        }
+        Object minedObj = map.get("tunnelSectionsMined");
+        if (minedObj instanceof Number n) {
+            state.tunnelSectionsMined = n.intValue();
+        }
+        Object maxObj = map.get("maxTunnelSections");
+        if (maxObj instanceof Number n) {
+            state.maxTunnelSections = n.intValue();
+        }
         Object trustedObj = map.get("trusted");
         if (trustedObj instanceof List<?> list) {
             for (Object entry : list) {
