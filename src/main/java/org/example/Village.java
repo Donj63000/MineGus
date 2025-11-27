@@ -181,6 +181,9 @@ public final class Village implements CommandExecutor {
         /* place centrale */
         todo.addAll(buildPlaza(w, center.clone(), plazaSize));
 
+        /* stand du marchand (/marchand) */
+        todo.addAll(buildMerchantStand(w, center.clone(), plazaSize));
+
         /* routes quadrillées */
         todo.addAll(buildGridRoads(w, center, rows, cols, grid, roadHalf, baseY));
 
@@ -332,6 +335,74 @@ public final class Village implements CommandExecutor {
                 }
             });
         }
+        return a;
+    }
+
+    /**
+     * Construit un petit stand au bord sud de la place,
+     * et y spawne un PNJ configuré comme marchand (/marchand).
+     */
+    private List<Runnable> buildMerchantStand(World w, Location center, int size) {
+        List<Runnable> a = new ArrayList<>();
+
+        int baseY = center.getBlockY();
+        int half  = size / 2;
+
+        int cx = center.getBlockX();
+        int cz = center.getBlockZ() + half + 2;
+
+        int xMin = cx - 2;
+        int xMax = cx + 2;
+        int zMin = cz - 1;
+        int zMax = cz + 1;
+
+        for (int x = xMin; x <= xMax; x++) {
+            for (int z = zMin; z <= zMax; z++) {
+                final int fx = x, fz = z;
+                a.add(() -> setBlockTracked(w, fx, baseY, fz, Material.SPRUCE_PLANKS));
+            }
+        }
+
+        int[][] posts = {
+                {xMin, zMin},
+                {xMax, zMin},
+                {xMin, zMax},
+                {xMax, zMax}
+        };
+        for (int[] p : posts) {
+            int px = p[0];
+            int pz = p[1];
+            for (int dy = 1; dy <= 3; dy++) {
+                final int fx = px, fy = baseY + dy, fz = pz;
+                a.add(() -> setBlockTracked(w, fx, fy, fz, Material.SPRUCE_LOG));
+            }
+        }
+
+        for (int x = xMin; x <= xMax; x++) {
+            for (int z = zMin; z <= zMax; z++) {
+                final int fx = x, fz = z;
+                a.add(() -> setBlockTracked(w, fx, baseY + 4, fz, Material.SPRUCE_SLAB));
+            }
+        }
+
+        for (int x = xMin; x <= xMax; x++) {
+            if (x == cx) continue;
+            final int fx = x, fz = zMin;
+            a.add(() -> setBlockTracked(w, fx, baseY + 1, fz, Material.OAK_TRAPDOOR));
+        }
+
+        final double npcX = cx + 0.5;
+        final double npcY = baseY + 1;
+        final double npcZ = zMin + 1.5;
+
+        a.add(() -> {
+            Location npcLoc = new Location(w, npcX, npcY, npcZ);
+            Villager villager = (Villager) w.spawnEntity(npcLoc, EntityType.VILLAGER);
+
+            MinePlugin minePlugin = (MinePlugin) plugin;
+            minePlugin.getMerchantManager().prepareMerchantNpc(villager);
+        });
+
         return a;
     }
 

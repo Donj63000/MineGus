@@ -79,6 +79,7 @@ public final class MinePlugin extends JavaPlugin implements Listener {
     public Foret getForet() { return foret; }
     public Eleveur getEleveur() { return eleveur; }
     public JobManager getJobManager() { return jobManager; }
+    public MerchantManager getMerchantManager() { return merchantManager; }
 
 
     @Override

@@ -1,8 +1,11 @@
 package org.example.village;
 
 import org.bukkit.Location;
+import org.bukkit.Material;
 import org.bukkit.World;
 import org.bukkit.entity.*;
+import org.bukkit.inventory.ItemStack;
+import org.bukkit.inventory.MerchantRecipe;
 import org.bukkit.metadata.FixedMetadataValue;
 import org.bukkit.plugin.Plugin;
 import org.bukkit.scheduler.BukkitRunnable;
@@ -19,6 +22,9 @@ public final class VillageEntityManager {
 
     /* ====== Quota global ====== */
     private static final int DEFAULT_CAP = 40;
+
+    /** Nombre d'utilisations très élevé pour les trades des PNJ spéciaux. */
+    private static final int INFINITE_TRADES = 999999;
 
     /* professions « génériques » utilisées pour la population de base */
     private static final List<Villager.Profession> GENERIC = List.of(
@@ -47,10 +53,15 @@ public final class VillageEntityManager {
         }
 
         /* PNJ spécialisés */
-        spawnNamed(w, plugin, randAround(center), "§eMineur",      Villager.Profession.TOOLSMITH, villageId);
-        spawnNamed(w, plugin, randAround(center), "§6Bûcheron",    Villager.Profession.FLETCHER,  villageId);
-        spawnNamed(w, plugin, randAround(center), "§aAgriculteur", Villager.Profession.FARMER,    villageId);
+        Villager miner       = spawnNamed(w, plugin, randAround(center), "§eMineur",      Villager.Profession.TOOLSMITH, villageId);
+        Villager lumberjack  = spawnNamed(w, plugin, randAround(center), "§6Bûcheron",    Villager.Profession.FLETCHER,  villageId);
+        Villager farmer      = spawnNamed(w, plugin, randAround(center), "§aAgriculteur", Villager.Profession.FARMER,    villageId);
         spawnNamed(w, plugin, randAround(center), "§dÉleveur",     Villager.Profession.SHEPHERD,  villageId);
+
+        // configuration des boutiques
+        setupMinerTrades(miner);
+        setupLumberjackTrades(lumberjack);
+        setupFarmerTrades(farmer);
 
         /* 2 golems d’office */
         for (int i = 0; i < 2; i++) {
@@ -66,6 +77,76 @@ public final class VillageEntityManager {
 
         /* démarrage de la tâche « quota » (100 NPC max) */
         startCapTask(plugin, center, DEFAULT_CAP);
+    }
+
+    /**
+     * Crée un trade : X diamants -> item "result".
+     * Le joueur est volontairement gagnant dans l'échange.
+     */
+    private static MerchantRecipe diamondTrade(ItemStack result, int diamondCost) {
+        MerchantRecipe recipe = new MerchantRecipe(result, 0, INFINITE_TRADES, false, 0, 0.0f);
+        recipe.addIngredient(new ItemStack(Material.DIAMOND, diamondCost));
+        return recipe;
+    }
+
+    /**
+     * Boutique du Bûcheron : vend du bois contre des diamants.
+     */
+    private static void setupLumberjackTrades(Villager villager) {
+        if (villager == null) return;
+
+        List<MerchantRecipe> recipes = new ArrayList<>();
+
+        recipes.add(diamondTrade(new ItemStack(Material.OAK_LOG, 32), 1));
+        recipes.add(diamondTrade(new ItemStack(Material.SPRUCE_LOG, 32), 1));
+        recipes.add(diamondTrade(new ItemStack(Material.BIRCH_LOG, 32), 1));
+
+        recipes.add(diamondTrade(new ItemStack(Material.OAK_PLANKS, 64), 1));
+        recipes.add(diamondTrade(new ItemStack(Material.SPRUCE_PLANKS, 64), 1));
+        recipes.add(diamondTrade(new ItemStack(Material.BIRCH_PLANKS, 64), 1));
+
+        villager.setVillagerLevel(5);
+        villager.setRecipes(recipes);
+    }
+
+    /**
+     * Boutique de l'Agriculteur : vend de la nourriture contre des diamants.
+     */
+    private static void setupFarmerTrades(Villager villager) {
+        if (villager == null) return;
+
+        List<MerchantRecipe> recipes = new ArrayList<>();
+
+        recipes.add(diamondTrade(new ItemStack(Material.BREAD, 32), 1));
+
+        recipes.add(diamondTrade(new ItemStack(Material.COOKED_BEEF, 16), 1));
+        recipes.add(diamondTrade(new ItemStack(Material.COOKED_PORKCHOP, 16), 1));
+
+        recipes.add(diamondTrade(new ItemStack(Material.CARROT, 32), 1));
+        recipes.add(diamondTrade(new ItemStack(Material.POTATO, 32), 1));
+
+        recipes.add(diamondTrade(new ItemStack(Material.GOLDEN_CARROT, 16), 2));
+
+        villager.setVillagerLevel(5);
+        villager.setRecipes(recipes);
+    }
+
+    /**
+     * Boutique du Mineur : vend des minerais / ressources minières contre des diamants.
+     */
+    private static void setupMinerTrades(Villager villager) {
+        if (villager == null) return;
+
+        List<MerchantRecipe> recipes = new ArrayList<>();
+
+        recipes.add(diamondTrade(new ItemStack(Material.COAL, 64), 1));
+        recipes.add(diamondTrade(new ItemStack(Material.IRON_INGOT, 32), 1));
+        recipes.add(diamondTrade(new ItemStack(Material.GOLD_INGOT, 24), 2));
+        recipes.add(diamondTrade(new ItemStack(Material.REDSTONE, 48), 1));
+        recipes.add(diamondTrade(new ItemStack(Material.LAPIS_LAZULI, 32), 1));
+
+        villager.setVillagerLevel(5);
+        villager.setRecipes(recipes);
     }
 
     /* ------------------- TÂCHE QUOTA (100 NPC) ------------------- */
@@ -130,12 +211,13 @@ public final class VillageEntityManager {
         return c.clone().add(R.nextInt(10) - 5, 1, R.nextInt(10) - 5);
     }
 
-    private static void spawnNamed(World w, Plugin p, Location l,
-                                   String name, Villager.Profession prof, int id) {
+    private static Villager spawnNamed(World w, Plugin p, Location l,
+                                       String name, Villager.Profession prof, int id) {
         Villager v = (Villager) w.spawnEntity(l, EntityType.VILLAGER);
         v.setCustomName(name);
         v.setCustomNameVisible(true);
         v.setProfession(prof);
         tagEntity(v, p, id);
+        return v;
     }
 }

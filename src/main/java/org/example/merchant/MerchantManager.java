@@ -122,7 +122,7 @@ public final class MerchantManager implements CommandExecutor, Listener {
         player.sendMessage(ChatColor.GREEN + "Marchand invoqué. Clique-le pour échanger !");
     }
 
-    private void prepareMerchantNpc(Villager villager) {
+    public void prepareMerchantNpc(Villager villager) {
         PersistentDataContainer data = villager.getPersistentDataContainer();
         data.set(traderKey, PersistentDataType.STRING, merchantId);
         villager.setCustomName(merchantDisplayName);
