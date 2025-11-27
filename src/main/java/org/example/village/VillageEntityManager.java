@@ -60,12 +60,33 @@ public final class VillageEntityManager {
 
         MerchantInfo(int villageId, MerchantType type) {
             this.villageId = villageId;
-            this.type = type;
+            this.type = type; // conserver précisément le type passé
         }
     }
 
     private static void registerMerchant(Villager villager, int villageId, MerchantType type) {
         if (villager == null) return;
+
+        // supprime un marchand existant du même type dans ce village
+        Iterator<Map.Entry<UUID, MerchantInfo>> it = MERCHANTS.entrySet().iterator();
+        while (it.hasNext()) {
+            Map.Entry<UUID, MerchantInfo> entry = it.next();
+            UUID oldId = entry.getKey();
+            MerchantInfo info = entry.getValue();
+
+            if (info.villageId == villageId && info.type == type) {
+                for (World world : Bukkit.getWorlds()) {
+                    Entity e = world.getEntity(oldId);
+                    if (e != null) {
+                        e.remove();
+                        break;
+                    }
+                }
+                it.remove();
+                break;
+            }
+        }
+
         MERCHANTS.put(villager.getUniqueId(), new MerchantInfo(villageId, type));
     }
 
