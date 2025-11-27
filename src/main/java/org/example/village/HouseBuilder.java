@@ -273,7 +273,7 @@ public final class HouseBuilder {
         final int  wallHeight = (size <= 7 ? 4 : 5);
         final Material fundMat   = Material.STONE_BRICKS;
         final Material windowMat = Material.GLASS;
-        final Material roofMat   = pickRandom(roofs, rng, Material.STONE_BRICK_STAIRS);
+        final Material roofMat   = pickRandom(roofs, rng, Material.OAK_LOG);
         final Material floorMat  = planks.get(rng.nextInt(planks.size()));
         final Material logMat    = logs.get(rng.nextInt(logs.size()));
         final Material wallMat   = planks.get(rng.nextInt(planks.size()));

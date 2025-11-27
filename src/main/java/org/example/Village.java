@@ -134,9 +134,7 @@ public final class Village implements CommandExecutor {
                 Material.DARK_OAK_PLANKS
         );
         List<Material> roofPalette = List.of(
-                Material.SPRUCE_STAIRS,
-                Material.DARK_OAK_STAIRS,
-                Material.BRICK_STAIRS
+                Material.OAK_LOG  // bloc bois (ID 17) pour les toits
         );
         /* mix chemin/pavés (duplication = pondération) */
         List<Material> roadPalette = Arrays.asList(

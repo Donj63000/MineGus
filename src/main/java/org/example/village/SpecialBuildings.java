@@ -63,13 +63,13 @@ public final class SpecialBuildings {
             int insetVal = inset;
             for (int x = minX + inset; x <= maxX - inset; x++) {
                 int fx = x;
-                tasks.add(() -> sb.set(fx, roofY, minZ + insetVal, Material.SPRUCE_STAIRS));
-                tasks.add(() -> sb.set(fx, roofY, maxZ - insetVal, Material.SPRUCE_STAIRS));
+                tasks.add(() -> sb.set(fx, roofY, minZ + insetVal, Material.OAK_LOG));
+                tasks.add(() -> sb.set(fx, roofY, maxZ - insetVal, Material.OAK_LOG));
             }
             for (int z = minZ + inset; z <= maxZ - inset; z++) {
                 int fz = z;
-                tasks.add(() -> sb.set(minX + insetVal, roofY, fz, Material.SPRUCE_STAIRS));
-                tasks.add(() -> sb.set(maxX - insetVal, roofY, fz, Material.SPRUCE_STAIRS));
+                tasks.add(() -> sb.set(minX + insetVal, roofY, fz, Material.OAK_LOG));
+                tasks.add(() -> sb.set(maxX - insetVal, roofY, fz, Material.OAK_LOG));
             }
         }
 
@@ -148,7 +148,7 @@ public final class SpecialBuildings {
             for (int dz = 1; dz < size - 1; dz++) {
                 if (dx == 1 || dx == size - 2 || dz == 1 || dz == size - 2) {
                     int fx = baseX + dx, fz = baseZ + dz;
-                    tasks.add(() -> sb.set(fx, baseY + 4, fz, Material.SPRUCE_SLAB));
+                    tasks.add(() -> sb.set(fx, baseY + 4, fz, Material.OAK_LOG));
                 }
             }
         }
