@@ -19,6 +19,7 @@ import java.util.List;
 import java.util.UUID;
 
 import org.example.merchant.MerchantManager;
+import org.example.village.VillageEntityManager;
 
 /**
  * Plugin principal.
@@ -127,6 +128,9 @@ public final class MinePlugin extends JavaPlugin implements Listener {
         jobManager = new JobManager(this);
 
         merchantManager = new MerchantManager(this);
+
+        // Tâche de surveillance des marchands de village
+        VillageEntityManager.startMerchantGuardTask(this);
     }
 
     @Override

@@ -1,5 +1,6 @@
 package org.example.village;
 
+import org.bukkit.Bukkit;
 import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.World;
@@ -36,11 +37,46 @@ public final class VillageEntityManager {
             Villager.Profession.MASON
     );
 
+    /** Centre de chaque village (pour TP / respawn des marchands). */
+    private static final Map<Integer, Location> VILLAGE_CENTERS = new HashMap<>();
+
+    /** Marchands spéciaux du village (mineur, bucheron, agriculteur, eleveur, forgeron). */
+    private static final Map<UUID, MerchantInfo> MERCHANTS = new HashMap<>();
+
+    /** Rayon max autorisé avant de TP un marchand vers le centre. */
+    private static final int MERCHANT_GUARD_RADIUS = 40;
+
+    private enum MerchantType {
+        MINER,
+        LUMBERJACK,
+        FARMER,
+        BREEDER,
+        BLACKSMITH
+    }
+
+    private static class MerchantInfo {
+        final int villageId;
+        final MerchantType type;
+
+        MerchantInfo(int villageId, MerchantType type) {
+            this.villageId = villageId;
+            this.type = type;
+        }
+    }
+
+    private static void registerMerchant(Villager villager, int villageId, MerchantType type) {
+        if (villager == null) return;
+        MERCHANTS.put(villager.getUniqueId(), new MerchantInfo(villageId, type));
+    }
+
     /* ------------------- SPAWN INITIAL ------------------- */
     public static void spawnInitial(Plugin plugin,
                                     Location center,
                                     int villageId,
                                     int ttlTicks) {
+
+        // Mémoriser le centre du village pour ce villageId
+        VILLAGE_CENTERS.put(villageId, center.clone());
 
         World w = center.getWorld();
         Random R = new Random();
@@ -52,16 +88,25 @@ public final class VillageEntityManager {
             tagEntity(v, plugin, villageId);
         }
 
-        /* PNJ spécialisés */
+        /* PNJ spécialisés + marchands */
         Villager miner       = spawnNamed(w, plugin, randAround(center), "§eMineur",      Villager.Profession.TOOLSMITH, villageId);
         Villager lumberjack  = spawnNamed(w, plugin, randAround(center), "§6Bûcheron",    Villager.Profession.FLETCHER,  villageId);
         Villager farmer      = spawnNamed(w, plugin, randAround(center), "§aAgriculteur", Villager.Profession.FARMER,    villageId);
-        spawnNamed(w, plugin, randAround(center), "§dÉleveur",     Villager.Profession.SHEPHERD,  villageId);
+        Villager breeder     = spawnNamed(w, plugin, randAround(center), "§dÉleveur",     Villager.Profession.SHEPHERD,  villageId);
+        Villager blacksmith  = spawnNamed(w, plugin, randAround(center), "§cForgeron",    Villager.Profession.ARMORER,   villageId);
 
         // configuration des boutiques
         setupMinerTrades(miner);
         setupLumberjackTrades(lumberjack);
         setupFarmerTrades(farmer);
+        setupBreederTrades(breeder);
+        setupBlacksmithTrades(blacksmith);
+
+        registerMerchant(miner,      villageId, MerchantType.MINER);
+        registerMerchant(lumberjack, villageId, MerchantType.LUMBERJACK);
+        registerMerchant(farmer,     villageId, MerchantType.FARMER);
+        registerMerchant(breeder,    villageId, MerchantType.BREEDER);
+        registerMerchant(blacksmith, villageId, MerchantType.BLACKSMITH);
 
         /* 2 golems d’office */
         for (int i = 0; i < 2; i++) {
@@ -110,22 +155,80 @@ public final class VillageEntityManager {
     }
 
     /**
-     * Boutique de l'Agriculteur : vend de la nourriture contre des diamants.
+     * Boutique de l'Agriculteur : vend des ressources végétales / nourriture de culture.
      */
     private static void setupFarmerTrades(Villager villager) {
         if (villager == null) return;
 
         List<MerchantRecipe> recipes = new ArrayList<>();
 
+        // 1 diamant -> 32 pain
         recipes.add(diamondTrade(new ItemStack(Material.BREAD, 32), 1));
 
-        recipes.add(diamondTrade(new ItemStack(Material.COOKED_BEEF, 16), 1));
-        recipes.add(diamondTrade(new ItemStack(Material.COOKED_PORKCHOP, 16), 1));
-
+        // 1 diamant -> 32 carottes / patates / betteraves
         recipes.add(diamondTrade(new ItemStack(Material.CARROT, 32), 1));
         recipes.add(diamondTrade(new ItemStack(Material.POTATO, 32), 1));
+        recipes.add(diamondTrade(new ItemStack(Material.BEETROOT, 32), 1));
 
+        // 1 diamant -> 32 blé
+        recipes.add(diamondTrade(new ItemStack(Material.WHEAT, 32), 1));
+
+        // 2 diamants -> 16 carottes dorées (très fortes)
         recipes.add(diamondTrade(new ItemStack(Material.GOLDEN_CARROT, 16), 2));
+
+        villager.setVillagerLevel(5);
+        villager.setRecipes(recipes);
+    }
+
+    /**
+     * Boutique de l'Éleveur : vend des ressources liées aux animaux.
+     */
+    private static void setupBreederTrades(Villager villager) {
+        if (villager == null) return;
+
+        List<MerchantRecipe> recipes = new ArrayList<>();
+
+        // Ressources animales "brutes"
+        recipes.add(diamondTrade(new ItemStack(Material.LEATHER, 24), 1));       // 1 diamant -> 24 cuir
+        recipes.add(diamondTrade(new ItemStack(Material.WHITE_WOOL, 32), 1));    // 1 diamant -> 32 laine blanche
+        recipes.add(diamondTrade(new ItemStack(Material.FEATHER, 32), 1));       // 1 diamant -> 32 plumes
+        recipes.add(diamondTrade(new ItemStack(Material.EGG, 16), 1));           // 1 diamant -> 16 oeufs
+
+        // Nourriture issue des animaux
+        recipes.add(diamondTrade(new ItemStack(Material.COOKED_BEEF, 16), 1));   // 1 diamant -> 16 steaks cuits
+        recipes.add(diamondTrade(new ItemStack(Material.COOKED_PORKCHOP, 16), 1)); // 1 diamant -> 16 côtelettes
+
+        // Ressources "élevage"
+        recipes.add(diamondTrade(new ItemStack(Material.HAY_BLOCK, 16), 1));     // 1 diamant -> 16 bottes de foin
+        recipes.add(diamondTrade(new ItemStack(Material.LEAD, 4), 2));           // 2 diamants -> 4 laisses
+        recipes.add(diamondTrade(new ItemStack(Material.SADDLE, 1), 3));         // 3 diamants -> 1 selle
+
+        villager.setVillagerLevel(5);
+        villager.setRecipes(recipes);
+    }
+
+    /**
+     * Boutique du Forgeron : vend du stuff (principalement fer + quelques items diamant).
+     */
+    private static void setupBlacksmithTrades(Villager villager) {
+        if (villager == null) return;
+
+        List<MerchantRecipe> recipes = new ArrayList<>();
+
+        // Stuff fer très rentable
+        recipes.add(diamondTrade(new ItemStack(Material.IRON_SWORD, 1), 1));
+        recipes.add(diamondTrade(new ItemStack(Material.IRON_AXE, 1), 1));
+        recipes.add(diamondTrade(new ItemStack(Material.IRON_PICKAXE, 1), 1));
+
+        recipes.add(diamondTrade(new ItemStack(Material.IRON_HELMET, 1), 1));
+        recipes.add(diamondTrade(new ItemStack(Material.IRON_CHESTPLATE, 1), 1));
+        recipes.add(diamondTrade(new ItemStack(Material.IRON_LEGGINGS, 1), 1));
+        recipes.add(diamondTrade(new ItemStack(Material.IRON_BOOTS, 1), 1));
+
+        // Quelques pièces diamant, encore "gagnantes"
+        recipes.add(diamondTrade(new ItemStack(Material.DIAMOND_SWORD, 1), 2));
+        recipes.add(diamondTrade(new ItemStack(Material.DIAMOND_PICKAXE, 1), 3));
+        recipes.add(diamondTrade(new ItemStack(Material.DIAMOND_CHESTPLATE, 1), 4));
 
         villager.setVillagerLevel(5);
         villager.setRecipes(recipes);
@@ -183,9 +286,130 @@ public final class VillageEntityManager {
         for (int i = cap; i < tagged.size(); i++) tagged.get(i).remove();
     }
 
+    /* ------------------- SURVEILLANCE MARCHANDS ------------------- */
+    public static void startMerchantGuardTask(Plugin plugin) {
+        new BukkitRunnable() {
+            @Override
+            public void run() {
+                guardMerchants(plugin);
+            }
+        }.runTaskTimer(plugin, 20L * 10, 20L * 10);
+    }
+
+    private static void guardMerchants(Plugin plugin) {
+        Iterator<Map.Entry<UUID, MerchantInfo>> it = MERCHANTS.entrySet().iterator();
+
+        while (it.hasNext()) {
+            Map.Entry<UUID, MerchantInfo> entry = it.next();
+            UUID uuid = entry.getKey();
+            MerchantInfo info = entry.getValue();
+
+            Entity entity = null;
+            for (World world : Bukkit.getWorlds()) {
+                entity = world.getEntity(uuid);
+                if (entity != null) break;
+            }
+
+            // S'il n'y a plus d'entité ou que ce n'est plus un Villager -> respawn
+            if (!(entity instanceof Villager villager)) {
+                respawnMerchant(plugin, info);
+                it.remove();
+                continue;
+            }
+
+            // S'il est mort / invalide -> respawn
+            if (villager.isDead() || !villager.isValid()) {
+                respawnMerchant(plugin, info);
+                it.remove();
+                continue;
+            }
+
+            // Contrôle de la distance au centre du village
+            Location center = VILLAGE_CENTERS.get(info.villageId);
+            if (center == null) continue;
+            World centerWorld = center.getWorld();
+            if (centerWorld == null) continue;
+
+            if (!villager.getWorld().equals(centerWorld)) {
+                villager.teleport(center.clone().add(0.5, 1, 0.5));
+                continue;
+            }
+
+            double maxDist2 = MERCHANT_GUARD_RADIUS * MERCHANT_GUARD_RADIUS;
+            if (villager.getLocation().distanceSquared(center) > maxDist2) {
+                villager.teleport(center.clone().add(0.5, 1, 0.5));
+            }
+        }
+    }
+
+    private static void respawnMerchant(Plugin plugin, MerchantInfo info) {
+        Location center = VILLAGE_CENTERS.get(info.villageId);
+        if (center == null) return;
+
+        World world = center.getWorld();
+        if (world == null) return;
+
+        String name;
+        Villager.Profession profession;
+
+        switch (info.type) {
+            case MINER:
+                name = "§eMineur";
+                profession = Villager.Profession.TOOLSMITH;
+                break;
+            case LUMBERJACK:
+                name = "§6Bûcheron";
+                profession = Villager.Profession.FLETCHER;
+                break;
+            case FARMER:
+                name = "§aAgriculteur";
+                profession = Villager.Profession.FARMER;
+                break;
+            case BREEDER:
+                name = "§dÉleveur";
+                profession = Villager.Profession.SHEPHERD;
+                break;
+            case BLACKSMITH:
+                name = "§cForgeron";
+                profession = Villager.Profession.ARMORER;
+                break;
+            default:
+                return;
+        }
+
+        Location spawnLoc = center.clone().add(0.5, 1, 0.5);
+
+        // respawn du villageois avec le bon nom / métier / tag village
+        Villager villager = spawnNamed(world, plugin, spawnLoc, name, profession, info.villageId);
+
+        // réapplique les trades selon son type
+        switch (info.type) {
+            case MINER:
+                setupMinerTrades(villager);
+                break;
+            case LUMBERJACK:
+                setupLumberjackTrades(villager);
+                break;
+            case FARMER:
+                setupFarmerTrades(villager);
+                break;
+            case BREEDER:
+                setupBreederTrades(villager);
+                break;
+            case BLACKSMITH:
+                setupBlacksmithTrades(villager);
+                break;
+        }
+
+        // réenregistrer ce nouveau PNJ comme marchand
+        registerMerchant(villager, info.villageId, info.type);
+    }
+
     /* ------------------- UTIL PUBLIC ------------------- */
     public static void cleanup(Plugin p, int villageId) {
         GateGuardManager.stopGuardTask(villageId);
+        VILLAGE_CENTERS.remove(villageId);
+        MERCHANTS.entrySet().removeIf(entry -> entry.getValue().villageId == villageId);
         for (World w : p.getServer().getWorlds()) {
             w.getEntities().stream()
                     .filter(e -> e.hasMetadata(TAG)
