@@ -37,22 +37,49 @@ Référence par défaut : `src/main/resources/config.yml`. Modifiez seulement la
 3. Pour arrêter une zone (mine, champ, forêt, ranch), retirez tous les coffres associés.
 4. Les données sont sauvegardées dans `plugins/MinePlugin/` et restaurées au redémarrage.
 
-## Commandes disponibles
-| Commande    | Description rapide                                                |
-|-------------|-------------------------------------------------------------------|
-| `/ping`     | Vérifie que le plugin répond (renvoie « Pong! »).                 |
-| `/army`     | Invoque temporairement 5 loups et 2 golems protecteurs.           |
-| `/mineur`   | Lance un mineur automatique : carrière jusqu’à `stop-at-y`, puis tunnel infini 10×10. |
-| `/champ`    | Crée un champ agricole automatisé.                                |
-| `/foret`    | Met en place une forêt avec récolte et replantation automatiques. |
-| `/village`  | Génère un petit village complet près du joueur.                   |
-| `/eleveur`  | Construit un enclos d’élevage automatisé.                         |
-| `/armure`   | Donne l’armure légendaire du roi GIDON.                           |
+## COMMANDES EN JEU
+### /ping
+- Test de présence du plugin : répond « Pong! ». Disponible pour tous les joueurs et la console.
 
-## Détails des commandes (aperçu)
-- `/mineur` : bâton « Sélecteur » (2 clics même Y) pour définir la zone. Par défaut : pattern `QUARRY` qui creuse la carrière jusqu’à `stop-at-y`, puis bascule automatiquement en tunnel infini 10×10 (largeur/hauteur) dans une direction aléatoire. Un bloc de repère est posé sur la paroi tous les 5 blocs de profondeur, 2 golems de garde et un PNJ mineur sont présents. Changer le pattern via `/mineur pattern ...` désactive le chaînage auto.
-- `/champ`, `/foret`, `/eleveur` : bâton « Sélecteur » (clic gauche/droit) pour définir deux coins au même niveau, des PNJ et coffres sont générés, et l’activité est automatisée.
-- `/army` : protections temporaires (loups + golems) pendant quelques minutes.
+### /army
+- Invoque 5 loups apprivoisés et 2 golems nommés autour du joueur, protégés pendant 5 minutes avant disparition automatique.
+
+### /mineur (permission `mineplugin.mineur.use`)
+- `/mineur` : donne le bâton « Sélecteur de mine ». Clique deux blocs au même Y pour créer automatiquement la mine (cadre, coffres, PNJ mineur, golems). Par défaut, le pattern `QUARRY` creuse jusqu’à `stop-at-y` puis enchaîne sur un tunnel infini 10×10.
+- `/mineur vitesse <lent|normal|rapide>` : change la cadence du mineur en cours.
+- `/mineur pattern <carriere|branche|tunnel|veine>` : change le pattern (veine utilise actuellement carrière). Désactive le chaînage automatique.
+- `/mineur pause` / `/mineur reprendre` : met en pause ou relance la session.
+- `/mineur stop` : arrête et nettoie la session.
+- `/mineur info` : affiche monde, zone, vitesse, pattern, Y courant et conteneurs.
+- `/mineur autoriser <joueur>` : autorise un autre joueur à interagir avec la session. Si tous les coffres sont détruits, la mine s’arrête.
+
+### /champ
+- Donne le bâton « Sélecteur de champ ». Sélectionne deux blocs au même niveau pour générer une ferme labourée avec irrigation, coffres, PNJ fermier et golems. Récolte et stockage automatiques tant qu’il reste des coffres.
+
+### /foret
+- Donne le bâton « Sélecteur de forêt ». Deux blocs au même Y définissent la micro‑forêt : cadre, saplings en grille, PNJ forestier, golems et coffres. Coupe, capture des drops et replantation automatiques, persistance en `forests.yml`. La session s’arrête si tous les coffres sont retirés.
+
+### /eleveur
+- `/eleveur` : donne le bâton « Sélecteur d’élevage » pour tracer un ranch automatisé (spawners d’animaux configurés, PNJ éleveur ramasseur, coffres, golems).
+- `/eleveur list` : liste les enclos actifs avec leur index.
+- `/eleveur delete <id>` : supprime l’enclos correspondant et nettoie la zone.
+
+### /village
+- `/village` : génère un village orthogonal asynchrone autour du joueur (routes, place centrale, lots de maisons/fermes, spawners PNJ/golems, muraille, stand marchand).
+- `/village undo` : annule la dernière génération effectuée.
+
+### /armure
+- Donne l’Armure du roi GIDON (netherite enchantée). En portant l’ensemble : effets permanents (vision nocturne, résistance au feu, respiration, santé/force), et 4 loups gardes apparaissent quand le joueur est touché (disparition programmée).
+
+### /marchand (permission `mineplugin.marchand.spawn`)
+- Invoque un PNJ marchand invulnérable à l’emplacement du joueur. Les offres proviennent de `plugins/MinePlugin/marchand.yaml`; clique le PNJ pour ouvrir l’interface d’échanges.
+
+### /job
+- `/job mineur` : choisit le métier de mineur.
+- `/job` ou `/job info` : affiche métier, niveau, XP et nombre de mines débloquées. L’XP se gagne en minant à la pioche; +1 slot de mine tous les 10 niveaux (jusqu’à 10).
+
+### /minegus (permission `mineplugin.admin`)
+- `/minegus fix forestier|golems` : commande de maintenance qui supprime les doublons de forestiers de /foret ou de golems gardes taggés dans tous les mondes.
 
 ## Persistance des données
 Les fonctionnalités sauvegardent leurs informations (YAML) dans `plugins/MinePlugin/` (`sessions.yml`, `farms.yml`, etc.) pour restaurer PNJ et structures au redémarrage.
