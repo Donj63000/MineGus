@@ -1093,11 +1093,19 @@ public final class Foret implements CommandExecutor, Listener {
         }
 
         private void maintainForesterAtJob() {
-            if (forester == null) return;
-            double d2 = forester.getLocation().distanceSquared(jobSite.clone().add(0.5, 1, 0.5));
+            if (forester == null || jobSite == null) return;
+
+            // Pendant un job actif, on laisse le PNJ se déplacer librement dans la zone.
+            if (current != null && current.state != JobState.DONE) {
+                return;
+            }
+
+            Location home = jobSite.clone().add(0.5, 1, 0.5);
+            double d2 = forester.getLocation().distanceSquared(home);
+
             if (d2 > 36) {
                 forester.setAI(false);
-                forester.teleport(jobSite.clone().add(0.5, 1, 0.5));
+                forester.teleport(home);
             } else if (!forester.hasAI()) {
                 forester.setAI(true);
             }
@@ -1124,15 +1132,39 @@ public final class Foret implements CommandExecutor, Listener {
         }
 
         private void moveTo(Location target) {
-            if (forester == null) { current.state = JobState.CHOPPING; return; }
+            if (forester == null) {
+                current.state = JobState.CHOPPING;
+                return;
+            }
+
+            // Sécurité si jamais les mondes ne correspondent plus.
+            if (target.getWorld() == null || !target.getWorld().equals(forester.getWorld())) {
+                forester.teleport(target);
+                current.state = JobState.CHOPPING;
+                return;
+            }
+
             Location from = forester.getLocation();
-            int steps = 4;
-            Vector step = target.clone().subtract(from).toVector().multiply(1.0 / steps);
-            Location next = from.clone().add(step);
+
+            // Arrivée si on est déjà suffisamment proche.
+            double d2 = from.distanceSquared(target);
+            if (d2 <= 0.7) {
+                Location snap = target.clone();
+                snap.setYaw(faceYaw(snap, target));
+                forester.teleport(snap);
+                current.state = JobState.CHOPPING;
+                return;
+            }
+
+            // Avance d'un petit pas vers la cible.
+            Vector dir = target.toVector().subtract(from.toVector());
+            if (dir.lengthSquared() > 1.0) {
+                dir.normalize();
+            }
+
+            Location next = from.clone().add(dir);
             next.setYaw(faceYaw(next, target));
             forester.teleport(next);
-            steps--;
-            if (steps <= 0) current.state = JobState.CHOPPING;
         }
 
         private void chopLogs() {
