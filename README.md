@@ -139,5 +139,65 @@ Les fonctionnalités sauvegardent leurs informations (YAML) dans `plugins/MinePl
 
 Voir `AGENTS.md` pour plus de détails (structure, style, consignes de sécurité).
 
+## Démarrage rapide en local (Paper)
+1. Téléchargez Paper 1.21.4 depuis https://papermc.io/downloads.
+2. Placez `paper-1.21.4.jar` dans un dossier dédié (ex. `server/`).
+3. Copiez le JAR du plugin dans `server/plugins/`.
+4. Lancez le serveur une première fois (`java -jar paper-1.21.4.jar --nogui`) pour générer les dossiers.
+5. Acceptez l’EULA en éditant `eula.txt` (`eula=true`), relancez.
+6. Vérifiez que `plugins/MinePlugin/` est créé. Ajustez `config.yml` et `marchand.yaml` dans ce dossier (pas ceux du `src/`).
+7. Connectez‑vous en jeu, exécutez `/ping` puis `/army` pour valider le chargement de base.
+
+## Marchand : fiche rapide
+- Commandes :
+  - `/marchand` (permission `mineplugin.marchand.spawn`) : spawn du PNJ marchand invulnérable.
+  - `/marchand open [joueur]` (permission `mineplugin.marchand.open`) : ouvre directement le menu sans PNJ.
+  - `/marchand reload` (permission `mineplugin.marchand.admin`) : recharge `marchand.yaml` et réapplique les PNJ existants.
+- Interaction : clic droit sur le PNJ pour ouvrir les catégories, navigation par menus 6×9 avec pagination.
+- Règles clés lues dans `plugins/MinePlugin/marchand.yaml` :
+  - `rules.allow_outputs_as_inputs` : si `false`, les items vendus ne peuvent pas être réutilisés comme entrée (anti‑boucle).
+  - `rules.default_caps.per_player_per_day` / `per_server_per_day` : limites par défaut des offres (0 = illimité).
+  - `rules.sound_on_trade` et `rules.log_trades` : son et logs console pour chaque échange.
+  - `merchant.reset_time_utc` : heure de reset quotidien des compteurs de caps (UTC).
+- Caps par offre : chaque entrée peut surcharger via `caps: { per_player_per_day: N, per_server_per_day: M }`.
+- Exemple d’offre avec cap serveur :
+```yaml
+rules:
+  default_caps:
+    per_player_per_day: 3
+    per_server_per_day: 0
+categories:
+  SPECIAUX_ADMIN:
+    icon: TRIAL_SPAWNER
+    offers:
+      - out: TRIAL_SPAWNER
+        in: NETHERITE_BLOCK
+        in_qty: 8
+        caps: { per_server_per_day: 1 }
+        note: "Limité à 1 par jour pour tout le serveur"
+```
+
+## Scénarios de test recommandés
+- Sanity de base : `/ping`, `/army` (spawn + disparition programmée).
+- Mineur : `/mineur`, sélection de deux blocs au même Y, vérifier cadre + coffres + PNJ; changer `/mineur vitesse rapide`.
+- Champ : `/champ`, récolte/stockage, suppression des coffres → arrêt automatique.
+- Forêt : `/foret`, coupe/replantation automatique, persistance après redémarrage.
+- Éleveur : `/eleveur`, `/eleveur list`, `/eleveur delete <id>`; vérifier limites d’animaux configurées.
+- Village : `/village`, observer génération progressive, `/village undo` pour rollback.
+- Marchand : spawn avec `/marchand`, ouverture via `/marchand open <joueur>`, tester une offre avec cap quotidien et vérifier le message de blocage après dépassement.
+
+## Dépannage rapide
+- Le plugin ne se charge pas : vérifier la version Paper (1.21.4), `java -version` (17) et les logs `logs/latest.log`.
+- Commande inconnue : confirmer la permission (`op` par défaut sur la plupart des commandes) et que `plugin.yml` est bien dans le JAR généré.
+- Menus vides du marchand : valider la syntaxe de `plugins/MinePlugin/marchand.yaml` (indentation, clés `categories:` et `offers:`).
+- Caps du marchand qui ne se reset pas : vérifier `merchant.reset_time_utc` (UTC) et attendre la minute suivante après l’heure cible.
+- Golems/PNJ en double : utiliser `/minegus fix forestier` ou `/minegus fix golems`.
+- Performances : limiter la taille des zones (`/mineur`, `/foret`, `/champ`) et éviter le force‑load de chunks.
+
+## Intégration CI/CD suggérée
+- Étape 1 : `mvn -q -B package` (cache Maven si possible).
+- Étape 2 : publier `target/MineGus-<version>.jar` comme artefact.
+- Étape 3 (optionnel) : lancer un serveur Paper éphémère avec le JAR et exécuter une courte suite de commandes RCON (`/ping`, `/army`, `/marchand open @p`) pour smoke tests.
+
 ## Licence
 MIT — voir `LICENSE`.

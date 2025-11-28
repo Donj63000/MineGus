@@ -56,7 +56,13 @@ permissions:
     description: Administrer toutes les sessions du mineur
     default: op
   mineplugin.marchand.spawn:
-    description: Invoquer ou recharger le marchand
+    description: Invoquer le marchand PNJ (/marchand)
+    default: op
+  mineplugin.marchand.open:
+    description: Ouvrir le menu du marchand sans PNJ (/marchand open)
+    default: op
+  mineplugin.marchand.admin:
+    description: Administrer le marchand (/marchand reload)
     default: op
   mineplugin.admin:
     description: Accéder aux commandes d'administration MineGus

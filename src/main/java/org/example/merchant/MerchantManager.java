@@ -35,6 +35,11 @@ import org.jetbrains.annotations.Nullable;
 
 import java.io.File;
 import java.lang.reflect.Field;
+import java.time.Instant;
+import java.time.LocalTime;
+import java.time.ZoneOffset;
+import java.time.ZonedDateTime;
+import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -47,6 +52,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 
@@ -71,6 +77,20 @@ public final class MerchantManager implements CommandExecutor, Listener {
     private final List<MerchantCategory> orderedCategories = new ArrayList<>();
     private final Map<String, MerchantCategory> categoriesById = new LinkedHashMap<>();
     private final Map<String, ResolvedOffer> offersById = new HashMap<>();
+
+    // Règles et limites
+    private boolean allowOutputsAsInputs = false;
+    private int defaultCapPlayerPerDay = 0;
+    private int defaultCapServerPerDay = 0;
+
+    // Statistiques des caps par jour
+    private final Map<String, Integer> serverDailyCounts = new HashMap<>();
+    private final Map<UUID, Map<String, Integer>> playerDailyCounts = new HashMap<>();
+    private LocalTime resetTimeUtc = LocalTime.MIDNIGHT;
+    private long nextResetEpochMillis = 0L;
+
+    // Ensemble de tous les matériaux sortis par le marchand (pour les règles d'inputs)
+    private final Set<Material> outputMaterials = EnumSet.noneOf(Material.class);
 
     public MerchantManager(JavaPlugin plugin) {
         this.plugin = plugin;
@@ -104,6 +124,50 @@ public final class MerchantManager implements CommandExecutor, Listener {
 
     @Override
     public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
+        // /marchand reload
+        if (args.length >= 1 && args[0].equalsIgnoreCase("reload")) {
+            if (!sender.hasPermission("mineplugin.marchand.admin")
+                    && !sender.hasPermission("mineplugin.marchand.spawn")) {
+                sender.sendMessage(ChatColor.RED + "Tu n'as pas la permission pour /marchand reload.");
+                return true;
+            }
+            reloadDefinition();
+            discoverExistingMerchants();
+            sender.sendMessage(ChatColor.GREEN + "Configuration du marchand rechargée.");
+            return true;
+        }
+
+        // /marchand open [joueur]
+        if (args.length >= 1 && args[0].equalsIgnoreCase("open")) {
+            if (!sender.hasPermission("mineplugin.marchand.open")
+                    && !sender.hasPermission("mineplugin.marchand.spawn")) {
+                sender.sendMessage(ChatColor.RED + "Tu n'as pas la permission pour /marchand open.");
+                return true;
+            }
+
+            Player target;
+            if (args.length >= 2) {
+                target = Bukkit.getPlayerExact(args[1]);
+                if (target == null) {
+                    sender.sendMessage(ChatColor.RED + "Joueur introuvable : " + args[1]);
+                    return true;
+                }
+            } else {
+                if (!(sender instanceof Player p)) {
+                    sender.sendMessage(ChatColor.RED + "Tu dois être en jeu pour utiliser /marchand open sans cible.");
+                    return true;
+                }
+                target = p;
+            }
+
+            openCategoryMenu(target);
+            if (sender != target) {
+                sender.sendMessage(ChatColor.GREEN + "Menu du marchand ouvert pour " + target.getName() + ".");
+            }
+            return true;
+        }
+
+        // Comportement historique : /marchand -> spawn d'un PNJ marchand
         if (!(sender instanceof Player player)) {
             sender.sendMessage(ChatColor.RED + "Cette commande doit être exécutée en jeu.");
             return true;
@@ -144,10 +208,26 @@ public final class MerchantManager implements CommandExecutor, Listener {
         if (merchantSection != null) {
             this.merchantId = merchantSection.getString("id", merchantId);
             this.merchantDisplayName = ChatColor.GOLD + merchantSection.getString("display_name", "Marchand");
+            String resetStr = merchantSection.getString("reset_time_utc", "00:00");
+            try {
+                this.resetTimeUtc = LocalTime.parse(resetStr);
+            } catch (DateTimeParseException ex) {
+                plugin.getLogger().warning("Heure reset_time_utc invalide: " + resetStr + " (utilisation de 00:00)");
+                this.resetTimeUtc = LocalTime.MIDNIGHT;
+            }
         }
         ConfigurationSection rules = yaml.getConfigurationSection("rules");
         if (rules != null) {
             this.logTrades = rules.getBoolean("log_trades", false);
+            this.allowOutputsAsInputs = rules.getBoolean("allow_outputs_as_inputs", false);
+            ConfigurationSection defaultCaps = rules.getConfigurationSection("default_caps");
+            if (defaultCaps != null) {
+                this.defaultCapPlayerPerDay = defaultCaps.getInt("per_player_per_day", 0);
+                this.defaultCapServerPerDay = defaultCaps.getInt("per_server_per_day", 0);
+            } else {
+                this.defaultCapPlayerPerDay = 0;
+                this.defaultCapServerPerDay = 0;
+            }
             String soundName = rules.getString("sound_on_trade", "ENTITY_VILLAGER_YES");
             try {
                 this.tradeSound = Sound.valueOf(soundName.toUpperCase(Locale.ROOT));
@@ -156,6 +236,9 @@ public final class MerchantManager implements CommandExecutor, Listener {
                 this.tradeSound = Sound.ENTITY_VILLAGER_YES;
             }
         }
+        resetCapCounters();
+        recomputeNextResetEpoch();
+        outputMaterials.clear();
         categoriesById.clear();
         offersById.clear();
         orderedCategories.clear();
@@ -193,6 +276,36 @@ public final class MerchantManager implements CommandExecutor, Listener {
         }
     }
 
+    private void resetCapCounters() {
+        serverDailyCounts.clear();
+        playerDailyCounts.clear();
+    }
+
+    private void recomputeNextResetEpoch() {
+        this.nextResetEpochMillis = computeNextResetEpoch(System.currentTimeMillis());
+    }
+
+    private long computeNextResetEpoch(long nowMillis) {
+        Instant now = Instant.ofEpochMilli(nowMillis);
+        ZonedDateTime utcNow = now.atZone(ZoneOffset.UTC);
+        ZonedDateTime todayReset = utcNow.withHour(resetTimeUtc.getHour())
+                .withMinute(resetTimeUtc.getMinute())
+                .withSecond(0)
+                .withNano(0);
+        if (!todayReset.isAfter(utcNow)) {
+            todayReset = todayReset.plusDays(1);
+        }
+        return todayReset.toInstant().toEpochMilli();
+    }
+
+    private void resetCapsIfNeeded() {
+        long now = System.currentTimeMillis();
+        if (nextResetEpochMillis == 0L || now >= nextResetEpochMillis) {
+            resetCapCounters();
+            nextResetEpochMillis = computeNextResetEpoch(now);
+        }
+    }
+
     private MerchantCategory parseCategory(String id, ConfigurationSection section, MaterialResolver resolver) {
         String iconName = section.getString("icon", "BARRIER");
         Material icon = MaterialResolver.matchMaterial(iconName);
@@ -224,9 +337,23 @@ public final class MerchantManager implements CommandExecutor, Listener {
             }
             for (Material mat : outputs) {
                 String offerId = id + ":" + counter.getAndIncrement();
-                ResolvedOffer offer = new ResolvedOffer(offerId, category, requirements, mat, definition.getOutQuantity(), definition.getNote());
+                int capPlayer = definition.getCapPlayerPerDay();
+                if (capPlayer == 0) capPlayer = defaultCapPlayerPerDay;
+                int capServer = definition.getCapServerPerDay();
+                if (capServer == 0) capServer = defaultCapServerPerDay;
+                ResolvedOffer offer = new ResolvedOffer(
+                        offerId,
+                        category,
+                        requirements,
+                        mat,
+                        definition.getOutQuantity(),
+                        definition.getNote(),
+                        capPlayer,
+                        capServer
+                );
                 category.offers.add(offer);
                 offersById.put(offerId, offer);
+                outputMaterials.add(mat);
             }
         }
         return category;
@@ -437,16 +564,72 @@ public final class MerchantManager implements CommandExecutor, Listener {
     }
 
     private void attemptTrade(Player player, ResolvedOffer offer) {
+        if (!isTradeAllowed(player, offer)) {
+            return;
+        }
         if (!hasIngredients(player.getInventory(), offer.requirements)) {
             player.sendMessage(ChatColor.RED + "Ingrédients insuffisants.");
             return;
         }
         removeIngredients(player.getInventory(), offer.requirements);
         giveOutputs(player, offer);
+        recordTrade(player, offer);
         player.playSound(player.getLocation(), tradeSound, 1f, 1f);
         if (logTrades) {
-            plugin.getLogger().info(player.getName() + " a échangé contre " + offer.outputAmount + "x " + offer.outputMaterial);
+            plugin.getLogger().info(player.getName() + " a échangé contre "
+                    + offer.outputAmount + "x " + offer.outputMaterial
+                    + " (offre " + offer.id + ")");
         }
+    }
+
+    private boolean isTradeAllowed(Player player, ResolvedOffer offer) {
+        resetCapsIfNeeded();
+
+        int capPerPlayer = offer.getCapPlayerPerDay();
+        if (capPerPlayer > 0) {
+            Map<String, Integer> perOffer = playerDailyCounts
+                    .computeIfAbsent(player.getUniqueId(), id -> new HashMap<>());
+            int used = perOffer.getOrDefault(offer.id, 0);
+            if (used >= capPerPlayer) {
+                player.sendMessage(ChatColor.RED + "Tu as déjà utilisé cette offre "
+                        + used + "/" + capPerPlayer + " fois aujourd'hui.");
+                return false;
+            }
+        }
+
+        int capPerServer = offer.getCapServerPerDay();
+        if (capPerServer > 0) {
+            int used = serverDailyCounts.getOrDefault(offer.id, 0);
+            if (used >= capPerServer) {
+                player.sendMessage(ChatColor.RED + "Cette offre n'est plus disponible aujourd'hui.");
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private void recordTrade(Player player, ResolvedOffer offer) {
+        resetCapsIfNeeded();
+
+        int capPerPlayer = offer.getCapPlayerPerDay();
+        if (capPerPlayer > 0) {
+            Map<String, Integer> perOffer = playerDailyCounts
+                    .computeIfAbsent(player.getUniqueId(), id -> new HashMap<>());
+            perOffer.put(offer.id, perOffer.getOrDefault(offer.id, 0) + 1);
+        }
+
+        int capPerServer = offer.getCapServerPerDay();
+        if (capPerServer > 0) {
+            serverDailyCounts.put(offer.id, serverDailyCounts.getOrDefault(offer.id, 0) + 1);
+        }
+    }
+
+    private boolean isAllowedAsInput(Material material) {
+        if (!allowOutputsAsInputs && outputMaterials.contains(material)) {
+            return false;
+        }
+        return true;
     }
 
     private boolean hasIngredients(PlayerInventory inventory, List<IngredientRequirement> requirements) {
@@ -457,6 +640,7 @@ public final class MerchantManager implements CommandExecutor, Listener {
             for (int slot = 0; slot < contents.length; slot++) {
                 ItemStack stack = contents[slot];
                 if (stack == null) continue;
+                if (!isAllowedAsInput(stack.getType())) continue;
                 if (!requirement.descriptor.matches(stack.getType())) continue;
                 int available = stack.getAmount() - toRemove[slot];
                 if (available <= 0) continue;
@@ -480,6 +664,7 @@ public final class MerchantManager implements CommandExecutor, Listener {
             for (int slot = 0; slot < contents.length; slot++) {
                 ItemStack stack = contents[slot];
                 if (stack == null) continue;
+                if (!isAllowedAsInput(stack.getType())) continue;
                 if (!requirement.descriptor.matches(stack.getType())) continue;
                 int available = stack.getAmount() - toRemove[slot];
                 if (available <= 0) continue;
@@ -740,15 +925,28 @@ public final class MerchantManager implements CommandExecutor, Listener {
         private final Material outputMaterial;
         private final int outputAmount;
         private final String note;
+        private final int capPlayerPerDay;
+        private final int capServerPerDay;
 
         private ResolvedOffer(String id, MerchantCategory category, List<IngredientRequirement> requirements,
-                              Material outputMaterial, int outputAmount, String note) {
+                              Material outputMaterial, int outputAmount, String note,
+                              int capPlayerPerDay, int capServerPerDay) {
             this.id = id;
             this.category = category;
             this.requirements = requirements;
             this.outputMaterial = outputMaterial;
             this.outputAmount = outputAmount;
             this.note = note;
+            this.capPlayerPerDay = capPlayerPerDay;
+            this.capServerPerDay = capServerPerDay;
+        }
+
+        public int getCapPlayerPerDay() {
+            return capPlayerPerDay;
+        }
+
+        public int getCapServerPerDay() {
+            return capServerPerDay;
         }
     }
 
@@ -836,15 +1034,20 @@ public final class MerchantManager implements CommandExecutor, Listener {
         private final int inQuantity;
         private final Map<String, Integer> combo;
         private final String note;
+        private final int capPlayerPerDay;
+        private final int capServerPerDay;
 
         private OfferDefinition(String outToken, int outQuantity, String inToken, int inQuantity,
-                                Map<String, Integer> combo, String note) {
+                                Map<String, Integer> combo, String note,
+                                int capPlayerPerDay, int capServerPerDay) {
             this.outToken = outToken;
             this.outQuantity = outQuantity;
             this.inToken = inToken;
             this.inQuantity = inQuantity;
             this.combo = combo;
             this.note = note;
+            this.capPlayerPerDay = capPlayerPerDay;
+            this.capServerPerDay = capServerPerDay;
         }
 
         static OfferDefinition fromMap(Map<?, ?> raw) {
@@ -867,7 +1070,14 @@ public final class MerchantManager implements CommandExecutor, Listener {
                 }
             }
             String note = raw.containsKey("note") ? Objects.toString(raw.get("note"), null) : null;
-            return new OfferDefinition(outToken, outQty, inToken, inQty, combo, note);
+            int capPlayerPerDay = 0;
+            int capServerPerDay = 0;
+            Object capsObj = raw.get("caps");
+            if (capsObj instanceof Map<?, ?> caps) {
+                capPlayerPerDay = toInt(caps.get("per_player_per_day"), 0);
+                capServerPerDay = toInt(caps.get("per_server_per_day"), 0);
+            }
+            return new OfferDefinition(outToken, outQty, inToken, inQty, combo, note, capPlayerPerDay, capServerPerDay);
         }
 
         private static int toInt(Object obj, int def) {
@@ -905,6 +1115,14 @@ public final class MerchantManager implements CommandExecutor, Listener {
 
         public String getNote() {
             return note;
+        }
+
+        public int getCapPlayerPerDay() {
+            return capPlayerPerDay;
+        }
+
+        public int getCapServerPerDay() {
+            return capServerPerDay;
         }
 
         public List<IngredientRequirement> buildRequirements(MaterialResolver resolver, @Nullable IngredientDescriptor categoryInput) {
