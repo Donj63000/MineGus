@@ -709,6 +709,9 @@ public final class Foret implements CommandExecutor, Listener {
             loadedChunk.setForceLoaded(true);
             buildFrameGround();
             if (plantSites.isEmpty()) {
+                scanExistingTreesAsSites();
+            }
+            if (plantSites.isEmpty()) {
                 placeSaplings(); // génère nos PlantSite 1x1 et 2x2
             }
             createChestsIfMissing();
@@ -824,6 +827,9 @@ public final class Foret implements CommandExecutor, Listener {
             villager.setInvulnerable(true);
             villager.setRemoveWhenFarAway(false);
             villager.setRecipes(List.of(createTrade()));
+            villager.setAI(false);
+            villager.setCollidable(false);
+            villager.setGravity(false);
             PersistentDataContainer pdc = villager.getPersistentDataContainer();
             pdc.set(Keys.workerType(), PersistentDataType.STRING, "FORESTER");
             if (record != null) {
@@ -943,6 +949,21 @@ public final class Foret implements CommandExecutor, Listener {
             set(jobSite.getBlockX(), jobSite.getBlockY(), jobSite.getBlockZ(), JOB_TABLE);
         }
 
+        private void scanExistingTreesAsSites() {
+            for (int dx = 0; dx < width; dx++) {
+                for (int dz = 0; dz < length; dz++) {
+                    int x = x0 + dx;
+                    int z = z0 + dz;
+                    Block soil = w.getBlockAt(x, y0, z);
+                    Block above = soil.getRelative(BlockFace.UP);
+                    if (!isValidSoil(soil.getType())) continue;
+                    if (!Tag.LOGS.isTagged(above.getType())) continue;
+                    Location base = new Location(w, x, y0, z);
+                    plantSites.add(new PlantSite(base, false, guessSaplingForGround(soil.getType())));
+                }
+            }
+        }
+
         private void placeSaplings() {
             // on remplit par maillage ; si possible, de temps en temps on place un 2x2 pour dark oak/spruce/jungle
             boolean[][] taken = new boolean[width][length];
@@ -1036,56 +1057,62 @@ public final class Foret implements CommandExecutor, Listener {
                 int siteIndex = 0;
 
                 @Override public void run() {
-                    if (!hasActiveForester()) {
-                        if (forester != null && (!forester.isValid() || forester.isDead())) {
-                            clearForesterReference(false);
-                        }
-                        if (missingForesterCooldown <= 0) {
-                            ensureForesterBinding(false);
-                            missingForesterCooldown = 40;
+                    try {
+                        if (!hasActiveForester()) {
+                            if (forester != null && (!forester.isValid() || forester.isDead())) {
+                                clearForesterReference(false);
+                            }
+                            if (missingForesterCooldown <= 0) {
+                                ensureForesterBinding(false);
+                                missingForesterCooldown = 40;
+                            } else {
+                                missingForesterCooldown--;
+                            }
                         } else {
-                            missingForesterCooldown--;
+                            missingForesterCooldown = 0;
+                            maintainForesterAtJob();
                         }
-                    } else {
-                        missingForesterCooldown = 0;
-                        maintainForesterAtJob();
-                    }
 
-                    ensureGuardIntegrity();
+                        ensureGuardIntegrity();
 
-                    perTickBudget = MAX_BLOCKS_PER_TICK;
-                    // priorité 1 : travail en cours
-                    if (current != null) {
-                        workOnCurrentJob();
-                        return;
-                    }
+                        perTickBudget = MAX_BLOCKS_PER_TICK;
+                        // priorité 1 : travail en cours
+                        if (current != null) {
+                            workOnCurrentJob();
+                            return;
+                        }
 
-                    // priorité 2 : file BFS (feuilles si fast-leaves)
-                    if (!bfs.isEmpty()) {
-                        processBfs();
-                        return;
-                    }
+                        // priorité 2 : file BFS (feuilles si fast-leaves)
+                        if (!bfs.isEmpty()) {
+                            processBfs();
+                            return;
+                        }
 
-                    // priorité 3 : replant si demandé
-                    if (replant != null) {
-                        Material sap = current != null ? current.replantSapling : guessSaplingForGround(replant.getType());
-                        if (sap == null && current != null) sap = current.replantSapling;
-                        if (sap == null) sap = Material.OAK_SAPLING;
-                        replantBlock(replant, sap);
-                        replant = null;
-                        return;
-                    }
+                        // priorité 3 : replant si demandé
+                        if (replant != null) {
+                            Material sap = current != null ? current.replantSapling : guessSaplingForGround(replant.getType());
+                            if (sap == null && current != null) sap = current.replantSapling;
+                            if (sap == null) sap = Material.OAK_SAPLING;
+                            replantBlock(replant, sap);
+                            replant = null;
+                            return;
+                        }
 
-                    // sinon : scanner les sites
-                    if (plantSites.isEmpty()) return;
-                    PlantSite site = plantSites.get(siteIndex);
-                    siteIndex = (siteIndex + 1) % plantSites.size();
+                        // sinon : scanner les sites
+                        if (plantSites.isEmpty()) return;
+                        PlantSite site = plantSites.get(siteIndex);
+                        siteIndex = (siteIndex + 1) % plantSites.size();
 
-                    if (site.isMature(w)) {
-                        current = new TreeJob(site);
-                        current.computeLogStack();
-                        stepDelay = 0;
-                        activeCapture.add(id);
+                        if (site.isMature(w)) {
+                            current = new TreeJob(site);
+                            current.computeLogStack();
+                            stepDelay = 0;
+                            activeCapture.add(id);
+                            plugin.getLogger().info("[Foret] Job lancé @ " + site.base.getBlockX() + "," + site.base.getBlockY() + "," + site.base.getBlockZ());
+                        }
+                    } catch (Throwable t) {
+                        plugin.getLogger().severe("[Foret] Erreur dans la boucle pour " + hutId);
+                        t.printStackTrace();
                     }
                 }
             };
@@ -1094,20 +1121,14 @@ public final class Foret implements CommandExecutor, Listener {
 
         private void maintainForesterAtJob() {
             if (forester == null || jobSite == null) return;
-
-            // Pendant un job actif, on laisse le PNJ se déplacer librement dans la zone.
-            if (current != null && current.state != JobState.DONE) {
-                return;
-            }
+            if (!forester.isValid() || forester.isDead()) return;
+            if (current != null && current.state != JobState.DONE) return;
 
             Location home = jobSite.clone().add(0.5, 1, 0.5);
             double d2 = forester.getLocation().distanceSquared(home);
 
-            if (d2 > 36) {
-                forester.setAI(false);
+            if (d2 > 4) {
                 forester.teleport(home);
-            } else if (!forester.hasAI()) {
-                forester.setAI(true);
             }
         }
 
@@ -1127,7 +1148,12 @@ public final class Foret implements CommandExecutor, Listener {
                 case REPLANT -> doReplant();
                 case COLLECT -> collectAround(current.foot());
                 case DEPOSIT -> depositPocket();
-                case DONE -> { current = null; stepDelay = 0; }
+                case DONE -> {
+                    Location foot = current.foot();
+                    plugin.getLogger().info("[Foret] Job terminé @ " + foot.getBlockX() + "," + foot.getBlockY() + "," + foot.getBlockZ());
+                    current = null;
+                    stepDelay = 0;
+                }
             }
         }
 
@@ -1541,21 +1567,23 @@ public final class Foret implements CommandExecutor, Listener {
         }
 
         boolean isMature(World w) {
-            // arbre "présent" si un LOG au-dessus (1x1) ou motif 2x2 de LOGs
-            Block a = w.getBlockAt(base.getBlockX(), base.getBlockY() + 1, base.getBlockZ());
-            if (!is2x2) {
-                return Tag.LOGS.isTagged(a.getType());
-            } else {
-                Block bE  = a.getRelative(1, 0, 0);
-                Block bS  = a.getRelative(0, 0, 1);
-                Block bSE = a.getRelative(1, 0, 1);
-                int count = 0;
-                if (Tag.LOGS.isTagged(a.getType())) count++;
-                if (Tag.LOGS.isTagged(bE.getType())) count++;
-                if (Tag.LOGS.isTagged(bS.getType())) count++;
-                if (Tag.LOGS.isTagged(bSE.getType())) count++;
-                return count >= 3; // tolérant
+            int bx = base.getBlockX();
+            int by = base.getBlockY();
+            int bz = base.getBlockZ();
+            int radius = is2x2 ? 1 : 0;
+            int maxHeight = 4;
+
+            for (int dy = 1; dy <= maxHeight; dy++) {
+                for (int dx = -radius; dx <= radius; dx++) {
+                    for (int dz = -radius; dz <= radius; dz++) {
+                        Block b = w.getBlockAt(bx + dx, by + dy, bz + dz);
+                        if (Tag.LOGS.isTagged(b.getType())) {
+                            return true;
+                        }
+                    }
+                }
             }
+            return false;
         }
     }
 

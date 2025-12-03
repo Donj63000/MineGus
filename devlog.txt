@@ -1,0 +1,1 @@
+2025-11-28 05:12:13 - Ajout des consignes dans AGENTS.md pour exiger des commentaires en français, des logs explicites en cas de souci et des tests unitaires systématiques. Création du devlog pour tracer les actions.
