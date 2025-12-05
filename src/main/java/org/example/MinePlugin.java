@@ -86,6 +86,7 @@ public final class MinePlugin extends JavaPlugin implements Listener {
     @Override
     public void onEnable() {
         getLogger().info("MinePlugin chargé !");
+        getLogger().info("Copyright By V.G");
         saveDefaultConfig();
         Bukkit.getPluginManager().registerEvents(this, this);
         Keys.init(this);

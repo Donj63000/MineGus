@@ -705,7 +705,7 @@ public final class Foret implements CommandExecutor, Listener {
 
         /* ---------- cycle de vie ---------- */
         void start(boolean spawnFresh) {
-            loadedChunk = w.getChunkAt(x0 + width / 2, z0 + length / 2);
+            loadedChunk = w.getChunkAt(new Location(w, x0 + width / 2.0, y0, z0 + length / 2.0));
             loadedChunk.setForceLoaded(true);
             buildFrameGround();
             if (plantSites.isEmpty()) {
@@ -959,7 +959,8 @@ public final class Foret implements CommandExecutor, Listener {
                     if (!isValidSoil(soil.getType())) continue;
                     if (!Tag.LOGS.isTagged(above.getType())) continue;
                     Location base = new Location(w, x, y0, z);
-                    plantSites.add(new PlantSite(base, false, guessSaplingForGround(soil.getType())));
+                    Material sapling = guessSaplingForGround(soil.getType(), above.getType());
+                    plantSites.add(new PlantSite(base, false, sapling));
                 }
             }
         }
@@ -1104,8 +1105,12 @@ public final class Foret implements CommandExecutor, Listener {
                         siteIndex = (siteIndex + 1) % plantSites.size();
 
                         if (site.isMature(w)) {
-                            current = new TreeJob(site);
-                            current.computeLogStack();
+                            TreeJob job = new TreeJob(site);
+                            job.computeLogStack();
+                            if (job.logsTopDown.isEmpty()) {
+                                return; // rien à couper (arbre non trouvé)
+                            }
+                            current = job;
                             stepDelay = 0;
                             activeCapture.add(id);
                             plugin.getLogger().info("[Foret] Job lancé @ " + site.base.getBlockX() + "," + site.base.getBlockY() + "," + site.base.getBlockZ());
@@ -1133,16 +1138,17 @@ public final class Foret implements CommandExecutor, Listener {
         }
 
         private void workOnCurrentJob() {
-            if (current.logsTopDown.isEmpty()) {
-                // logs terminés
-                activeCapture.remove(id);
-                if (FAST_LEAVES) buildLeavesBfs(current);
-                current.state = JobState.REPLANT;
-            }
-
             switch (current.state) {
-                case MOVING -> moveTo(current.foot().clone().add(0.5, 0, 0.5));
-                // on considère qu'on est arrivé instantanément (TP progressif possible)
+                case MOVING -> {
+                    Location target = current.foot().clone().add(0.5, 1, 0.5);
+                    if (forester == null || !forester.isValid() || forester.isDead()) {
+                        current.state = JobState.CHOPPING;
+                    } else if (forester.getLocation().distanceSquared(target) <= 1.0) {
+                        current.state = JobState.CHOPPING;
+                    } else {
+                        moveTo(target);
+                    }
+                }
                 case CHOPPING -> chopLogs();
                 case CLEARING_LEAVES -> processBfs();
                 case REPLANT -> doReplant();
@@ -1280,7 +1286,14 @@ public final class Foret implements CommandExecutor, Listener {
         }
 
         private void depositPocket() {
+            // 1) Si aucune ressource à déposer -> job terminé
             if (pocket.isEmpty()) { current.state = JobState.DONE; return; }
+            // 2) Sécurité : pas de coffres disponibles
+            if (chests.isEmpty()) {
+                plugin.getLogger().warning("[Foret] Aucun coffre pour déposer la récolte dans la forêt " + hutId);
+                current.state = JobState.DONE;
+                return;
+            }
 
             Iterator<Block> cycle = Iterators.cycle(chests);
             List<ItemStack> leftovers = new ArrayList<>();
@@ -1485,6 +1498,7 @@ public final class Foret implements CommandExecutor, Listener {
             Location foot() { return site.base.clone(); }
 
             void computeLogStack() {
+                logsTopDown.clear();
                 // point de départ : pour 1x1 -> base+1 ; pour 2x2 -> base+1 (NW), on remonte tant qu'on est sur un LOG
                 Block start = w.getBlockAt(site.base.getBlockX(), site.base.getBlockY() + 1, site.base.getBlockZ());
                 if (site.is2x2 && !Tag.LOGS.isTagged(start.getType())) {
@@ -1505,7 +1519,6 @@ public final class Foret implements CommandExecutor, Listener {
                     logsTopDown.add(cur);
                     cur = cur.getRelative(BlockFace.DOWN);
                 }
-                state = JobState.CHOPPING;
             }
 
             List<Location> replantSpots() {
@@ -1553,6 +1566,23 @@ public final class Foret implements CommandExecutor, Listener {
         return Material.OAK_SAPLING;
     }
 
+    // Version améliorée : on tient compte du bloc au-dessus (log)
+    private static Material guessSaplingForGround(Material ground, Material above) {
+        if (Tag.LOGS.isTagged(above)) {
+            return switch (above) {
+                case OAK_LOG      -> Material.OAK_SAPLING;
+                case SPRUCE_LOG   -> Material.SPRUCE_SAPLING;
+                case BIRCH_LOG    -> Material.BIRCH_SAPLING;
+                case JUNGLE_LOG   -> Material.JUNGLE_SAPLING;
+                case ACACIA_LOG   -> Material.ACACIA_SAPLING;
+                case DARK_OAK_LOG -> Material.DARK_OAK_SAPLING;
+                case CHERRY_LOG   -> Material.CHERRY_SAPLING;
+                default -> Material.OAK_SAPLING;
+            };
+        }
+        return guessSaplingForGround(ground);
+    }
+
     /* ══════════════════ PLANT SITE ══════════════════ */
 
     private static final class PlantSite {
@@ -1571,7 +1601,7 @@ public final class Foret implements CommandExecutor, Listener {
             int by = base.getBlockY();
             int bz = base.getBlockZ();
             int radius = is2x2 ? 1 : 0;
-            int maxHeight = 4;
+            int maxHeight = Math.min(FOREST_HEIGHT, 10);
 
             for (int dy = 1; dy <= maxHeight; dy++) {
                 for (int dx = -radius; dx <= radius; dx++) {

@@ -2,6 +2,7 @@ name: MinePlugin
 version: ${project.version}
 main: org.example.MinePlugin
 api-version: "1.21"          # version reconnue par Spigot/Paper
+description: "Plugin Paper 1.21.4 - copyright By V.G"
 
 commands:
   army:
