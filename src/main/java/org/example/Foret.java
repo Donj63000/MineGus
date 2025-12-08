@@ -3,6 +3,7 @@ package org.example;
 import org.bukkit.*;
 import org.bukkit.block.Block;
 import org.bukkit.block.BlockFace;
+import org.bukkit.block.BlockState;
 import org.bukkit.block.Chest;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandExecutor;
@@ -18,7 +19,6 @@ import org.bukkit.event.Listener;
 import org.bukkit.event.block.BlockBreakEvent;
 import org.bukkit.event.block.BlockDropItemEvent;
 import org.bukkit.event.player.PlayerInteractEvent;
-import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.MerchantRecipe;
 import org.bukkit.inventory.meta.ItemMeta;
@@ -1218,7 +1218,15 @@ public final class Foret implements CommandExecutor, Listener {
 
             if (current.logsTopDown.isEmpty()) {
                 activeCapture.remove(id);
-                current.state = FAST_LEAVES ? JobState.CLEARING_LEAVES : JobState.REPLANT;
+
+                if (FAST_LEAVES) {
+                    // on prépare la file des feuilles autour du pied de l'arbre
+                    buildLeavesBfs(current);
+                    current.state = JobState.CLEARING_LEAVES;
+                } else {
+                    current.state = JobState.REPLANT;
+                }
+
                 stepDelay = 0;
             }
         }
@@ -1287,7 +1295,11 @@ public final class Foret implements CommandExecutor, Listener {
 
         private void depositPocket() {
             // 1) Si aucune ressource à déposer -> job terminé
-            if (pocket.isEmpty()) { current.state = JobState.DONE; return; }
+            if (pocket.isEmpty()) {
+                current.state = JobState.DONE;
+                return;
+            }
+
             // 2) Sécurité : pas de coffres disponibles
             if (chests.isEmpty()) {
                 plugin.getLogger().warning("[Foret] Aucun coffre pour déposer la récolte dans la forêt " + hutId);
@@ -1295,14 +1307,31 @@ public final class Foret implements CommandExecutor, Listener {
                 return;
             }
 
-            Iterator<Block> cycle = Iterators.cycle(chests);
+            // On travaille sur un snapshot pour éviter les soucis si la liste 'chests' change pendant la boucle
+            List<Block> chestSnapshot = new ArrayList<>(chests);
+            chestSnapshot.removeIf(Objects::isNull);
+            if (chestSnapshot.isEmpty()) {
+                plugin.getLogger().warning("[Foret] Snapshot de coffres vide pour la forêt " + hutId);
+                current.state = JobState.DONE;
+                return;
+            }
+
+            Iterator<Block> cycle = Iterators.cycle(chestSnapshot);
             List<ItemStack> leftovers = new ArrayList<>();
 
             for (ItemStack it : pocket) {
                 boolean stored = false;
                 int tries = 0;
-                while (!stored && tries < chests.size()) {
-                    Chest c = (Chest) cycle.next().getState();
+
+                while (!stored && tries < chestSnapshot.size()) {
+                    Block chestBlock = cycle.next();
+                    BlockState state = chestBlock.getState();
+                    if (!(state instanceof Chest c)) {
+                        // Le bloc n'est plus un coffre (cassé / remplacé), on l'ignore
+                        tries++;
+                        continue;
+                    }
+
                     tries++;
                     Map<Integer, ItemStack> left = c.getInventory().addItem(it);
                     if (left.isEmpty()) {
@@ -1311,8 +1340,12 @@ public final class Foret implements CommandExecutor, Listener {
                         it = left.values().iterator().next();
                     }
                 }
-                if (!stored) leftovers.add(it);
+
+                if (!stored) {
+                    leftovers.add(it);
+                }
             }
+
             pocket.clear();
             pocket.addAll(leftovers);
 
@@ -1320,11 +1353,25 @@ public final class Foret implements CommandExecutor, Listener {
             if (!pocket.isEmpty()) {
                 expandStorageRack();
                 List<ItemStack> still = new ArrayList<>();
-                for (ItemStack it : pocket) {
-                    Chest c = (Chest) chests.get(chests.size() - 1).getState();
-                    Map<Integer, ItemStack> left = c.getInventory().addItem(it);
-                    if (!left.isEmpty()) still.add(left.values().iterator().next());
+                if (!chests.isEmpty()) {
+                    Block last = chests.get(chests.size() - 1);
+                    BlockState st = last.getState();
+                    if (st instanceof Chest c) {
+                        for (ItemStack it : pocket) {
+                            Map<Integer, ItemStack> left = c.getInventory().addItem(it);
+                            if (!left.isEmpty()) {
+                                still.add(left.values().iterator().next());
+                            }
+                        }
+                    } else {
+                        // dernier bloc ajouté n'est plus un coffre, on ne peut pas faire grand-chose de mieux
+                        still.addAll(pocket);
+                    }
+                } else {
+                    // plus de coffres du tout
+                    still.addAll(pocket);
                 }
+
                 pocket.clear();
                 pocket.addAll(still);
             }
@@ -1497,28 +1544,91 @@ public final class Foret implements CommandExecutor, Listener {
 
             Location foot() { return site.base.clone(); }
 
+            /**
+             * Construit la pile de troncs à couper :
+             * - on cherche un log "seed" près de la base
+             * - on fait un BFS sur tous les logs connectés (6 directions)
+             * - on trie le résultat du plus haut au plus bas
+             */
             void computeLogStack() {
                 logsTopDown.clear();
-                // point de départ : pour 1x1 -> base+1 ; pour 2x2 -> base+1 (NW), on remonte tant qu'on est sur un LOG
-                Block start = w.getBlockAt(site.base.getBlockX(), site.base.getBlockY() + 1, site.base.getBlockZ());
-                if (site.is2x2 && !Tag.LOGS.isTagged(start.getType())) {
-                    // essayer les 3 autres
-                    Block bE = start.getRelative(1, 0, 0);
-                    Block bS = start.getRelative(0, 0, 1);
-                    Block bSE = start.getRelative(1, 0, 1);
-                    if (Tag.LOGS.isTagged(bE.getType())) start = bE;
-                    else if (Tag.LOGS.isTagged(bS.getType())) start = bS;
-                    else if (Tag.LOGS.isTagged(bSE.getType())) start = bSE;
+
+                Block seed = findSeedLog();
+                if (seed == null) {
+                    return;
                 }
-                Block cur = start;
-                // monter au sommet
-                while (Tag.LOGS.isTagged(cur.getType())) cur = cur.getRelative(BlockFace.UP);
-                cur = cur.getRelative(BlockFace.DOWN);
-                // redescendre en empilant top→bottom
-                while (Tag.LOGS.isTagged(cur.getType())) {
-                    logsTopDown.add(cur);
-                    cur = cur.getRelative(BlockFace.DOWN);
+
+                int maxRadius = site.is2x2 ? 5 : 4;
+                int minY = site.base.getBlockY() + 1;
+                int maxY = site.base.getBlockY() + FOREST_HEIGHT;
+
+                Queue<Block> queue = new ArrayDeque<>();
+                Set<Block> visited = new HashSet<>();
+
+                queue.add(seed);
+                visited.add(seed);
+
+                while (!queue.isEmpty()) {
+                    Block b = queue.poll();
+                    if (!Tag.LOGS.isTagged(b.getType())) {
+                        continue;
+                    }
+
+                    logsTopDown.add(b);
+
+                    for (BlockFace face : new BlockFace[]{
+                            BlockFace.UP, BlockFace.DOWN,
+                            BlockFace.NORTH, BlockFace.SOUTH,
+                            BlockFace.EAST, BlockFace.WEST
+                    }) {
+                        Block nb = b.getRelative(face);
+                        if (visited.contains(nb)) continue;
+                        if (!isWithinTreeBounds(nb, maxRadius, minY, maxY)) continue;
+                        if (!Tag.LOGS.isTagged(nb.getType())) continue;
+
+                        visited.add(nb);
+                        queue.add(nb);
+                    }
                 }
+
+                logsTopDown.sort((b1, b2) -> {
+                    int dy = Integer.compare(b2.getY(), b1.getY());
+                    if (dy != 0) return dy;
+                    int dx = Integer.compare(b1.getX(), b2.getX());
+                    if (dx != 0) return dx;
+                    return Integer.compare(b1.getZ(), b2.getZ());
+                });
+            }
+
+            private Block findSeedLog() {
+                int bx = site.base.getBlockX();
+                int by = site.base.getBlockY();
+                int bz = site.base.getBlockZ();
+                int radius = site.is2x2 ? 2 : 1;
+                int maxHeight = Math.min(FOREST_HEIGHT, 10);
+
+                for (int dy = 1; dy <= maxHeight; dy++) {
+                    for (int dx = -radius; dx <= radius; dx++) {
+                        for (int dz = -radius; dz <= radius; dz++) {
+                            Block b = w.getBlockAt(bx + dx, by + dy, bz + dz);
+                            if (Tag.LOGS.isTagged(b.getType())) {
+                                return b;
+                            }
+                        }
+                    }
+                }
+                return null;
+            }
+
+            private boolean isWithinTreeBounds(Block b, int radius, int minY, int maxY) {
+                int y = b.getY();
+                if (y < minY || y > maxY) return false;
+
+                int bx = site.base.getBlockX();
+                int bz = site.base.getBlockZ();
+
+                return Math.abs(b.getX() - bx) <= radius
+                        && Math.abs(b.getZ() - bz) <= radius;
             }
 
             List<Location> replantSpots() {
@@ -1627,7 +1737,11 @@ final class Iterators {
     static <T> Iterator<T> cycle(List<T> list) {
         return new Iterator<>() {
             int i = 0;
+
+            @Override
             public boolean hasNext() { return !list.isEmpty(); }
+
+            @Override
             public T next() {
                 T t = list.get(i);
                 i = (i + 1) % list.size();
