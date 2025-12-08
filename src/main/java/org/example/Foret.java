@@ -17,7 +17,6 @@ import org.bukkit.event.entity.CreatureSpawnEvent;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
 import org.bukkit.event.block.BlockBreakEvent;
-import org.bukkit.event.block.BlockDropItemEvent;
 import org.bukkit.event.player.PlayerInteractEvent;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.MerchantRecipe;
@@ -55,7 +54,7 @@ public final class Foret implements CommandExecutor, Listener {
     private static final int    LEAF_BREAK_DELAY    = 2;    // ticks par feuille si "fast leaves"
     private static final int    MAX_BLOCKS_PER_TICK = 14;   // budget de blocs cassés par tick
     private static final int    LIGHT_MIN_LEVEL     = 9;    // si <9, pose une torche
-    private static final boolean FAST_LEAVES        = false;// true = casse activement les feuilles, false = laisse la decay
+    private static final boolean FAST_LEAVES        = false; // true = casse activement les feuilles, false = laisse la decay
     private static final List<Material> ONE_BY_ONE_SAPLINGS = List.of(
             Material.OAK_SAPLING, Material.BIRCH_SAPLING, Material.SPRUCE_SAPLING,
             Material.JUNGLE_SAPLING, Material.ACACIA_SAPLING, Material.CHERRY_SAPLING
@@ -91,9 +90,6 @@ public final class Foret implements CommandExecutor, Listener {
     private final Map<String, IronGolem> guardsByHut = new HashMap<>();
 
     private BukkitTask missingWorkerTask;
-
-    /* capture des drops durant la coupe */
-    private final Set<UUID> activeCapture = new HashSet<>(); // ids de sessions actuellement en coupe
 
     public Foret(JavaPlugin plugin) {
         this.plugin = plugin;
@@ -176,24 +172,6 @@ public final class Foret implements CommandExecutor, Listener {
                 discardForesterRecord(fs.getHutId());
                 saveSessions();
             }
-        }
-    }
-
-    /** Capture propre des drops quand la station casse un bloc. */
-    @EventHandler
-    public void onBlockDrop(BlockDropItemEvent e) {
-        for (ForestSession fs : sessions) {
-            if (!activeCapture.contains(fs.id)) continue;
-            if (!Objects.equals(fs.w.getUID(), e.getBlock().getWorld().getUID())) continue;
-            if (!fs.inBounds(e.getBlock().getLocation())) continue;
-
-            // Récupère les Item entities et envoie dans la "poche" de la session
-            for (Item it : e.getItems()) {
-                fs.pocket.add(it.getItemStack().clone());
-                it.remove();
-            }
-            e.setCancelled(true);
-            break;
         }
     }
 
@@ -435,7 +413,13 @@ public final class Foret implements CommandExecutor, Listener {
             if (workerId == null) {
                 workerId = UUID.randomUUID();
             }
-            record = ForesterRecord.fromExisting(workerId, hutId, villager.getWorld().getUID(), session.getHomeLocation(), villager.getUniqueId());
+            record = ForesterRecord.fromExisting(
+                    workerId,
+                    session.getHutId(),
+                    session.w.getUID(),
+                    session.getHomeLocation(),
+                    villager.getUniqueId()
+            );
             registerForester(record);
         } else {
             if (workerId == null || !workerId.equals(record.workerId())) {
@@ -527,6 +511,7 @@ public final class Foret implements CommandExecutor, Listener {
     public void loadSavedSessions() {
         loadForesters();
         loadSessions();
+        scanLoadedEntities();
     }
 
     public void saveAllSessions() {
@@ -926,7 +911,6 @@ public final class Foret implements CommandExecutor, Listener {
                 loadedChunk.setForceLoaded(false);
                 loadedChunk = null;
             }
-            activeCapture.remove(id);
             missingForesterCooldown = 0;
         }
 
@@ -1091,7 +1075,9 @@ public final class Foret implements CommandExecutor, Listener {
 
                         // priorité 3 : replant si demandé
                         if (replant != null) {
-                            Material sap = current != null ? current.replantSapling : guessSaplingForGround(replant.getType());
+                            Material sap = (current != null
+                                    ? current.replantSapling
+                                    : guessSaplingForGround(replant.getType()));
                             if (sap == null && current != null) sap = current.replantSapling;
                             if (sap == null) sap = Material.OAK_SAPLING;
                             replantBlock(replant, sap);
@@ -1112,7 +1098,6 @@ public final class Foret implements CommandExecutor, Listener {
                             }
                             current = job;
                             stepDelay = 0;
-                            activeCapture.add(id);
                             plugin.getLogger().info("[Foret] Job lancé @ " + site.base.getBlockX() + "," + site.base.getBlockY() + "," + site.base.getBlockZ());
                         }
                     } catch (Throwable t) {
@@ -1202,13 +1187,14 @@ public final class Foret implements CommandExecutor, Listener {
         private void chopLogs() {
             if (stepDelay > 0) { stepDelay--; return; }
             int used = 0;
+            ItemStack tool = new ItemStack(Material.IRON_AXE);
             while (used < perTickBudget && !current.logsTopDown.isEmpty()) {
                 Block b = current.logsTopDown.remove(0);
                 if (b.getType().isAir()) continue;
 
                 lookAt(forester, b.getLocation().add(0.5, 0.5, 0.5));
                 b.getWorld().playSound(b.getLocation(), Sound.BLOCK_WOOD_BREAK, 0.9f, 1.0f);
-                b.breakNaturally(new ItemStack(Material.IRON_AXE)); // drops capturés via BlockDropItemEvent
+                pocket.addAll(breakAndCollect(b, tool));
 
                 used++;
                 perTickBudget--;
@@ -1217,8 +1203,6 @@ public final class Foret implements CommandExecutor, Listener {
             }
 
             if (current.logsTopDown.isEmpty()) {
-                activeCapture.remove(id);
-
                 if (FAST_LEAVES) {
                     // on prépare la file des feuilles autour du pied de l'arbre
                     buildLeavesBfs(current);
@@ -1241,6 +1225,7 @@ public final class Foret implements CommandExecutor, Listener {
             if (stepDelay > 0) { stepDelay--; return; }
 
             int used = 0;
+            ItemStack tool = null;
             while (used < perTickBudget && !bfs.isEmpty()) {
                 Block b = bfs.poll();
                 if (b == null || b.getType().isAir()) continue;
@@ -1248,7 +1233,7 @@ public final class Foret implements CommandExecutor, Listener {
 
                 lookAt(forester, b.getLocation().add(0.5, 0.5, 0.5));
                 b.getWorld().playSound(b.getLocation(), Sound.BLOCK_GRASS_BREAK, 0.7f, 1.4f);
-                b.breakNaturally(); // feuilles
+                pocket.addAll(breakAndCollect(b, tool));
 
                 used++;
                 perTickBudget--;
@@ -1377,6 +1362,32 @@ public final class Foret implements CommandExecutor, Listener {
             }
 
             current.state = JobState.DONE;
+        }
+
+        private List<ItemStack> breakAndCollect(Block block, ItemStack tool) {
+            if (block == null || block.getType().isAir()) {
+                return List.of();
+            }
+
+            BlockState state = block.getState();
+            ItemStack effectiveTool = tool != null ? tool : new ItemStack(Material.AIR);
+
+            Collection<ItemStack> rawDrops;
+            if (forester != null) {
+                rawDrops = state.getDrops(effectiveTool, forester);
+            } else {
+                rawDrops = state.getDrops(effectiveTool);
+            }
+
+            List<ItemStack> drops = new ArrayList<>(rawDrops.size());
+            for (ItemStack is : rawDrops) {
+                if (is == null || is.getType().isAir() || is.getAmount() <= 0) continue;
+                drops.add(is.clone());
+            }
+
+            block.setType(Material.AIR, false);
+
+            return drops;
         }
 
         /* ---------- util ---------- */
