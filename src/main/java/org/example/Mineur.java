@@ -104,7 +104,7 @@ public class Mineur implements CommandExecutor, Listener {
 
         String sub = args[0].toLowerCase(Locale.ROOT);
         switch (sub) {
-            case "aide", "help" -> {
+            case "aide", "help", "!aide" -> {
                 sendUsage(player);
                 return true;
             }
@@ -121,30 +121,69 @@ public class Mineur implements CommandExecutor, Listener {
     }
 
     private void sendUsage(Player player) {
-        player.sendMessage(CMD_PREFIX + ChatColor.YELLOW + "Usage :");
-        player.sendMessage(ChatColor.GOLD + "/mineur aide" + ChatColor.GRAY
-                + " : affiche cette aide détaillée.");
-        player.sendMessage(ChatColor.GOLD + "/mineur" + ChatColor.GRAY
-                + " : reçois le bâton de sélection, puis clique 2 blocs (même Y) pour définir la zone.");
+        int stopAtY = plugin.getConfig().getInt("mineur.stop-at-y", -58);
+        boolean placementAuto = plugin.getConfig().getBoolean("mineur.allow-block-placement", false);
+        for (String line : buildUsageLines(stopAtY, placementAuto)) {
+            player.sendMessage(line);
+        }
+    }
 
-        player.sendMessage(ChatColor.GOLD + "/mineur vitesse <lent|normal|rapide>" + ChatColor.GRAY
-                + " : change la vitesse du mineur.");
+    static List<String> buildUsageLines(int stopAtY, boolean placementAuto) {
+        List<String> lines = new ArrayList<>();
+        lines.add(CMD_PREFIX + ChatColor.YELLOW + "Aide complete du mode mineur");
+        lines.add(ChatColor.GRAY + "Parametres actuels: stop-at-y=" + ChatColor.AQUA + stopAtY
+                + ChatColor.GRAY + ", pose auto=" + ChatColor.AQUA + (placementAuto ? "activee" : "desactivee"));
+        lines.add(ChatColor.DARK_GRAY + "--------------------------------------------------");
 
-        player.sendMessage(ChatColor.GOLD + "/mineur pattern <carriere|branche|tunnel|veine>" + ChatColor.GRAY
-                + " : change le mode de minage (tunnel/veine retombent sur carrière pour l’instant).");
+        lines.add(ChatColor.GOLD + "/mineur" + ChatColor.GRAY
+                + " : donne le baton de selection. Clique 2 blocs au meme Y pour creer ta mine.");
+        lines.add(ChatColor.GRAY
+                + "  Au lancement: mode par defaut, coffres auto, mineur PNJ + golems gardes.");
 
-        player.sendMessage(ChatColor.GOLD + "/mineur pause" + ChatColor.GRAY + " / "
-                + ChatColor.GOLD + "reprendre" + ChatColor.GRAY + " : met en pause ou relance la session.");
+        lines.add(ChatColor.GOLD + "/mineur aide" + ChatColor.GRAY + " | " + ChatColor.GOLD + "/mineur help"
+                + ChatColor.GRAY + " | " + ChatColor.GOLD + "/mineur !aide"
+                + ChatColor.GRAY + " : affiche cette aide complete.");
 
-        player.sendMessage(ChatColor.GOLD + "/mineur stop" + ChatColor.GRAY + " / "
-                + ChatColor.GOLD + "arreter" + ChatColor.GRAY
-                + " : arrête complètement la session en cours.");
+        lines.add(ChatColor.GOLD + "/mineur vitesse <lent|normal|rapide>" + ChatColor.GRAY + " | "
+                + ChatColor.GOLD + "/mineur speed <slow|normal|fast>" + ChatColor.GRAY
+                + " : change la cadence de minage de ta session.");
 
-        player.sendMessage(ChatColor.GOLD + "/mineur info" + ChatColor.GRAY
-                + " : affiche les infos de ta session (monde, zone, pattern, vitesse, Y, etc.).");
+        lines.add(ChatColor.GOLD + "/mineur pattern <carriere|branche|tunnel|veine>" + ChatColor.GRAY + " | "
+                + ChatColor.GOLD + "/mineur mode <...>" + ChatColor.GRAY + " | "
+                + ChatColor.GOLD + "/mineur patron <...>" + ChatColor.GRAY
+                + " : change le mode de minage.");
+        lines.add(ChatColor.GRAY + "  carriere/quarry = balayage complet couche par couche.");
+        lines.add(ChatColor.GRAY + "  branche/branch = galerie principale + branches regulieres.");
+        lines.add(ChatColor.GRAY + "  tunnel = avance en tunnel directionnel.");
+        lines.add(ChatColor.GRAY + "  veine/vein_first = alias temporaire (actuellement fallback sur carriere).");
+        lines.add(ChatColor.GRAY + "  Note: changer de pattern desactive le chainage auto carriere -> tunnel.");
 
-        player.sendMessage(ChatColor.GOLD + "/mineur autoriser <joueur>" + ChatColor.GRAY
-                + " : autorise un joueur à interagir avec ton mineur.");
+        lines.add(ChatColor.GOLD + "/mineur pause" + ChatColor.GRAY
+                + " : met la session en pause sans la supprimer.");
+        lines.add(ChatColor.GOLD + "/mineur reprendre" + ChatColor.GRAY + " | " + ChatColor.GOLD + "/mineur resume"
+                + ChatColor.GRAY + " | " + ChatColor.GOLD + "/mineur play"
+                + ChatColor.GRAY + " : reprend une session en pause.");
+
+        lines.add(ChatColor.GOLD + "/mineur stop" + ChatColor.GRAY + " | " + ChatColor.GOLD + "/mineur arreter"
+                + ChatColor.GRAY + " | " + ChatColor.GOLD + "/mineur off"
+                + ChatColor.GRAY + " : arrete et nettoie completement la session.");
+
+        lines.add(ChatColor.GOLD + "/mineur info" + ChatColor.GRAY + " | " + ChatColor.GOLD + "/mineur status"
+                + ChatColor.GRAY + " : affiche zone, monde, pattern, vitesse, Y mineur, coffres et etat.");
+
+        lines.add(ChatColor.GOLD + "/mineur autoriser <joueur>" + ChatColor.GRAY + " | "
+                + ChatColor.GOLD + "/mineur trust <joueur>" + ChatColor.GRAY
+                + " : autorise un joueur a interagir avec ta session.");
+
+        lines.add(ChatColor.DARK_GRAY + "--------------------------------------------------");
+        lines.add(ChatColor.YELLOW + "Exemples rapides:");
+        lines.add(ChatColor.GRAY + "  /mineur");
+        lines.add(ChatColor.GRAY + "  /mineur vitesse rapide");
+        lines.add(ChatColor.GRAY + "  /mineur pattern branche");
+        lines.add(ChatColor.GRAY + "  /mineur pause");
+        lines.add(ChatColor.GRAY + "  /mineur info");
+        lines.add(ChatColor.GRAY + "  /mineur autoriser PseudoJoueur");
+        return lines;
     }
 
     private void createMineFromSelection(Player player) {

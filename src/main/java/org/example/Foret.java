@@ -1370,13 +1370,16 @@ public final class Foret implements CommandExecutor, Listener {
             }
 
             BlockState state = block.getState();
-            ItemStack effectiveTool = tool != null ? tool : new ItemStack(Material.AIR);
 
             Collection<ItemStack> rawDrops;
             if (forester != null) {
-                rawDrops = state.getDrops(effectiveTool, forester);
+                rawDrops = state.getDrops(tool, forester);
             } else {
-                rawDrops = state.getDrops(effectiveTool);
+                if (tool != null) {
+                    rawDrops = state.getDrops(tool);
+                } else {
+                    rawDrops = state.getDrops();
+                }
             }
 
             List<ItemStack> drops = new ArrayList<>(rawDrops.size());
