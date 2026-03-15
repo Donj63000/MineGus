@@ -4,11 +4,7 @@ import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.World;
 import org.bukkit.block.BlockFace;
-import org.bukkit.block.data.BlockData;
 import org.bukkit.block.data.Bisected;
-import org.bukkit.block.data.Directional;
-import org.bukkit.block.data.type.Bed;
-import org.bukkit.block.data.type.Door;
 import org.bukkit.block.data.type.Stairs;
 import org.bukkit.entity.EntityType;
 import org.bukkit.metadata.FixedMetadataValue;
@@ -16,602 +12,628 @@ import org.bukkit.plugin.Plugin;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Queue;   // ← import manquant corrigé
 import java.util.Random;
 
+import static org.example.village.VillageLayoutPlan.HouseArchetype;
+import static org.example.village.VillageLayoutPlan.HouseSpec;
+import static org.example.village.VillageLayoutPlan.LotPlan;
+import static org.example.village.VillageLayoutPlan.RoofStyle;
+
 /**
- * Constructions unitaires : puits, maisons, fermes, enclos, routes,
- * lampadaires, église.
- *
- * Toutes les décisions de placement sont prises dans {@link Disposition},
- * jamais ici.
+ * Generateur de maisons medievales et petits lots annexes.
  */
 public final class HouseBuilder {
 
-    private HouseBuilder() {}   // utilitaire statique : pas d’instance
+    private HouseBuilder() {}
 
-    /* -------------------------------------------------------------- */
-    /* PUITS + CLOCHETTE                                              */
-    /* -------------------------------------------------------------- */
-
-    public static List<Runnable> buildWell(Location c, TerrainManager.SetBlock sb) {
-        List<Runnable> l = new ArrayList<>();
-        final int ox = c.getBlockX(), oy = c.getBlockY(), oz = c.getBlockZ();
-
-        // cuve
-        for (int dx = 0; dx < 4; dx++)
-            for (int dz = 0; dz < 4; dz++) {
-                final int fx = ox + dx, fz = oz + dz;
-                l.add(() -> sb.set(fx, oy, fz, Material.COBBLESTONE));
-                if (dx > 0 && dx < 3 && dz > 0 && dz < 3)
-                    l.add(() -> sb.set(fx, oy, fz, Material.WATER));
-            }
-
-        // piliers
-        for (int dy = 1; dy <= 3; dy++) {
-            final int y = oy + dy;
-            l.add(() -> sb.set(ox    , y, oz    , Material.COBBLESTONE));
-            l.add(() -> sb.set(ox + 3, y, oz    , Material.COBBLESTONE));
-            l.add(() -> sb.set(ox    , y, oz + 3, Material.COBBLESTONE));
-            l.add(() -> sb.set(ox + 3, y, oz + 3, Material.COBBLESTONE));
+    public static List<Runnable> buildHouse(World world, LotPlan lot, int baseY, TerrainManager.SetBlock sb, Random rng) {
+        List<Runnable> tasks = new ArrayList<>();
+        HouseSpec spec = lot.houseSpec();
+        if (spec == null) {
+            return tasks;
         }
 
-        // dalle de toit
-        final int roof = oy + 4;
-        for (int dx = 0; dx < 4; dx++)
-            for (int dz = 0; dz < 4; dz++) {
-                final int fx = ox + dx, fz = oz + dz;
-                l.add(() -> sb.set(fx, roof, fz, Material.COBBLESTONE_SLAB));
-            }
-        return l;
-    }
-
-    public static List<Runnable> buildBell(Location loc, TerrainManager.SetBlock sb) {
-        final int x = loc.getBlockX(), y = loc.getBlockY(), z = loc.getBlockZ();
-        return List.of(() -> sb.set(x, y, z, Material.BELL));
-    }
-
-    /* -------------------------------------------------------------- */
-    /* ROUTE ORTHOGONALE                                              */
-    /* -------------------------------------------------------------- */
-    public static List<Runnable> buildRoad(int x0, int z0,
-                                           int x1, int z1,
-                                           int y, int halfWidth,
-                                           List<Material> palette,
-                                           TerrainManager.SetBlock sb) {
-
-        List<Runnable> l = new ArrayList<>();
-
-        /* segment X */
-        int minX = Math.min(x0, x1);
-        int maxX = Math.max(x0, x1);
-        for (int x = minX; x <= maxX; x++) {
-            paintStrip(l, palette, x, y, z0 - halfWidth, z0 + halfWidth, sb);
+        VillageStyle.Palette palette = VillageStyle.medievalPalette(spec.accentMaterial());
+        HouseVolume main = new HouseVolume(lot.buildX(), lot.buildZ(), lot.footprintWidth(), lot.footprintDepth(), spec.wallHeight(), spec.roofStyle());
+        buildFoundationSkirt(tasks, sb, main, baseY, palette, spec.foundationStep());
+        buildVolume(tasks, world, sb, main, baseY, lot.facing(), palette, true);
+        if (spec.archetype() == HouseArchetype.FAMILY_HOUSE) {
+            buildVolume(tasks, world, sb, annexFor(main, lot.facing()), baseY, lot.facing(), palette, false);
         }
-
-        /* segment Z */
-        int minZ = Math.min(z0, z1);
-        int maxZ = Math.max(z0, z1);
-        for (int dx = -halfWidth; dx <= halfWidth; dx++) {
-            paintStrip(l, palette, x1 + dx, y, minZ, maxZ, sb);
+        buildDoor(tasks, world, sb, lot, baseY, palette);
+        buildFacade(tasks, world, sb, lot, baseY, palette);
+        buildPorch(tasks, world, sb, lot, baseY, palette);
+        buildInterior(tasks, world, sb, lot, main, baseY, palette);
+        buildArchetypeAccent(tasks, world, sb, lot, baseY, palette);
+        buildYard(tasks, world, sb, lot, baseY, palette);
+        buildChimney(tasks, sb, lot, main, baseY);
+        if (spec.twoStory()) {
+            buildSecondFloor(tasks, world, sb, lot, main, baseY, palette);
         }
-
-        return l;
-    }
-
-    /* -------------------------------------------------------------- */
-    /*  util : peint 1 bloc de route                                  */
-    /* -------------------------------------------------------------- */
-    public static void paintRoad(Queue<Runnable> q,
-                                 List<Material> palette,
-                                 int x, int y, int z,
-                                 TerrainManager.SetBlock sb) {
-
-        Random R = new Random();
-        Material m = palette.get(R.nextInt(palette.size()));
-        q.add(() -> sb.set(x, y, z, m));    // le lambda implémente Runnable
-    }
-
-    /* -------------------------------------------------------------- */
-    /*  util : bande verticale de route                                */
-    /* -------------------------------------------------------------- */
-    public static void paintStrip(Queue<Runnable> q,
-                                  List<Material> palette,
-                                  int fx, int fy,
-                                  int fz0, int fz1,
-                                  TerrainManager.SetBlock sb) {
-
-        Random R = new Random();
-        int minZ = Math.min(fz0, fz1);
-        int maxZ = Math.max(fz0, fz1);
-        for (int z = minZ; z <= maxZ; z++) {
-            final int fz = z;
-            Material m = palette.get(R.nextInt(palette.size()));
-            q.add(() -> sb.set(fx, fy, fz, m));
+        if (spec.hasDormer()) {
+            buildDormer(tasks, world, sb, lot, main, baseY, palette);
         }
+        return tasks;
     }
 
-    // PATCH 2-A
-    private static void paintStrip(List<Runnable> q, List<Material> palette,
-                                   int fx, int fy, int fz0, int fz1,
-                                   TerrainManager.SetBlock sb) {
-        Random R = new Random();
-        int min = Math.min(fz0, fz1), max = Math.max(fz0, fz1);
-        for (int z = min; z <= max; z++) {
-            Material m = palette.get(R.nextInt(palette.size()));
-            int fz = z;
-            q.add(() -> sb.set(fx, fy, fz, m));
-        }
-    }
-
-    /* -------------------------------------------------------------- */
-    /* CHAMP (farmland + eau + cultures)                              */
-    /* -------------------------------------------------------------- */
-    public static List<Runnable> buildFarm(Location base,
-                                           List<Material> crops,
-                                           TerrainManager.SetBlock sb,
-                                           Random rng) {
-
-        List<Runnable> l = new ArrayList<>();
-        Random R = rng != null ? rng : new Random();
-        final int ox = base.getBlockX(), oy = base.getBlockY(), oz = base.getBlockZ();
-
-        /* cadre 9 × 9 en troncs */
-        for (int dx = 0; dx <= 8; dx++)
-            for (int dz = 0; dz <= 8; dz++) {
+    public static List<Runnable> buildFarm(Location base, List<Material> crops, TerrainManager.SetBlock sb, Random rng) {
+        List<Runnable> tasks = new ArrayList<>();
+        Random random = rng != null ? rng : new Random();
+        int ox = base.getBlockX();
+        int oy = base.getBlockY();
+        int oz = base.getBlockZ();
+        for (int dx = 0; dx < 9; dx++) {
+            for (int dz = 0; dz < 9; dz++) {
+                int x = ox + dx;
+                int z = oz + dz;
                 boolean edge = dx == 0 || dx == 8 || dz == 0 || dz == 8;
-                if (!edge) continue;
-                final int fx = ox + dx, fz = oz + dz;
-                l.add(() -> sb.set(fx, oy, fz, Material.OAK_LOG));
-            }
-
-        /* intérieur : water + farmland + plants */
-        for (int dx = 1; dx < 8; dx++)
-            for (int dz = 1; dz < 8; dz++) {
-                final int fx = ox + dx, fz = oz + dz;
-                if (dx == 4 && dz == 4) {
-                    l.add(() -> sb.set(fx, oy, fz, Material.WATER));
+                if (edge) {
+                    place(tasks, sb, x, oy, z, (dx + dz) % 2 == 0 ? Material.OAK_LOG : Material.COBBLESTONE);
+                    if ((dx == 0 || dx == 8) && (dz == 0 || dz == 8)) {
+                        place(tasks, sb, x, oy + 1, z, Material.OAK_FENCE);
+                        place(tasks, sb, x, oy + 2, z, Material.LANTERN);
+                    }
+                } else if (dx == 4 && dz == 4) {
+                    place(tasks, sb, x, oy, z, Material.WATER);
+                    place(tasks, sb, x, oy + 1, z, Material.LILY_PAD);
                 } else {
-                    l.add(() -> sb.set(fx, oy, fz, Material.FARMLAND));
-
-                    Material seed = crops.get(R.nextInt(crops.size()));
-                    Material plant = switch (seed) {
-                        case WHEAT_SEEDS -> Material.WHEAT;
-                        case CARROT      -> Material.CARROTS;
-                        case POTATO      -> Material.POTATOES;
-                        case BEETROOT_SEEDS -> Material.BEETROOTS;
-                        default          -> Material.WHEAT;
-                    };
-                    l.add(() -> sb.set(fx, oy + 1, fz, plant));
+                    place(tasks, sb, x, oy, z, Material.FARMLAND);
+                    place(tasks, sb, x, oy + 1, z, cropFor(crops, random));
                 }
             }
-        return l;
+        }
+        return tasks;
     }
 
-    /* -------------------------------------------------------------- */
-    /* ENCLÔS À ANIMAUX (moutons)                                     */
-    /* -------------------------------------------------------------- */
-    public static List<Runnable> buildPen(Plugin plugin,
-                                          Location base,
-                                          int villageId,
-                                          TerrainManager.SetBlock sb) {
-
-        List<Runnable> l = new ArrayList<>();
-        final int ox = base.getBlockX(), oy = base.getBlockY(), oz = base.getBlockZ();
-
-        /* clôture 6 × 6 */
-        for (int dx = 0; dx <= 6; dx++)
-            for (int dz = 0; dz <= 6; dz++) {
-                boolean edge = dx == 0 || dx == 6 || dz == 0 || dz == 6;
-                if (!edge) continue;
-                final int fx = ox + dx, fz = oz + dz;
-                l.add(() -> sb.set(fx, oy + 1, fz, Material.OAK_FENCE));
+    public static List<Runnable> buildPen(Plugin plugin, Location base, int villageId, TerrainManager.SetBlock sb) {
+        List<Runnable> tasks = new ArrayList<>();
+        int ox = base.getBlockX();
+        int oy = base.getBlockY();
+        int oz = base.getBlockZ();
+        for (int dx = 0; dx < 8; dx++) {
+            for (int dz = 0; dz < 8; dz++) {
+                int x = ox + dx;
+                int z = oz + dz;
+                boolean edge = dx == 0 || dx == 7 || dz == 0 || dz == 7;
+                place(tasks, sb, x, oy, z, Material.GRASS_BLOCK);
+                if (edge) {
+                    place(tasks, sb, x, oy + 1, z, (dx == 3 && dz == 0) ? Material.OAK_FENCE_GATE : Material.OAK_FENCE);
+                }
             }
-
-        /* herbe */
-        for (int dx = 1; dx < 6; dx++)
-            for (int dz = 1; dz < 6; dz++) {
-                final int fx = ox + dx, fz = oz + dz;
-                l.add(() -> sb.set(fx, oy, fz, Material.GRASS_BLOCK));
+        }
+        place(tasks, sb, ox + 1, oy + 1, oz + 1, Material.HAY_BLOCK);
+        place(tasks, sb, ox + 6, oy + 1, oz + 5, Material.HAY_BLOCK);
+        place(tasks, sb, ox + 4, oy + 1, oz + 2, Material.WATER_CAULDRON);
+        tasks.add(() -> {
+            World world = base.getWorld();
+            if (world == null) {
+                return;
             }
-
-        /* trois moutons tagués */
-        l.add(() -> {
-            World w = base.getWorld();
-            Random R = new Random();
             for (int i = 0; i < 3; i++) {
-                Location loc = base.clone()
-                        .add(1.5 + R.nextDouble() * 3, 1,
-                                1.5 + R.nextDouble() * 3);
-                var e = w.spawnEntity(loc, EntityType.SHEEP);
-                e.setMetadata(VillageEntityManager.TAG,
-                        new FixedMetadataValue(plugin, villageId));
+                var entity = world.spawnEntity(base.clone().add(2 + i, 1, 3), EntityType.SHEEP);
+                entity.setMetadata(VillageEntityManager.TAG, new FixedMetadataValue(plugin, villageId));
             }
         });
-
-        return l;
-    }
-
-    /* -------------------------------------------------------------- */
-    /* LAMPADAIRE (poteau + lanterne)                                 */
-    /* -------------------------------------------------------------- */
-    public static List<Runnable> buildLampPost(int x, int y, int z,
-                                               TerrainManager.SetBlock sb) {
-
-        List<Runnable> l = new ArrayList<>();
-        /* poteau */
-        for (int dy = 0; dy <= 3; dy++) {
-            final int fy = y + dy;
-            l.add(() -> sb.set(x, fy, z, Material.OAK_LOG));
-        }
-        /* chaîne + lanterne */
-        l.add(() -> sb.set(x, y + 4, z, Material.CHAIN));
-        l.add(() -> sb.set(x, y + 3, z, Material.LANTERN));
-        return l;
-    }
-
-    /* -------------------------------------------------------------- */
-    /* MAISON STANDARD (refonte 2025‑06)                              */
-    /* -------------------------------------------------------------- */
-    public static List<Runnable> buildHouse(Plugin plugin,
-                                            Location base, int size, int rot,
-                                            List<Material> logs,
-                                            List<Material> planks,
-                                            List<Material> roofs,
-                                            TerrainManager.SetBlock sb,
-                                            Random rng,
-                                            int villageId) {
-
-        List<Runnable> tasks = new ArrayList<>();
-
-        /* --- coordonnées absolues --- */
-        final int ox = base.getBlockX();
-        final int oy = base.getBlockY();
-        final int oz = base.getBlockZ();
-
-        /* --- matériaux aléatoires / palettes --- */
-        final int  wallHeight = (size <= 7 ? 4 : 5);
-        final Material fundMat   = Material.STONE_BRICKS;
-        final Material windowMat = Material.GLASS;
-        final Material roofMat   = pickRandom(roofs, rng, Material.OAK_LOG);
-        final Material floorMat  = planks.get(rng.nextInt(planks.size()));
-        final Material logMat    = logs.get(rng.nextInt(logs.size()));
-        final Material wallMat   = planks.get(rng.nextInt(planks.size()));
-
-        /* 1) fondations + plancher */
-        for (int dx = 0; dx < size; dx++)
-            for (int dz = 0; dz < size; dz++) {
-                int[] p = rotate(dx, dz, rot);
-                int fx = ox + p[0], fz = oz + p[1];
-                tasks.add(() -> sb.set(fx, oy - 1, fz, fundMat));
-                tasks.add(() -> sb.set(fx, oy    , fz, floorMat));
-            }
-
-        /* 2) murs + fenêtres */
-        for (int dx = 0; dx < size; dx++)
-            for (int dz = 0; dz < size; dz++) {
-                boolean edge   = dx == 0 || dz == 0 || dx == size - 1 || dz == size - 1;
-                if (!edge) continue;
-                boolean corner = (dx == 0 || dx == size - 1) && (dz == 0 || dz == size - 1);
-
-                for (int h = 1; h <= wallHeight; h++) {
-                    int[] p = rotate(dx, dz, rot);
-                    int fx = ox + p[0], fy = oy + h, fz = oz + p[1];
-
-                    boolean windowLayer = (h == 2 || h == 3) && !corner;
-                    boolean evenPos = ((rot == 0 || rot == 180) ? dx : dz) % 2 == 0;
-                    boolean putWindow = windowLayer && evenPos;
-
-                    Material m = putWindow ? windowMat : (corner ? logMat : wallMat);
-                    tasks.add(() -> sb.set(fx, fy, fz, m));
-                }
-            }
-
-        /* 3) porte + perron réel */
-        int[] doorL = switch (rot) {
-            case 0   -> new int[]{size / 2, size - 1};
-            case 90  -> new int[]{0,        size / 2};
-            case 180 -> new int[]{size / 2, 0       };
-            case 270 -> new int[]{size - 1, size / 2};
-            default  -> new int[]{size / 2, size - 1};
-        };
-        placeDoorWithPorch(tasks, base, rot, doorL, fundMat, sb);
-
-        /* 4) toit en escaliers (palette roof) */
-        buildStairRoof(tasks, base, size, rot, wallHeight, roofMat, sb);
-
-        /* 5) éclairage intérieur */
-        int[] centre = rotate(size / 2, size / 2, rot);
-        int cx = ox + centre[0], cz = oz + centre[1];
-        tasks.add(() -> sb.set(cx, oy + wallHeight, cz, Material.CHAIN));
-        tasks.add(() -> sb.set(cx, oy + wallHeight - 1, cz, Material.LANTERN));
-
-        /* 6) mobilier plus riche */
-        tasks.addAll(decorateInterior(base, size, rot, sb, rng));
-
         return tasks;
     }
 
-    /* -------------------------------------------------------------- */
-    /* SURCHARGE courte (x‑y‑z) pour compat Disposition               */
-    /* -------------------------------------------------------------- */
-    public static List<Runnable> buildHouse(int x, int y, int z,
-                                            int size, int rot,
-                                            List<Material> roadPalette,
-                                            List<Material> roofPalette,
-                                            List<Material> wallLogs,
-                                            List<Material> wallPlanks,
-                                            TerrainManager.SetBlock sb) {
-
-        return buildHouse(null,
-                new Location(null, x, y, z),
-                size, rot,
-                wallLogs, wallPlanks, roofPalette,
-                sb, new Random(), 0);
+    public static List<Runnable> buildLampPost(int x, int y, int z, TerrainManager.SetBlock sb) {
+        List<Runnable> tasks = new ArrayList<>();
+        place(tasks, sb, x, y, z, Material.STONE_BRICKS);
+        place(tasks, sb, x, y + 1, z, Material.COBBLESTONE_WALL);
+        place(tasks, sb, x, y + 2, z, Material.CHAIN);
+        place(tasks, sb, x, y + 3, z, Material.LANTERN);
+        return tasks;
     }
 
-    /* -------------------------------------------------------------- */
-    /* util rotation                                                  */
-    /* -------------------------------------------------------------- */
-    private static int[] rotate(int dx, int dz, int rot) {
-        return switch (rot) {
-            case 90  -> new int[]{ dz, -dx};
-            case 180 -> new int[]{-dx, -dz};
-            case 270 -> new int[]{-dz,  dx};
-            default  -> new int[]{ dx,  dz};
-        };
-    }
-
-    private static BlockFace mapFacing(BlockFace face, int rot) {
-        int dx = 0, dz = 0;
-        switch (face) {
-            case EAST  -> { dx = 1;  dz = 0; }
-            case WEST  -> { dx = -1; dz = 0; }
-            case SOUTH -> { dx = 0;  dz = 1; }
-            case NORTH -> { dx = 0;  dz = -1; }
-            default    -> { dx = 0;  dz = -1; }
-        }
-        int[] r = rotate(dx, dz, rot);
-        return faceFromDelta(r[0], r[1]);
-    }
-
-    private static BlockFace faceFromDelta(int dx, int dz) {
-        if (dx == 0 && dz == -1) return BlockFace.NORTH;
-        if (dx == 0 && dz == 1)  return BlockFace.SOUTH;
-        if (dx == 1 && dz == 0)  return BlockFace.EAST;
-        if (dx == -1 && dz == 0) return BlockFace.WEST;
-        return BlockFace.NORTH;
-    }
-
-    private static Material pickRandom(List<Material> mats, Random rng, Material fallback) {
-        if (mats == null || mats.isEmpty()) {
-            return fallback;
-        }
-        Random r = rng != null ? rng : new Random();
-        return mats.get(r.nextInt(mats.size()));
-    }
-
-    private static void buildStairRoof(List<Runnable> tasks,
-                                       Location base,
-                                       int size, int rot,
-                                       int wallHeight,
-                                       Material roofMat,
-                                       TerrainManager.SetBlock sb) {
-
-        int roofStartY = base.getBlockY() + wallHeight + 1;
-        int levels = size / 2;
-
-        for (int level = 0; level < levels; level++) {
-            int y = roofStartY + level;
-            int min = level, max = size - 1 - level;
-
-            for (int dx = min; dx <= max; dx++) {
-                addStair(tasks, base, sb, rot, dx, min, y, roofMat, BlockFace.NORTH);
-                addStair(tasks, base, sb, rot, dx, max, y, roofMat, BlockFace.SOUTH);
-            }
-            for (int dz = min + 1; dz <= max - 1; dz++) {
-                addStair(tasks, base, sb, rot, min, dz, y, roofMat, BlockFace.WEST);
-                addStair(tasks, base, sb, rot, max, dz, y, roofMat, BlockFace.EAST);
+    private static void buildVolume(List<Runnable> tasks,
+                                    World world,
+                                    TerrainManager.SetBlock sb,
+                                    HouseVolume volume,
+                                    int baseY,
+                                    BlockFace facing,
+                                    VillageStyle.Palette palette,
+                                    boolean doorFace) {
+        for (int x = volume.minX(); x <= volume.maxX(); x++) {
+            for (int z = volume.minZ(); z <= volume.maxZ(); z++) {
+                place(tasks, sb, x, baseY - 1, z, perimeter(x, z, volume) ? palette.foundationPrimary() : palette.foundationAccent());
+                place(tasks, sb, x, baseY, z, palette.floor());
             }
         }
 
-        int[] centre = rotate(size / 2, size / 2, rot);
-        int fx = base.getBlockX() + centre[0];
-        int fz = base.getBlockZ() + centre[1];
-        int topY = roofStartY + levels;
-        tasks.add(() -> sb.set(fx, topY, fz, roofMat));
-    }
-
-    private static void addStair(List<Runnable> tasks,
-                                 Location base,
-                                 TerrainManager.SetBlock sb,
-                                 int rot,
-                                 int localX, int localZ,
-                                 int y,
-                                 Material mat,
-                                 BlockFace localFacing) {
-
-        int[] p = rotate(localX, localZ, rot);
-        int fx = base.getBlockX() + p[0];
-        int fz = base.getBlockZ() + p[1];
-
-        tasks.add(() -> sb.set(fx, y, fz, mat));
-
-        World world = base.getWorld();
-        if (world != null) {
-            BlockFace facing = mapFacing(localFacing, rot);
-            tasks.add(() -> {
-                BlockData data = mat.createBlockData();
-                if (data instanceof Stairs stairs) {
-                    stairs.setFacing(facing);
-                    world.getBlockAt(fx, y, fz).setBlockData(stairs, false);
+        for (int y = baseY + 1; y <= baseY + volume.wallHeight(); y++) {
+            for (int x = volume.minX(); x <= volume.maxX(); x++) {
+                for (int z = volume.minZ(); z <= volume.maxZ(); z++) {
+                    if (!perimeter(x, z, volume)) {
+                        continue;
+                    }
+                    boolean corner = corner(x, z, volume);
+                    if (corner || ((x + z + y) % 4 == 0)) {
+                        place(tasks, sb, x, y, z, palette.timber());
+                    } else if (shouldWindow(x, y, z, volume, baseY, facing, doorFace)) {
+                        place(tasks, sb, x, y, z, palette.window());
+                        place(tasks, sb, x, y - 1, z, palette.roofSlab());
+                        addShutters(tasks, world, sb, x, y, z, outward(x, z, volume), palette);
+                    } else {
+                        place(tasks, sb, x, y, z, palette.wallFill());
+                    }
                 }
-            });
+            }
         }
+
+        buildRoof(tasks, world, sb, volume, baseY + volume.wallHeight() + 1, facing, palette);
     }
 
-    private static void placeDoorWithPorch(List<Runnable> tasks,
-                                           Location base,
-                                           int rot,
-                                           int[] doorLocal,
-                                           Material fundMat,
-                                           TerrainManager.SetBlock sb) {
-
-        int ox = base.getBlockX();
-        int oy = base.getBlockY();
-        int oz = base.getBlockZ();
-
-        int[] p = rotate(doorLocal[0], doorLocal[1], rot);
-        int fx = ox + p[0];
-        int fz = oz + p[1];
-
-        tasks.add(() -> sb.set(fx, oy + 1, fz, Material.OAK_DOOR));
-        tasks.add(() -> sb.set(fx, oy + 2, fz, Material.OAK_DOOR));
-
-        int[] front = switch (rot) {
-            case 0   -> new int[]{ 0,  1};
-            case 90  -> new int[]{-1,  0};
-            case 180 -> new int[]{ 0, -1};
-            case 270 -> new int[]{ 1,  0};
-            default  -> new int[]{ 0,  1};
-        };
-        int px = fx + front[0];
-        int pz = fz + front[1];
-        tasks.add(() -> sb.set(px, oy, pz, Material.SMOOTH_STONE_SLAB));
-        tasks.add(() -> sb.set(px, oy - 1, pz, fundMat));
-
-        World world = base.getWorld();
+    private static void buildDoor(List<Runnable> tasks,
+                                  World world,
+                                  TerrainManager.SetBlock sb,
+                                  LotPlan lot,
+                                  int baseY,
+                                  VillageStyle.Palette palette) {
+        int doorX = lot.doorX();
+        int doorZ = lot.doorZ();
+        place(tasks, sb, doorX, baseY + 1, doorZ, palette.door());
+        place(tasks, sb, doorX, baseY + 2, doorZ, palette.door());
         if (world != null) {
-            BlockFace facing = faceFromDelta(front[0], front[1]);
-            tasks.add(() -> applyDoorData(world, fx, oy + 1, fz, facing, Bisected.Half.BOTTOM));
-            tasks.add(() -> applyDoorData(world, fx, oy + 2, fz, facing, Bisected.Half.TOP));
+            tasks.add(() -> VillageStyle.setDoor(world, doorX, baseY + 1, doorZ, palette.door(), lot.facing(), Bisected.Half.BOTTOM));
+            tasks.add(() -> VillageStyle.setDoor(world, doorX, baseY + 2, doorZ, palette.door(), lot.facing(), Bisected.Half.TOP));
+        }
+        place(tasks, sb, lot.frontStepX(), baseY, lot.frontStepZ(), palette.paving());
+        place(tasks, sb, lot.frontStepX(), baseY - 1, lot.frontStepZ(), palette.foundationPrimary());
+    }
+
+    private static void buildFacade(List<Runnable> tasks,
+                                    World world,
+                                    TerrainManager.SetBlock sb,
+                                    LotPlan lot,
+                                    int baseY,
+                                    VillageStyle.Palette palette) {
+        int beamY = baseY + lot.houseSpec().wallHeight();
+        BlockFace left = VillageStyle.leftOf(lot.facing());
+        BlockFace right = VillageStyle.rightOf(lot.facing());
+        int leftX = lot.doorX() + left.getModX() * 2;
+        int leftZ = lot.doorZ() + left.getModZ() * 2;
+        int rightX = lot.doorX() + right.getModX() * 2;
+        int rightZ = lot.doorZ() + right.getModZ() * 2;
+        if (leftX == rightX) {
+            for (int z = Math.min(leftZ, rightZ); z <= Math.max(leftZ, rightZ); z++) {
+                place(tasks, sb, leftX, beamY, z, palette.timber());
+            }
+        } else {
+            for (int x = Math.min(leftX, rightX); x <= Math.max(leftX, rightX); x++) {
+                place(tasks, sb, x, beamY, leftZ, palette.timber());
+            }
+        }
+        place(tasks, sb, lot.frontStepX(), baseY + 3, lot.frontStepZ(), Material.CHAIN);
+        place(tasks, sb, lot.frontStepX(), baseY + 2, lot.frontStepZ(), Material.LANTERN);
+        if (lot.houseSpec().facadeVariant() % 2 == 0) {
+            int awningX = lot.frontStepX();
+            int awningZ = lot.frontStepZ();
+            stair(tasks, world, sb, awningX, baseY + 3, awningZ, palette.awning(), VillageStyle.opposite(lot.facing()));
+        }
+        int bannerX = lot.frontStepX() + VillageStyle.leftOf(lot.facing()).getModX() * 2;
+        int bannerZ = lot.frontStepZ() + VillageStyle.leftOf(lot.facing()).getModZ() * 2;
+        place(tasks, sb, bannerX, baseY + 2, bannerZ, lot.houseSpec().facadeVariant() % 2 == 0 ? Material.RED_BANNER : Material.YELLOW_BANNER);
+    }
+
+    private static void buildInterior(List<Runnable> tasks,
+                                      World world,
+                                      TerrainManager.SetBlock sb,
+                                      LotPlan lot,
+                                      HouseVolume main,
+                                      int baseY,
+                                      VillageStyle.Palette palette) {
+        int cx = (main.minX() + main.maxX()) / 2;
+        int cz = (main.minZ() + main.maxZ()) / 2;
+        place(tasks, sb, cx, baseY + 1, cz, Material.CRAFTING_TABLE);
+
+        int lx = cx + VillageStyle.leftOf(lot.facing()).getModX();
+        int lz = cz + VillageStyle.leftOf(lot.facing()).getModZ();
+        int rx = cx + VillageStyle.rightOf(lot.facing()).getModX();
+        int rz = cz + VillageStyle.rightOf(lot.facing()).getModZ();
+        stair(tasks, world, sb, lx, baseY + 1, lz, Material.OAK_STAIRS, VillageStyle.rightOf(lot.facing()));
+        stair(tasks, world, sb, rx, baseY + 1, rz, Material.OAK_STAIRS, VillageStyle.leftOf(lot.facing()));
+
+        int bedX = main.minX() + 1;
+        int bedZ = main.maxZ() - 2;
+        place(tasks, sb, bedX, baseY + 1, bedZ, Material.WHITE_BED);
+        place(tasks, sb, bedX + 1, baseY + 1, bedZ, Material.WHITE_BED);
+
+        switch (lot.houseSpec().interiorVariant()) {
+            case 0 -> {
+                place(tasks, sb, main.maxX() - 1, baseY + 1, main.minZ() + 1, Material.FURNACE);
+                place(tasks, sb, main.maxX() - 2, baseY + 1, main.minZ() + 1, Material.BARREL);
+            }
+            case 1 -> {
+                place(tasks, sb, main.maxX() - 1, baseY + 1, main.minZ() + 1, Material.SMITHING_TABLE);
+                place(tasks, sb, main.maxX() - 2, baseY + 1, main.minZ() + 1, Material.ANVIL);
+            }
+            default -> {
+                place(tasks, sb, main.maxX() - 1, baseY + 1, main.minZ() + 1, Material.BOOKSHELF);
+                place(tasks, sb, main.maxX() - 2, baseY + 1, main.minZ() + 1, Material.LECTERN);
+            }
+        }
+        place(tasks, sb, main.minX() + 1, baseY + 1, main.minZ() + 1, Material.BARREL);
+        place(tasks, sb, cx, baseY + lot.houseSpec().wallHeight() - 1, cz, Material.LANTERN);
+        place(tasks, sb, cx - 1, baseY + 1, cz + 1, Material.SPRUCE_PRESSURE_PLATE);
+        place(tasks, sb, cx + 1, baseY + 1, cz + 1, Material.SPRUCE_PRESSURE_PLATE);
+        place(tasks, sb, cx, baseY + 1, cz + 1, Material.SPRUCE_SLAB);
+    }
+
+    private static void buildArchetypeAccent(List<Runnable> tasks,
+                                             World world,
+                                             TerrainManager.SetBlock sb,
+                                             LotPlan lot,
+                                             int baseY,
+                                             VillageStyle.Palette palette) {
+        switch (lot.houseSpec().archetype()) {
+            case COTTAGE -> {
+                place(tasks, sb, lot.minX() + 1, baseY + 1, lot.maxZ() - 1, Material.FLOWER_POT);
+                place(tasks, sb, lot.maxX() - 1, baseY + 1, lot.maxZ() - 1, Material.FLOWER_POT);
+            }
+            case TOWNHOUSE -> place(tasks, sb, lot.frontStepX() + VillageStyle.leftOf(lot.facing()).getModX() * 2,
+                    baseY + 2, lot.frontStepZ() + VillageStyle.leftOf(lot.facing()).getModZ() * 2, Material.RED_BANNER);
+            case FAMILY_HOUSE -> place(tasks, sb, lot.maxX(), baseY + 1, lot.maxZ() - 2, Material.BARREL);
+            case WORKSHOP_HOUSE -> {
+                int yardX = lot.frontStepX() + VillageStyle.rightOf(lot.facing()).getModX() * 2;
+                int yardZ = lot.frontStepZ() + VillageStyle.rightOf(lot.facing()).getModZ() * 2;
+                place(tasks, sb, yardX, baseY, yardZ, Material.GRAVEL);
+                place(tasks, sb, yardX, baseY + 1, yardZ, Material.BARREL);
+                place(tasks, sb, yardX + VillageStyle.rightOf(lot.facing()).getModX(), baseY + 1,
+                        yardZ + VillageStyle.rightOf(lot.facing()).getModZ(), Material.CHEST);
+            }
         }
     }
 
-    private static void applyDoorData(World world, int x, int y, int z,
-                                      BlockFace facing, Bisected.Half half) {
-        BlockData data = Material.OAK_DOOR.createBlockData();
-        if (data instanceof Door door) {
-            door.setFacing(facing);
-            door.setHalf(half);
-            world.getBlockAt(x, y, z).setBlockData(door, false);
+    private static void buildFoundationSkirt(List<Runnable> tasks,
+                                             TerrainManager.SetBlock sb,
+                                             HouseVolume main,
+                                             int baseY,
+                                             VillageStyle.Palette palette,
+                                             int steps) {
+        for (int step = 1; step <= steps; step++) {
+            int minX = main.minX() - step;
+            int maxX = main.maxX() + step;
+            int minZ = main.minZ() - step;
+            int maxZ = main.maxZ() + step;
+            for (int x = minX; x <= maxX; x++) {
+                for (int z = minZ; z <= maxZ; z++) {
+                    boolean edge = x == minX || x == maxX || z == minZ || z == maxZ;
+                    if (edge) {
+                        place(tasks, sb, x, baseY - step, z, step == 1 ? palette.foundationPrimary() : palette.foundationAccent());
+                    }
+                }
+            }
         }
     }
 
-    private static void placeBed(List<Runnable> tasks, Location base,
-                                 TerrainManager.SetBlock sb,
-                                 int xFoot, int y, int zFoot,
-                                 BlockFace facing) {
-
-        int headX = xFoot + facing.getModX();
-        int headZ = zFoot + facing.getModZ();
-
-        tasks.add(() -> sb.set(xFoot, y, zFoot, Material.WHITE_BED));
-        tasks.add(() -> sb.set(headX, y, headZ, Material.WHITE_BED));
-
-        World world = base.getWorld();
-        if (world != null) {
-            tasks.add(() -> applyBedData(world, xFoot, y, zFoot, facing, Bed.Part.FOOT));
-            tasks.add(() -> applyBedData(world, headX, y, headZ, facing, Bed.Part.HEAD));
-        }
-    }
-
-    private static void applyBedData(World world, int x, int y, int z,
-                                     BlockFace facing, Bed.Part part) {
-        BlockData data = Material.WHITE_BED.createBlockData();
-        if (data instanceof Bed bed) {
-            bed.setFacing(facing);
-            bed.setPart(part);
-            world.getBlockAt(x, y, z).setBlockData(bed, false);
-        }
-    }
-
-    private static void placeChair(List<Runnable> tasks, Location base,
+    private static void buildPorch(List<Runnable> tasks,
+                                   World world,
                                    TerrainManager.SetBlock sb,
-                                   int x, int y, int z,
-                                   BlockFace facing) {
+                                   LotPlan lot,
+                                   int baseY,
+                                   VillageStyle.Palette palette) {
+        if (!lot.houseSpec().hasPorch()) {
+            return;
+        }
+        BlockFace left = VillageStyle.leftOf(lot.facing());
+        BlockFace right = VillageStyle.rightOf(lot.facing());
+        int px = lot.frontStepX();
+        int pz = lot.frontStepZ();
+        place(tasks, sb, px, baseY, pz, palette.floor());
+        place(tasks, sb, px + left.getModX(), baseY, pz + left.getModZ(), palette.floor());
+        place(tasks, sb, px + right.getModX(), baseY, pz + right.getModZ(), palette.floor());
+        place(tasks, sb, px + left.getModX(), baseY + 1, pz + left.getModZ(), palette.fence());
+        place(tasks, sb, px + right.getModX(), baseY + 1, pz + right.getModZ(), palette.fence());
+        stair(tasks, world, sb, px, baseY + 2, pz, palette.awning(), VillageStyle.opposite(lot.facing()));
+    }
 
-        tasks.add(() -> sb.set(x, y, z, Material.OAK_STAIRS));
+    private static void buildYard(List<Runnable> tasks,
+                                  World world,
+                                  TerrainManager.SetBlock sb,
+                                  LotPlan lot,
+                                  int baseY,
+                                  VillageStyle.Palette palette) {
+        int depth = Math.max(2, lot.yardDepth());
+        BlockFace front = lot.facing();
+        BlockFace left = VillageStyle.leftOf(front);
+        BlockFace right = VillageStyle.rightOf(front);
+        int startX = lot.frontStepX() + front.getModX();
+        int startZ = lot.frontStepZ() + front.getModZ();
+        for (int step = 0; step < depth; step++) {
+            int cx = startX + front.getModX() * step;
+            int cz = startZ + front.getModZ() * step;
+            place(tasks, sb, cx, baseY, cz, step == 0 ? palette.paving() : yardMaterial(lot.houseSpec().yardStyle(), step));
+            if (step == depth - 1) {
+                place(tasks, sb, cx + left.getModX(), baseY + 1, cz + left.getModZ(), palette.fence());
+                place(tasks, sb, cx + right.getModX(), baseY + 1, cz + right.getModZ(), palette.fence());
+            }
+        }
 
-        World world = base.getWorld();
-        if (world != null) {
-            tasks.add(() -> {
-                BlockData data = Material.OAK_STAIRS.createBlockData();
-                if (data instanceof Stairs stairs) {
-                    stairs.setFacing(facing);
-                    world.getBlockAt(x, y, z).setBlockData(stairs, false);
+        switch (lot.houseSpec().yardStyle()) {
+            case FLOWERS -> {
+                place(tasks, sb, startX + left.getModX() * 2, baseY + 1, startZ + left.getModZ() * 2, Material.POPPY);
+                place(tasks, sb, startX + right.getModX() * 2, baseY + 1, startZ + right.getModZ() * 2, Material.BLUE_ORCHID);
+            }
+            case WOODPILE -> {
+                place(tasks, sb, startX + left.getModX() * 2, baseY, startZ + left.getModZ() * 2, Material.OAK_LOG);
+                place(tasks, sb, startX + right.getModX() * 2, baseY + 1, startZ + right.getModZ() * 2, Material.BARREL);
+            }
+            case FENCED -> {
+                place(tasks, sb, startX + left.getModX() * 2, baseY + 1, startZ + left.getModZ() * 2, palette.fence());
+                place(tasks, sb, startX + right.getModX() * 2, baseY + 1, startZ + right.getModZ() * 2, palette.fence());
+            }
+            case KITCHEN_GARDEN -> {
+                place(tasks, sb, startX + left.getModX() * 2, baseY, startZ + left.getModZ() * 2, Material.FARMLAND);
+                place(tasks, sb, startX + left.getModX() * 2, baseY + 1, startZ + left.getModZ() * 2, Material.CARROTS);
+                place(tasks, sb, startX + right.getModX() * 2, baseY, startZ + right.getModZ() * 2, Material.FARMLAND);
+                place(tasks, sb, startX + right.getModX() * 2, baseY + 1, startZ + right.getModZ() * 2, Material.POTATOES);
+            }
+        }
+    }
+
+    private static Material yardMaterial(VillageLayoutPlan.YardStyle yardStyle, int step) {
+        return switch (yardStyle) {
+            case FLOWERS -> step % 2 == 0 ? Material.GRASS_BLOCK : Material.MOSS_BLOCK;
+            case WOODPILE -> Material.COARSE_DIRT;
+            case FENCED -> Material.GRAVEL;
+            case KITCHEN_GARDEN -> Material.PACKED_MUD;
+        };
+    }
+
+    private static void buildChimney(List<Runnable> tasks, TerrainManager.SetBlock sb, LotPlan lot, HouseVolume main, int baseY) {
+        if (lot.houseSpec().archetype() == HouseArchetype.TOWNHOUSE && lot.houseSpec().facadeVariant() == 0) {
+            return;
+        }
+        BlockFace back = VillageStyle.opposite(lot.facing());
+        BlockFace side = lot.houseSpec().facadeVariant() % 2 == 0 ? VillageStyle.leftOf(lot.facing()) : VillageStyle.rightOf(lot.facing());
+        int x = back == BlockFace.WEST ? main.minX() + 1 : back == BlockFace.EAST ? main.maxX() - 1 : (side == BlockFace.WEST ? main.minX() + 1 : main.maxX() - 1);
+        int z = back == BlockFace.NORTH ? main.minZ() + 1 : back == BlockFace.SOUTH ? main.maxZ() - 1 : (side == BlockFace.NORTH ? main.minZ() + 1 : main.maxZ() - 1);
+        for (int y = baseY + 1; y <= baseY + main.wallHeight() + 4; y++) {
+            place(tasks, sb, x, y, z, Material.BRICKS);
+        }
+        place(tasks, sb, x, baseY + main.wallHeight() + 5, z, Material.CAMPFIRE);
+    }
+
+    private static void buildSecondFloor(List<Runnable> tasks,
+                                         World world,
+                                         TerrainManager.SetBlock sb,
+                                         LotPlan lot,
+                                         HouseVolume main,
+                                         int baseY,
+                                         VillageStyle.Palette palette) {
+        int floorY = baseY + 4;
+        for (int x = main.minX() + 1; x <= main.maxX() - 1; x++) {
+            for (int z = main.minZ() + 1; z <= main.maxZ() - 1; z++) {
+                place(tasks, sb, x, floorY, z, palette.floor());
+            }
+        }
+        int sx = lot.facing() == BlockFace.WEST ? main.maxX() - 1 : main.minX() + 1;
+        int sz = lot.facing() == BlockFace.NORTH ? main.maxZ() - 2 : main.minZ() + 1;
+        for (int step = 0; step < 4; step++) {
+            stair(tasks, world, sb, sx, baseY + 1 + step, sz + step, palette.roofStairs(), BlockFace.SOUTH);
+        }
+    }
+
+    private static void buildDormer(List<Runnable> tasks,
+                                    World world,
+                                    TerrainManager.SetBlock sb,
+                                    LotPlan lot,
+                                    HouseVolume main,
+                                    int baseY,
+                                    VillageStyle.Palette palette) {
+        int roofBaseY = baseY + main.wallHeight() + 2;
+        int x = (main.minX() + main.maxX()) / 2;
+        int z = lot.facing() == BlockFace.NORTH ? main.minZ() - 1 : main.maxZ() + 1;
+        place(tasks, sb, x, roofBaseY, z, palette.window());
+        stair(tasks, world, sb, x, roofBaseY + 1, z, palette.roofStairs(), VillageStyle.opposite(lot.facing()));
+    }
+
+    private static void buildRoof(List<Runnable> tasks,
+                                  World world,
+                                  TerrainManager.SetBlock sb,
+                                  HouseVolume volume,
+                                  int roofY,
+                                  BlockFace facing,
+                                  VillageStyle.Palette palette) {
+        switch (volume.roofStyle()) {
+            case HIP -> hipRoof(tasks, world, sb, volume, roofY, palette);
+            case SHED -> shedRoof(tasks, world, sb, volume, roofY, VillageStyle.opposite(facing), palette);
+            case OFFSET_GABLE -> {
+                gableRoof(tasks, world, sb, volume, roofY, facing, palette);
+                int x = (volume.minX() + volume.maxX()) / 2;
+                int z = facing == BlockFace.NORTH ? volume.minZ() - 1 : facing == BlockFace.SOUTH ? volume.maxZ() + 1 : (volume.minZ() + volume.maxZ()) / 2;
+                place(tasks, sb, x, roofY + 2, z, palette.window());
+                stair(tasks, world, sb, x, roofY + 3, z, palette.roofStairs(), VillageStyle.opposite(facing));
+            }
+            case GABLE -> gableRoof(tasks, world, sb, volume, roofY, facing, palette);
+        }
+    }
+
+    private static void gableRoof(List<Runnable> tasks,
+                                  World world,
+                                  TerrainManager.SetBlock sb,
+                                  HouseVolume volume,
+                                  int roofY,
+                                  BlockFace facing,
+                                  VillageStyle.Palette palette) {
+        boolean ridgeAlongX = facing == BlockFace.NORTH || facing == BlockFace.SOUTH;
+        int layers = ridgeAlongX ? (volume.footprintDepth() + 1) / 2 : (volume.footprintWidth() + 1) / 2;
+        for (int layer = 0; layer < layers; layer++) {
+            int y = roofY + layer;
+            if (ridgeAlongX) {
+                int lowZ = volume.minZ() - 1 + layer;
+                int highZ = volume.maxZ() + 1 - layer;
+                for (int x = volume.minX() - 1; x <= volume.maxX() + 1; x++) {
+                    stair(tasks, world, sb, x, y, lowZ, palette.roofStairs(), BlockFace.NORTH);
+                    stair(tasks, world, sb, x, y, highZ, palette.roofStairs(), BlockFace.SOUTH);
                 }
-            });
+            } else {
+                int lowX = volume.minX() - 1 + layer;
+                int highX = volume.maxX() + 1 - layer;
+                for (int z = volume.minZ() - 1; z <= volume.maxZ() + 1; z++) {
+                    stair(tasks, world, sb, lowX, y, z, palette.roofStairs(), BlockFace.WEST);
+                    stair(tasks, world, sb, highX, y, z, palette.roofStairs(), BlockFace.EAST);
+                }
+            }
+        }
+        if (ridgeAlongX) {
+            int ridgeZ = (volume.minZ() + volume.maxZ()) / 2;
+            for (int x = volume.minX() - 1; x <= volume.maxX() + 1; x++) {
+                place(tasks, sb, x, roofY + layers, ridgeZ, palette.roofSlab());
+            }
+        } else {
+            int ridgeX = (volume.minX() + volume.maxX()) / 2;
+            for (int z = volume.minZ() - 1; z <= volume.maxZ() + 1; z++) {
+                place(tasks, sb, ridgeX, roofY + layers, z, palette.roofSlab());
+            }
         }
     }
 
-    private static void applyWallTorch(World world, int x, int y, int z, BlockFace facing) {
-        BlockData data = Material.WALL_TORCH.createBlockData();
-        if (data instanceof Directional directional) {
-            directional.setFacing(facing);
-            world.getBlockAt(x, y, z).setBlockData(directional, false);
+    private static void hipRoof(List<Runnable> tasks,
+                                World world,
+                                TerrainManager.SetBlock sb,
+                                HouseVolume volume,
+                                int roofY,
+                                VillageStyle.Palette palette) {
+        int layers = Math.min(volume.footprintWidth(), volume.footprintDepth()) / 2 + 1;
+        for (int layer = 0; layer < layers; layer++) {
+            int minX = volume.minX() - 1 + layer;
+            int maxX = volume.maxX() + 1 - layer;
+            int minZ = volume.minZ() - 1 + layer;
+            int maxZ = volume.maxZ() + 1 - layer;
+            int y = roofY + layer;
+            for (int x = minX; x <= maxX; x++) {
+                stair(tasks, world, sb, x, y, minZ, palette.roofStairs(), BlockFace.NORTH);
+                stair(tasks, world, sb, x, y, maxZ, palette.roofStairs(), BlockFace.SOUTH);
+            }
+            for (int z = minZ + 1; z <= maxZ - 1; z++) {
+                stair(tasks, world, sb, minX, y, z, palette.roofStairs(), BlockFace.WEST);
+                stair(tasks, world, sb, maxX, y, z, palette.roofStairs(), BlockFace.EAST);
+            }
+        }
+        place(tasks, sb, (volume.minX() + volume.maxX()) / 2, roofY + layers, (volume.minZ() + volume.maxZ()) / 2, palette.roofBlock());
+    }
+
+    private static void shedRoof(List<Runnable> tasks,
+                                 World world,
+                                 TerrainManager.SetBlock sb,
+                                 HouseVolume volume,
+                                 int roofY,
+                                 BlockFace riseFrom,
+                                 VillageStyle.Palette palette) {
+        boolean alongZ = riseFrom == BlockFace.NORTH || riseFrom == BlockFace.SOUTH;
+        int layers = alongZ ? volume.footprintDepth() + 1 : volume.footprintWidth() + 1;
+        for (int layer = 0; layer < layers; layer++) {
+            int y = roofY + layer / 2;
+            if (alongZ) {
+                int z = riseFrom == BlockFace.NORTH ? volume.minZ() - 1 + layer : volume.maxZ() + 1 - layer;
+                for (int x = volume.minX() - 1; x <= volume.maxX() + 1; x++) {
+                    stair(tasks, world, sb, x, y, z, palette.roofStairs(), riseFrom);
+                }
+            } else {
+                int x = riseFrom == BlockFace.WEST ? volume.minX() - 1 + layer : volume.maxX() + 1 - layer;
+                for (int z = volume.minZ() - 1; z <= volume.maxZ() + 1; z++) {
+                    stair(tasks, world, sb, x, y, z, palette.roofStairs(), riseFrom);
+                }
+            }
         }
     }
 
-    private static List<Runnable> decorateInterior(Location base, int size, int rot,
-                                                   TerrainManager.SetBlock sb,
-                                                   Random rng) {
-        List<Runnable> tasks = new ArrayList<>();
-        World world = base.getWorld();
+    private static void addShutters(List<Runnable> tasks,
+                                    World world,
+                                    TerrainManager.SetBlock sb,
+                                    int x,
+                                    int y,
+                                    int z,
+                                    BlockFace outward,
+                                    VillageStyle.Palette palette) {
+        for (BlockFace side : List.of(VillageStyle.leftOf(outward), VillageStyle.rightOf(outward))) {
+            int sx = x + side.getModX();
+            int sz = z + side.getModZ();
+            place(tasks, sb, sx, y, sz, palette.shutter());
+            if (world != null) {
+                tasks.add(() -> VillageStyle.setTrapdoor(world, sx, y, sz, palette.shutter(), outward, true));
+            }
+        }
+    }
 
-        int ox = base.getBlockX();
-        int oy = base.getBlockY();
-        int oz = base.getBlockZ();
-
-        int floorY = oy + 1;
-        int innerMin = 1;
-        int innerMax = size - 2;
-
-        /* table centrale + chaises orientées */
-        int[] centre = rotate(size / 2, size / 2, rot);
-        int cx = ox + centre[0];
-        int cz = oz + centre[1];
-        tasks.add(() -> sb.set(cx, floorY, cz, Material.OAK_SLAB));
-        placeChair(tasks, base, sb, cx - 1, floorY, cz, BlockFace.EAST);
-        placeChair(tasks, base, sb, cx + 1, floorY, cz, BlockFace.WEST);
-        placeChair(tasks, base, sb, cx, floorY, cz - 1, BlockFace.SOUTH);
-        placeChair(tasks, base, sb, cx, floorY, cz + 1, BlockFace.NORTH);
-
-        /* coin repos : vrai lit */
-        int[] bedLocal = rotate(innerMin + 1, innerMin, rot);
-        int bedX = ox + bedLocal[0];
-        int bedZ = oz + bedLocal[1];
-        placeBed(tasks, base, sb, bedX, floorY, bedZ, mapFacing(BlockFace.SOUTH, rot));
-
-        /* coin cuisine */
-        int[] furnaceL = rotate(innerMax, innerMin, rot);
-        tasks.add(() -> sb.set(ox + furnaceL[0], floorY, oz + furnaceL[1], Material.FURNACE));
-        int[] craftingL = rotate(innerMax, innerMin + 1, rot);
-        tasks.add(() -> sb.set(ox + craftingL[0], floorY, oz + craftingL[1], Material.CRAFTING_TABLE));
-
-        /* coffre + déco */
-        int[] chestL = rotate(innerMin, innerMax, rot);
-        int chestX = ox + chestL[0];
-        int chestZ = oz + chestL[1];
-        tasks.add(() -> sb.set(chestX, floorY, chestZ, Material.CHEST));
-        tasks.add(() -> sb.set(chestX, floorY + 1, chestZ, Material.FLOWER_POT));
-
-        /* éclairage mural orienté */
-        int[] northTorch = rotate(size / 2, innerMin, rot);
-        int tnX = ox + northTorch[0];
-        int tnZ = oz + northTorch[1];
-        tasks.add(() -> sb.set(tnX, floorY + 2, tnZ, Material.WALL_TORCH));
-
-        int[] southTorch = rotate(size / 2, innerMax, rot);
-        int tsX = ox + southTorch[0];
-        int tsZ = oz + southTorch[1];
-        tasks.add(() -> sb.set(tsX, floorY + 2, tsZ, Material.WALL_TORCH));
-
+    private static void stair(List<Runnable> tasks,
+                              World world,
+                              TerrainManager.SetBlock sb,
+                              int x,
+                              int y,
+                              int z,
+                              Material material,
+                              BlockFace facing) {
+        place(tasks, sb, x, y, z, material);
         if (world != null) {
-            tasks.add(() -> applyWallTorch(world, tnX, floorY + 2, tnZ, mapFacing(BlockFace.SOUTH, rot)));
-            tasks.add(() -> applyWallTorch(world, tsX, floorY + 2, tsZ, mapFacing(BlockFace.NORTH, rot)));
+            tasks.add(() -> VillageStyle.setStair(world, x, y, z, material, facing, Stairs.Half.BOTTOM, Stairs.Shape.STRAIGHT));
         }
+    }
 
-        return tasks;
+    private static boolean perimeter(int x, int z, HouseVolume volume) {
+        return x == volume.minX() || x == volume.maxX() || z == volume.minZ() || z == volume.maxZ();
+    }
+
+    private static boolean corner(int x, int z, HouseVolume volume) {
+        return (x == volume.minX() || x == volume.maxX()) && (z == volume.minZ() || z == volume.maxZ());
+    }
+
+    private static boolean shouldWindow(int x, int y, int z, HouseVolume volume, int baseY, BlockFace facing, boolean doorFace) {
+        int relativeY = y - baseY;
+        if (relativeY < 2 || relativeY > Math.max(3, volume.wallHeight() - 1)) {
+            return false;
+        }
+        if (z == volume.minZ() || z == volume.maxZ()) {
+            if (!doorFace && z == frontZ(volume, facing)) {
+                return false;
+            }
+            return x > volume.minX() + 1 && x < volume.maxX() - 1 && (x - volume.minX()) % 2 == 0;
+        }
+        if (x == volume.minX() || x == volume.maxX()) {
+            return z > volume.minZ() + 1 && z < volume.maxZ() - 1 && (z - volume.minZ()) % 2 == 0;
+        }
+        return false;
+    }
+
+    private static int frontZ(HouseVolume volume, BlockFace facing) {
+        return facing == BlockFace.NORTH ? volume.minZ() : volume.maxZ();
+    }
+
+    private static BlockFace outward(int x, int z, HouseVolume volume) {
+        if (z == volume.minZ()) return BlockFace.NORTH;
+        if (z == volume.maxZ()) return BlockFace.SOUTH;
+        if (x == volume.minX()) return BlockFace.WEST;
+        return BlockFace.EAST;
+    }
+
+    private static HouseVolume annexFor(HouseVolume main, BlockFace facing) {
+        return switch (facing) {
+            case NORTH, SOUTH -> new HouseVolume(main.maxX() - 3, main.minZ() + 2, 4, 4, Math.max(3, main.wallHeight() - 1), RoofStyle.SHED);
+            case EAST, WEST -> new HouseVolume(main.minX() + 2, main.maxZ() - 3, 4, 4, Math.max(3, main.wallHeight() - 1), RoofStyle.SHED);
+            default -> new HouseVolume(main.maxX() - 3, main.minZ() + 2, 4, 4, Math.max(3, main.wallHeight() - 1), RoofStyle.SHED);
+        };
+    }
+
+    private static Material cropFor(List<Material> crops, Random random) {
+        if (crops == null || crops.isEmpty()) return Material.WHEAT;
+        Material seed = crops.get(random.nextInt(crops.size()));
+        return switch (seed) {
+            case WHEAT_SEEDS -> Material.WHEAT;
+            case CARROT -> Material.CARROTS;
+            case POTATO -> Material.POTATOES;
+            case BEETROOT_SEEDS -> Material.BEETROOTS;
+            default -> Material.WHEAT;
+        };
+    }
+
+    private static void place(List<Runnable> tasks, TerrainManager.SetBlock sb, int x, int y, int z, Material material) {
+        tasks.add(() -> sb.set(x, y, z, material));
+    }
+
+    private record HouseVolume(int minX, int minZ, int footprintWidth, int footprintDepth, int wallHeight, RoofStyle roofStyle) {
+        int maxX() { return minX + footprintWidth - 1; }
+        int maxZ() { return minZ + footprintDepth - 1; }
     }
 }

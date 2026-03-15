@@ -37,6 +37,7 @@ eleveur:
 
 # Paramètres du village
 village:
+  layout-style: semi_organic
   houseSmall: 9
   houseBig: 11
   roadHalf: 2
@@ -44,11 +45,34 @@ village:
   plazaSize: 9
   rows: 4
   cols: 5
+  houseCountMin: 10
+  houseCountMax: 16
+  mainStreetHalf: 2
+  sideStreetHalf: 1
+  terrainMaxStep: 2
+  decorDensity: medium
   wallGap: 6        # marge entre les maisons et la muraille
 
 # Paramètres des métiers
 jobs:
   mineur:
+    max-level: 100
+    xp-levelup:
+      base: 200
+      linear: 50
+      quadratic: 4
+    bonus:
+      speed-percent-per-level: 1.0
+      mineurs:
+        base: 1
+        first-extra-level: 20
+        every-levels: 10
+        max: 10
+    display:
+      bossbar-on-gain: true
+      hud-hide-delay-seconds: 4
+      actionbar-on-gain: true
+      title-on-levelup: true
     xp-per-block:
       STONE: 1
       COBBLESTONE: 1

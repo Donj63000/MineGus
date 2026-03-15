@@ -3,222 +3,193 @@ package org.example.village;
 import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.World;
+import org.bukkit.block.BlockFace;
+import org.bukkit.block.data.type.Stairs;
 
 import java.util.List;
 import java.util.Queue;
 import java.util.random.RandomGenerator;
 
-/**
- * Muraille périphérique renforcée :
- * └ 5 blocs de haut        (Stone / Mossy / Cracked mix)
- * └ Crenelage 1 sur 2      (WALL + SLAB)
- * └ Une seule porte principale (sud)
- * └ Chemin de ronde + tours d’angle + gatehouse
- *
- * Tout est poussé dans {@code Queue<Runnable>} ; la méthode reste
- * entièrement thread-safe puisqu’elle ne touche pas directement au monde.
- */
 public final class WallBuilder {
 
     private WallBuilder() {}
-    private static final int WALL_HEIGHT      = 5;
-    private static final int CRENELLE_INTERVAL = 2;   // 0 1 (mur) 2 (cre) 3 4 …
-    private static final int GATE_HALF_WIDTH  = 2;
-    private static final int TOWER_RADIUS     = 1;
-    private static final int TOWER_EXTRA_HEIGHT = 3;
 
-    /* palette « pierre » pour casser la monotonie */
+    private static final int WALL_HEIGHT = 8;
+    private static final int WALL_THICKNESS = 3;
+    private static final int GATE_HALF_WIDTH = 2;
+    private static final int TOWER_RADIUS = 2;
+
     private static final List<Material> BODY = List.of(
             Material.STONE_BRICKS,
             Material.MOSSY_STONE_BRICKS,
             Material.CRACKED_STONE_BRICKS
     );
 
-    /**
-     * @param center  centre (X / Z) du village
-     * @param rx,rz   demi-dimensions internes (hors mur)
-     * @param baseY   niveau du sol aplanit
-     * @param wallMat matériau « principal » (sert de fallback)
-     */
     public static void build(Location center, int rx, int rz, int baseY,
                              Material wallMat,
                              Queue<Runnable> q,
                              TerrainManager.SetBlock sb) {
 
-        World w  = center.getWorld();
-        int cx   = center.getBlockX();
-        int cz   = center.getBlockZ();
-        int yTop = baseY + WALL_HEIGHT;
+        World world = center.getWorld();
+        int cx = center.getBlockX();
+        int cz = center.getBlockZ();
+        int minX = cx - rx - WALL_THICKNESS;
+        int maxX = cx + rx + WALL_THICKNESS;
+        int minZ = cz - rz - WALL_THICKNESS;
+        int maxZ = cz + rz + WALL_THICKNESS;
+        RandomGenerator random = RandomGenerator.getDefault();
 
-        RandomGenerator R = RandomGenerator.getDefault();
-
-        /* coordonnées extrêmes (+1 pour l’épaisseur du mur) */
-        int minX = cx - rx - 1, maxX = cx + rx + 1;
-        int minZ = cz - rz - 1, maxZ = cz + rz + 1;
-
-        /* === 1. Corps du mur & créneaux ====================== */
         for (int x = minX; x <= maxX; x++) {
             for (int z = minZ; z <= maxZ; z++) {
-
-                boolean edge = (x == minX || x == maxX || z == minZ || z == maxZ);
-                if (!edge) continue;
-
-                /* ——— Porte principale (sud uniquement) ——— */
-                boolean inSouthGate = (z == maxZ) && Math.abs(x - cx) <= GATE_HALF_WIDTH;
-                if (inSouthGate) {
+                boolean ring = x < minX + WALL_THICKNESS || x > maxX - WALL_THICKNESS
+                        || z < minZ + WALL_THICKNESS || z > maxZ - WALL_THICKNESS;
+                if (!ring) {
                     continue;
                 }
-
-                /* Mur : 5 blocs → choix aléatoire dans la palette */
-                Material bodyMat = BODY.get(R.nextInt(BODY.size()));
-                for (int y = baseY + 1; y <= yTop; y++) {
-                    int fx = x, fy = y, fz = z;
-                    q.add(() -> sb.set(fx, fy, fz, bodyMat));
+                boolean southGate = z >= maxZ - WALL_THICKNESS + 1 && Math.abs(x - cx) <= GATE_HALF_WIDTH;
+                if (southGate) {
+                    continue;
                 }
-
-                /* Créneaux : on surélève 1 bloc sur 1 colonne / 2 */
-                boolean crenelle = ((x + z) % CRENELLE_INTERVAL == 0);
-                if (crenelle) {
-                    int fx = x, fz = z;
-                    q.add(() -> sb.set(fx, yTop + 1, fz, Material.STONE_BRICK_WALL));
-                    q.add(() -> sb.set(fx, yTop + 2, fz, Material.SMOOTH_STONE_SLAB));
-                } else {
-                    /* couronnement simple pour les intervalles */
-                    int fx = x, fz = z;
-                    q.add(() -> sb.set(fx, yTop + 1, fz, Material.SMOOTH_STONE_SLAB));
+                for (int y = baseY + 1; y <= baseY + WALL_HEIGHT; y++) {
+                    int fx = x;
+                    int fy = y;
+                    int fz = z;
+                    Material body = BODY.get(random.nextInt(BODY.size()));
+                    q.add(() -> sb.set(fx, fy, fz, body));
+                }
+                if ((x + z) % 6 == 0) {
+                    int buttressY = baseY + 1;
+                    int bx = x < cx ? x + 1 : x - 1;
+                    int bz = z < cz ? z + 1 : z - 1;
+                    q.add(() -> sb.set(bx, buttressY, bz, Material.STONE_BRICK_WALL));
+                    q.add(() -> sb.set(bx, buttressY + 1, bz, Material.STONE_BRICK_WALL));
                 }
             }
         }
 
-        /* chemin de ronde intérieur */
-        addInnerWalkway(q, sb, minX, maxX, minZ, maxZ, baseY);
-
-        /* tours d'angle */
-        buildCornerTowers(q, sb, minX, maxX, minZ, maxZ, baseY);
-
-        /* gatehouse + déco unique */
-        buildGatehouse(q, sb, cx, maxZ, baseY);
-        addGateLighting(q, sb, cx, maxZ, baseY);
+        addCrenellations(q, sb, minX, maxX, minZ, maxZ, baseY);
+        addWallWalk(q, sb, minX, maxX, minZ, maxZ, baseY);
+        buildTower(q, world, sb, minX, minZ, baseY);
+        buildTower(q, world, sb, minX, maxZ, baseY);
+        buildTower(q, world, sb, maxX, minZ, baseY);
+        buildTower(q, world, sb, maxX, maxZ, baseY);
+        buildGatehouse(q, world, sb, cx, maxZ - 1, baseY);
     }
 
-    private static void addInnerWalkway(Queue<Runnable> q,
-                                        TerrainManager.SetBlock sb,
-                                        int minX, int maxX,
-                                        int minZ, int maxZ,
-                                        int baseY) {
-        int y = baseY + WALL_HEIGHT;
-        int innerMinX = minX + 1;
-        int innerMaxX = maxX - 1;
-        int innerMinZ = minZ + 1;
-        int innerMaxZ = maxZ - 1;
-
-        for (int x = innerMinX; x <= innerMaxX; x++) {
-            int fx = x;
-            q.add(() -> sb.set(fx, y, innerMinZ, Material.STONE_BRICKS));
-            q.add(() -> sb.set(fx, y, innerMaxZ, Material.STONE_BRICKS));
+    private static void addCrenellations(Queue<Runnable> q,
+                                         TerrainManager.SetBlock sb,
+                                         int minX, int maxX, int minZ, int maxZ, int baseY) {
+        int top = baseY + WALL_HEIGHT + 1;
+        for (int x = minX; x <= maxX; x++) {
+            if (x % 2 == 0) {
+                final int fx = x;
+                q.add(() -> sb.set(fx, top, minZ, Material.STONE_BRICKS));
+                q.add(() -> sb.set(fx, top, maxZ, Material.STONE_BRICKS));
+            }
         }
-        for (int z = innerMinZ; z <= innerMaxZ; z++) {
-            int fz = z;
-            q.add(() -> sb.set(innerMinX, y, fz, Material.STONE_BRICKS));
-            q.add(() -> sb.set(innerMaxX, y, fz, Material.STONE_BRICKS));
+        for (int z = minZ; z <= maxZ; z++) {
+            if (z % 2 == 0) {
+                final int fz = z;
+                q.add(() -> sb.set(minX, top, fz, Material.STONE_BRICKS));
+                q.add(() -> sb.set(maxX, top, fz, Material.STONE_BRICKS));
+            }
         }
     }
 
-    private static void buildCornerTowers(Queue<Runnable> q,
-                                          TerrainManager.SetBlock sb,
-                                          int minX, int maxX,
-                                          int minZ, int maxZ,
-                                          int baseY) {
-        buildTower(q, sb, minX, minZ, baseY);
-        buildTower(q, sb, minX, maxZ, baseY);
-        buildTower(q, sb, maxX, minZ, baseY);
-        buildTower(q, sb, maxX, maxZ, baseY);
+    private static void addWallWalk(Queue<Runnable> q,
+                                    TerrainManager.SetBlock sb,
+                                    int minX, int maxX, int minZ, int maxZ, int baseY) {
+        int walkY = baseY + WALL_HEIGHT;
+        for (int x = minX + 1; x <= maxX - 1; x++) {
+            final int fx = x;
+            q.add(() -> sb.set(fx, walkY, minZ + 1, Material.STONE_BRICK_SLAB));
+            q.add(() -> sb.set(fx, walkY, maxZ - 1, Material.STONE_BRICK_SLAB));
+        }
+        for (int z = minZ + 1; z <= maxZ - 1; z++) {
+            final int fz = z;
+            q.add(() -> sb.set(minX + 1, walkY, fz, Material.STONE_BRICK_SLAB));
+            q.add(() -> sb.set(maxX - 1, walkY, fz, Material.STONE_BRICK_SLAB));
+        }
     }
 
     private static void buildTower(Queue<Runnable> q,
+                                   World world,
                                    TerrainManager.SetBlock sb,
-                                   int cx, int cz,
+                                   int x,
+                                   int z,
                                    int baseY) {
-        int top = baseY + WALL_HEIGHT + TOWER_EXTRA_HEIGHT;
+        int top = baseY + WALL_HEIGHT + 3;
         for (int dx = -TOWER_RADIUS; dx <= TOWER_RADIUS; dx++) {
             for (int dz = -TOWER_RADIUS; dz <= TOWER_RADIUS; dz++) {
-                int fx = cx + dx;
-                int fz = cz + dz;
+                boolean shell = Math.abs(dx) == TOWER_RADIUS || Math.abs(dz) == TOWER_RADIUS;
+                if (!shell) {
+                    continue;
+                }
                 for (int y = baseY + 1; y <= top; y++) {
+                    int fx = x + dx;
                     int fy = y;
+                    int fz = z + dz;
                     q.add(() -> sb.set(fx, fy, fz, Material.STONE_BRICKS));
                 }
             }
         }
 
-        int roofY = top + 1;
-        for (int dx = -TOWER_RADIUS - 1; dx <= TOWER_RADIUS + 1; dx++) {
-            for (int dz = -TOWER_RADIUS - 1; dz <= TOWER_RADIUS + 1; dz++) {
-                int fx = cx + dx;
-                int fz = cz + dz;
-                q.add(() -> sb.set(fx, roofY, fz, Material.SMOOTH_STONE_SLAB));
+        for (int layer = 0; layer < 2; layer++) {
+            int roofY = top + layer;
+            for (int dx = -TOWER_RADIUS - 1 + layer; dx <= TOWER_RADIUS + 1 - layer; dx++) {
+                final int fx = x + dx;
+                final int northZ = z - TOWER_RADIUS - 1 + layer;
+                final int southZ = z + TOWER_RADIUS + 1 - layer;
+                q.add(() -> sb.set(fx, roofY, northZ, Material.DARK_OAK_STAIRS));
+                q.add(() -> sb.set(fx, roofY, southZ, Material.DARK_OAK_STAIRS));
+                if (world != null) {
+                    q.add(() -> VillageStyle.setStair(world, fx, roofY, northZ, Material.DARK_OAK_STAIRS, BlockFace.NORTH, Stairs.Half.BOTTOM, Stairs.Shape.STRAIGHT));
+                    q.add(() -> VillageStyle.setStair(world, fx, roofY, southZ, Material.DARK_OAK_STAIRS, BlockFace.SOUTH, Stairs.Half.BOTTOM, Stairs.Shape.STRAIGHT));
+                }
             }
         }
 
-        int torchY = roofY + 1;
-        q.add(() -> sb.set(cx, torchY, cz, Material.LANTERN));
+        final int topX = x;
+        final int topZ = z;
+        q.add(() -> sb.set(topX, top + 2, topZ, Material.DARK_OAK_SLAB));
+        q.add(() -> sb.set(topX, baseY + 3, topZ - TOWER_RADIUS, Material.LANTERN));
     }
 
     private static void buildGatehouse(Queue<Runnable> q,
+                                       World world,
                                        TerrainManager.SetBlock sb,
-                                       int centerX, int gateZ,
+                                       int centerX,
+                                       int gateZ,
                                        int baseY) {
-        int outerMinX = centerX - GATE_HALF_WIDTH - 1;
-        int outerMaxX = centerX + GATE_HALF_WIDTH + 1;
-        int outerMinZ = gateZ - 1;
-        int outerMaxZ = gateZ + 2;
-        int roofY = baseY + WALL_HEIGHT + 2;
+        int left = centerX - GATE_HALF_WIDTH - 3;
+        int right = centerX + GATE_HALF_WIDTH + 3;
+        int frontZ = gateZ + 3;
+        int backZ = gateZ - 3;
 
-        for (int x = outerMinX; x <= outerMaxX; x++) {
-            for (int z = outerMinZ; z <= outerMaxZ; z++) {
-                boolean corridor = (Math.abs(x - centerX) <= GATE_HALF_WIDTH)
-                        && (z >= gateZ && z <= gateZ + 1);
+        for (int x = left; x <= right; x++) {
+            for (int z = backZ; z <= frontZ; z++) {
+                boolean corridor = Math.abs(x - centerX) <= GATE_HALF_WIDTH && z >= gateZ - 1 && z <= frontZ;
                 if (corridor) {
                     continue;
                 }
-                boolean wall = (x == outerMinX || x == outerMaxX || z == outerMinZ || z == outerMaxZ);
-                if (!wall) {
-                    continue;
-                }
-                for (int y = baseY + 1; y <= roofY; y++) {
+                for (int y = baseY + 1; y <= baseY + WALL_HEIGHT + 3; y++) {
+                    int fx = x;
                     int fy = y;
-                    boolean archOpening = (y <= baseY + WALL_HEIGHT)
-                            && (z == gateZ || z == gateZ + 1)
-                            && Math.abs(x - centerX) <= GATE_HALF_WIDTH;
-                    if (archOpening) {
-                        continue;
-                    }
-                    Material mat = (y == roofY) ? Material.SMOOTH_STONE_SLAB : Material.STONE_BRICKS;
-                    int fx = x, fz = z;
-                    q.add(() -> sb.set(fx, fy, fz, mat));
+                    int fz = z;
+                    q.add(() -> sb.set(fx, fy, fz, Material.STONE_BRICKS));
                 }
             }
         }
 
-        /* rampe intérieure pour rejoindre la route centrale */
-        int walkwayY = baseY + 1;
-        for (int dz = 1; dz <= 3; dz++) {
-            int z = gateZ + dz;
-            for (int x = centerX - GATE_HALF_WIDTH; x <= centerX + GATE_HALF_WIDTH; x++) {
-                int fx = x, fz = z;
-                q.add(() -> sb.set(fx, walkwayY, fz, Material.STONE_BRICKS));
-            }
+        for (int x = centerX - GATE_HALF_WIDTH; x <= centerX + GATE_HALF_WIDTH; x++) {
+            final int fx = x;
+            q.add(() -> sb.set(fx, baseY + 1, gateZ + 1, Material.SPRUCE_PLANKS));
+            q.add(() -> sb.set(fx, baseY + 2, gateZ + 1, Material.IRON_BARS));
         }
-    }
 
-    private static void addGateLighting(Queue<Runnable> q,
-                                        TerrainManager.SetBlock sb,
-                                        int centerX, int gateZ,
-                                        int baseY) {
-        int torchY = baseY + 3;
-        int left = centerX - GATE_HALF_WIDTH - 1;
-        int right = centerX + GATE_HALF_WIDTH + 1;
-        q.add(() -> sb.set(left, torchY, gateZ - 1, Material.TORCH));
-        q.add(() -> sb.set(right, torchY, gateZ - 1, Material.TORCH));
+        q.add(() -> sb.set(left, baseY + 4, gateZ, Material.LANTERN));
+        q.add(() -> sb.set(right, baseY + 4, gateZ, Material.LANTERN));
+        q.add(() -> sb.set(left + 1, baseY + 5, gateZ - 1, Material.RED_BANNER));
+        q.add(() -> sb.set(right - 1, baseY + 5, gateZ - 1, Material.RED_BANNER));
     }
 }

@@ -21,6 +21,10 @@ import java.util.function.Consumer;
  */
 public final class MiningLoop extends BukkitRunnable {
 
+    private static final double ANIMATION_STAGES = 2.0D;
+    private static final double BREAK_STAGE = 1.0D;
+    private static final double DEPOSIT_STAGE = 1.0D;
+
     public enum Phase {
         IDLE,
         ANIMATING,
@@ -37,11 +41,12 @@ public final class MiningLoop extends BukkitRunnable {
     private final Runnable completionCallback;
     private final Runnable storageBlockedCallback;
     private final Runnable storageFreedCallback;
+    private final double progressPerTick;
     private boolean storageBlockedNotified;
 
     private Block current;
     private Phase phase = Phase.IDLE;
-    private int stage = 0;
+    private double phaseProgress = 0.0D;
 
     public MiningLoop(JavaPlugin plugin,
                       MiningSessionState state,
@@ -52,7 +57,8 @@ public final class MiningLoop extends BukkitRunnable {
                       Runnable completionCallback,
                       Runnable storageBlockedCallback,
                       Runnable storageFreedCallback,
-                      boolean initiallyBlocked) {
+                      boolean initiallyBlocked,
+                      double progressPerTick) {
         this.plugin = plugin;
         this.state = state;
         this.iterator = iterator;
@@ -63,6 +69,7 @@ public final class MiningLoop extends BukkitRunnable {
         this.storageBlockedCallback = storageBlockedCallback;
         this.storageFreedCallback = storageFreedCallback;
         this.storageBlockedNotified = initiallyBlocked;
+        this.progressPerTick = Math.max(0.01D, progressPerTick);
     }
 
     @Override
@@ -102,23 +109,23 @@ public final class MiningLoop extends BukkitRunnable {
             return;
         }
         phase = Phase.ANIMATING;
-        stage = 0;
+        phaseProgress = 0.0D;
         moveMinerTowards(current);
     }
 
     private void handleAnimating() {
         if (current == null) {
             phase = Phase.IDLE;
+            phaseProgress = 0.0D;
             return;
         }
 
         World world = current.getWorld();
         Location blockCenter = current.getLocation().add(0.5, 0.5, 0.5);
-
         Location minerTarget = blockCenter.clone().add(0, 0.5, 0);
         TeleportUtils.safeTeleport(miner, minerTarget);
 
-        if (miner != null && !miner.isDead()) {
+        if (!miner.isDead()) {
             Location look = miner.getLocation();
             look.setDirection(blockCenter.toVector().subtract(look.toVector()));
             miner.teleport(look);
@@ -127,50 +134,56 @@ public final class MiningLoop extends BukkitRunnable {
 
         Material type = current.getType();
         boolean ore = isOre(type);
-
         Particle particle = ore ? Particle.CRIT : Particle.BLOCK;
         Object data = ore ? null : current.getBlockData();
-        world.spawnParticle(particle, blockCenter, 10, 0.3, 0.3, 0.3, 0.1, data);
-        world.playSound(
-                blockCenter,
-                ore ? Sound.ENTITY_VILLAGER_WORK_TOOLSMITH : Sound.BLOCK_STONE_HIT,
-                0.6f,
-                1.0f
-        );
 
-        stage++;
-        if (stage >= 2) {
+        world.spawnParticle(particle, blockCenter, 10, 0.3, 0.3, 0.3, 0.1, data);
+        world.playSound(blockCenter,
+                ore ? Sound.ENTITY_VILLAGER_WORK_TOOLSMITH : Sound.BLOCK_STONE_HIT,
+                0.6F,
+                1.0F);
+
+        phaseProgress += progressPerTick;
+        if (phaseProgress >= ANIMATION_STAGES) {
             phase = Phase.BREAKING;
-            stage = 0;
+            phaseProgress = 0.0D;
         }
     }
 
     private void handleBreaking() {
         if (current == null) {
             phase = Phase.IDLE;
+            phaseProgress = 0.0D;
             return;
         }
         if (!checkStorageAvailability()) {
             return;
         }
-        World world = current.getWorld();
+
         Material type = current.getType();
         if (type == Material.AIR || type == Material.BEDROCK) {
             phase = Phase.IDLE;
+            phaseProgress = 0.0D;
             return;
         }
 
-        if (miner != null && !miner.isDead()) {
+        if (!miner.isDead()) {
             miner.swingMainHand();
         }
 
+        phaseProgress += progressPerTick;
+        if (phaseProgress < BREAK_STAGE) {
+            return;
+        }
+
+        World world = current.getWorld();
         Location loc = current.getLocation();
         List<ItemStack> drops = new ArrayList<>(current.getDrops());
         current.setType(Material.AIR, false);
 
         world.spawnParticle(
                 Particle.BLOCK,
-                loc.add(0.5, 0.5, 0.5),
+                loc.clone().add(0.5, 0.5, 0.5),
                 20,
                 0.3, 0.3, 0.3,
                 0.1,
@@ -181,8 +194,8 @@ public final class MiningLoop extends BukkitRunnable {
         world.playSound(
                 loc,
                 ore ? Sound.ENTITY_VILLAGER_WORK_TOOLSMITH : Sound.BLOCK_STONE_BREAK,
-                0.7f,
-                1.0f
+                0.7F,
+                1.0F
         );
 
         if (decorationCallback != null) {
@@ -201,11 +214,15 @@ public final class MiningLoop extends BukkitRunnable {
         }
 
         phase = Phase.DEPOSITING;
-        stage = 0;
+        phaseProgress = 0.0D;
     }
 
     private void handleDepositing() {
-        phase = Phase.IDLE;
+        phaseProgress += progressPerTick;
+        if (phaseProgress >= DEPOSIT_STAGE) {
+            phase = Phase.IDLE;
+            phaseProgress = 0.0D;
+        }
     }
 
     private boolean checkStorageAvailability() {
@@ -255,9 +272,6 @@ public final class MiningLoop extends BukkitRunnable {
             return false;
         }
         String name = type.name();
-        if (name.endsWith("_ORE")) {
-            return true;
-        }
-        return type == Material.ANCIENT_DEBRIS;
+        return name.endsWith("_ORE") || type == Material.ANCIENT_DEBRIS;
     }
 }

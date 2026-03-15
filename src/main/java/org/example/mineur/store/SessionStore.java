@@ -23,16 +23,15 @@ import java.util.UUID;
 public final class SessionStore {
 
     private final File file;
-    private final YamlConfiguration yaml;
 
     public SessionStore(File dataFolder) {
         this.file = new File(dataFolder, "sessions.yml");
-        this.yaml = YamlConfiguration.loadConfiguration(file);
     }
 
     public List<MiningSessionState> load() {
         List<MiningSessionState> list = new ArrayList<>();
-        ConfigurationSection root = yaml.getConfigurationSection("sessions");
+        YamlConfiguration currentYaml = YamlConfiguration.loadConfiguration(file);
+        ConfigurationSection root = currentYaml.getConfigurationSection("sessions");
         if (root == null) {
             return list;
         }
@@ -72,6 +71,7 @@ public final class SessionStore {
     }
 
     public void saveAll(List<MiningSessionState> sessions) {
+        YamlConfiguration yaml = new YamlConfiguration();
         yaml.set("sessions", null);
         int index = 0;
         for (MiningSessionState state : sessions) {
@@ -79,6 +79,10 @@ public final class SessionStore {
             index++;
         }
         try {
+            File parent = file.getParentFile();
+            if (parent != null && !parent.exists()) {
+                parent.mkdirs();
+            }
             yaml.save(file);
         } catch (IOException e) {
             e.printStackTrace();

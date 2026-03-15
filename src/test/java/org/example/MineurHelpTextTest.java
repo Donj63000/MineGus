@@ -18,6 +18,10 @@ class MineurHelpTextTest {
         assertTrue(help.contains("/mineur aide"));
         assertTrue(help.contains("/mineur help"));
         assertTrue(help.contains("/mineur !aide"));
+        assertTrue(help.contains("/mineur liste"));
+        assertTrue(help.contains("/mineur list"));
+        assertTrue(help.contains("/mineur selectionner <n>"));
+        assertTrue(help.contains("/mineur select <n>"));
 
         assertTrue(help.contains("/mineur vitesse <lent|normal|rapide>"));
         assertTrue(help.contains("/mineur speed <slow|normal|fast>"));

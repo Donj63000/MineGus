@@ -50,6 +50,7 @@ class SessionStoreTest {
         state.minerY = 60;
         state.owner = UUID.randomUUID();
         state.useBarrelMaster = false;
+        state.selected = true;
         state.containers.add(new Vector(8, 64, 9));
 
         store.saveAll(List.of(state));
@@ -69,6 +70,7 @@ class SessionStoreTest {
             assertNotNull(restored.cursor);
             assertEquals(state.cursor.minX, restored.cursor.minX);
             assertEquals(1, restored.containers.size());
+            assertEquals(state.selected, restored.selected);
         }
     }
 }

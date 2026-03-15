@@ -24,7 +24,7 @@ import org.example.village.VillageEntityManager;
 /**
  * Plugin principal.
  */
-public final class MinePlugin extends JavaPlugin implements Listener {
+public class MinePlugin extends JavaPlugin implements Listener {
 
     /**
      * Liste pour suivre tous les êtres invoqués par /army
@@ -103,6 +103,11 @@ public final class MinePlugin extends JavaPlugin implements Listener {
         }
 
 
+        // Instancie le gestionnaire de métiers (/job) avant /mineur pour
+        // que les sessions restaurées récupèrent immédiatement leur bonus.
+        jobManager = new JobManager(this);
+        jobManager.initializeOnlinePlayers();
+
         // Instancie /mineur
         mineur = new Mineur(this);
         mineur.loadSavedSessions(); // Restaure les sessions de minage
@@ -125,13 +130,19 @@ public final class MinePlugin extends JavaPlugin implements Listener {
         // Instancie /armure
         armure = new Armure(this);
 
-        // Instancie le gestionnaire de métiers (/job)
-        jobManager = new JobManager(this);
-
-        merchantManager = new MerchantManager(this);
+        try {
+            merchantManager = new MerchantManager(this);
+        } catch (Throwable throwable) {
+            merchantManager = null;
+            getLogger().warning("MerchantManager desactive dans cet environnement: " + throwable.getClass().getSimpleName());
+        }
 
         // Tâche de surveillance des marchands de village
-        VillageEntityManager.startMerchantGuardTask(this);
+        try {
+            VillageEntityManager.startMerchantGuardTask(this);
+        } catch (Throwable throwable) {
+            getLogger().warning("VillageEntityManager desactive dans cet environnement: " + throwable.getClass().getSimpleName());
+        }
     }
 
     @Override
@@ -154,7 +165,7 @@ public final class MinePlugin extends JavaPlugin implements Listener {
             eleveur.stopAllRanches();
         }
         if (jobManager != null) {
-            jobManager.saveJobsSync();
+            jobManager.shutdown();
         }
         if (merchantManager != null) {
             merchantManager.shutdown();

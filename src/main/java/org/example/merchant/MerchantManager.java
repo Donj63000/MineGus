@@ -71,7 +71,7 @@ public final class MerchantManager implements CommandExecutor, Listener {
 
     private String merchantId = "minegus_trader";
     private String merchantDisplayName = ChatColor.GOLD + "Marchand";
-    private Sound tradeSound = Sound.ENTITY_VILLAGER_YES;
+    private Sound tradeSound;
     private boolean logTrades = false;
 
     private final List<MerchantCategory> orderedCategories = new ArrayList<>();
@@ -229,12 +229,7 @@ public final class MerchantManager implements CommandExecutor, Listener {
                 this.defaultCapServerPerDay = 0;
             }
             String soundName = rules.getString("sound_on_trade", "ENTITY_VILLAGER_YES");
-            try {
-                this.tradeSound = Sound.valueOf(soundName.toUpperCase(Locale.ROOT));
-            } catch (IllegalArgumentException ex) {
-                plugin.getLogger().warning("Son inconnu pour le marchand: " + soundName);
-                this.tradeSound = Sound.ENTITY_VILLAGER_YES;
-            }
+            this.tradeSound = resolveTradeSound(soundName);
         }
         resetCapCounters();
         recomputeNextResetEpoch();
@@ -273,6 +268,19 @@ public final class MerchantManager implements CommandExecutor, Listener {
             if (!orderedCategories.contains(category)) {
                 orderedCategories.add(category);
             }
+        }
+    }
+
+    private @Nullable Sound resolveTradeSound(String soundName) {
+        try {
+            return Sound.valueOf(soundName.toUpperCase(Locale.ROOT));
+        } catch (IllegalArgumentException ex) {
+            plugin.getLogger().warning("Son inconnu pour le marchand: " + soundName);
+            return null;
+        } catch (Throwable throwable) {
+            plugin.getLogger().warning("Impossible de charger le son du marchand dans cet environnement: "
+                    + throwable.getClass().getSimpleName());
+            return null;
         }
     }
 
@@ -574,7 +582,9 @@ public final class MerchantManager implements CommandExecutor, Listener {
         removeIngredients(player.getInventory(), offer.requirements);
         giveOutputs(player, offer);
         recordTrade(player, offer);
-        player.playSound(player.getLocation(), tradeSound, 1f, 1f);
+        if (tradeSound != null) {
+            player.playSound(player.getLocation(), tradeSound, 1f, 1f);
+        }
         if (logTrades) {
             plugin.getLogger().info(player.getName() + " a échangé contre "
                     + offer.outputAmount + "x " + offer.outputMaterial

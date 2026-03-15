@@ -34,6 +34,7 @@ public final class MiningSessionState {
     public boolean useBarrelMaster = false;
     public boolean paused = false;
     public boolean waitingStorage = false;
+    public boolean selected = false;
     public final Set<UUID> trusted = new HashSet<>();
 
     // Mode "carrière puis tunnel"
@@ -66,6 +67,7 @@ public final class MiningSessionState {
         map.put("useBarrelMaster", useBarrelMaster);
         map.put("paused", paused);
         map.put("waitingStorage", waitingStorage);
+        map.put("selected", selected);
         map.put("chainTunnelAfterQuarry", chainTunnelAfterQuarry);
         map.put("infiniteTunnel", infiniteTunnel);
         map.put("tunnelDirection", tunnelDirection != null ? tunnelDirection.name() : null);
@@ -124,6 +126,8 @@ public final class MiningSessionState {
         state.paused = pausedObj instanceof Boolean b ? b : false;
         Object waitingObj = map.get("waitingStorage");
         state.waitingStorage = waitingObj instanceof Boolean b ? b : false;
+        Object selectedObj = map.get("selected");
+        state.selected = selectedObj instanceof Boolean b ? b : false;
         Object chainObj = map.get("chainTunnelAfterQuarry");
         state.chainTunnelAfterQuarry = chainObj instanceof Boolean b ? b : false;
         Object infiniteObj = map.get("infiniteTunnel");

@@ -1,7 +1,7 @@
 package org.example.mineur;
 
 /**
- * Controls the number of ticks spent in each mining animation stage.
+ * Controls the baseline speed of the mining loop.
  */
 public enum MiningSpeed {
     SLOW(10),
@@ -12,5 +12,10 @@ public enum MiningSpeed {
 
     MiningSpeed(int ticksPerStage) {
         this.ticksPerStage = ticksPerStage;
+    }
+
+    public double progressPerTick(double miningSpeedMultiplier) {
+        double safeMultiplier = Math.max(0.01D, miningSpeedMultiplier);
+        return safeMultiplier / ticksPerStage;
     }
 }

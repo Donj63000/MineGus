@@ -14,8 +14,9 @@ commands:
   mineur:
     description: Gestion du mineur automatisé
     usage: |
-      /mineur wand
-      /mineur create
+      /mineur
+      /mineur list
+      /mineur select <n>
       /mineur speed <slow|normal|fast>
       /mineur pattern <quarry|branch|tunnel|vein_first>
       /mineur pause|resume|stop|info|trust <joueur>

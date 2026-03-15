@@ -70,7 +70,8 @@ public class Mineur implements CommandExecutor, Listener {
     private final List<MiningSessionState> sessions = new ArrayList<>();
     private final Map<UUID, Selection> selections = new HashMap<>();
     private final Map<UUID, RuntimeSession> runtimes = new HashMap<>();
-    private final Map<UUID, UUID> ownerToSession = new HashMap<>();
+    private final Map<UUID, List<UUID>> ownerSessions = new HashMap<>();
+    private final Map<UUID, UUID> selectedSessions = new HashMap<>();
 
     public Mineur(JavaPlugin plugin) {
         this.plugin = plugin;
@@ -108,6 +109,8 @@ public class Mineur implements CommandExecutor, Listener {
                 sendUsage(player);
                 return true;
             }
+            case "liste", "list" -> handleList(player);
+            case "selectionner", "select" -> handleSelect(player, args);
             case "vitesse", "speed" -> handleSpeed(player, args);
             case "pattern", "mode", "patron" -> handlePattern(player, args);
             case "pause" -> handlePause(player, true);
@@ -144,9 +147,15 @@ public class Mineur implements CommandExecutor, Listener {
                 + ChatColor.GRAY + " | " + ChatColor.GOLD + "/mineur !aide"
                 + ChatColor.GRAY + " : affiche cette aide complete.");
 
+        lines.add(ChatColor.GOLD + "/mineur liste" + ChatColor.GRAY + " | " + ChatColor.GOLD + "/mineur list"
+                + ChatColor.GRAY + " : liste tes mineurs et indique lequel est selectionne.");
+        lines.add(ChatColor.GOLD + "/mineur selectionner <n>" + ChatColor.GRAY + " | "
+                + ChatColor.GOLD + "/mineur select <n>" + ChatColor.GRAY
+                + " : choisit le mineur cible pour les commandes.");
+
         lines.add(ChatColor.GOLD + "/mineur vitesse <lent|normal|rapide>" + ChatColor.GRAY + " | "
                 + ChatColor.GOLD + "/mineur speed <slow|normal|fast>" + ChatColor.GRAY
-                + " : change la cadence de minage de ta session.");
+                + " : change la cadence de minage du mineur selectionne.");
 
         lines.add(ChatColor.GOLD + "/mineur pattern <carriere|branche|tunnel|veine>" + ChatColor.GRAY + " | "
                 + ChatColor.GOLD + "/mineur mode <...>" + ChatColor.GRAY + " | "
@@ -169,7 +178,7 @@ public class Mineur implements CommandExecutor, Listener {
                 + ChatColor.GRAY + " : arrete et nettoie completement la session.");
 
         lines.add(ChatColor.GOLD + "/mineur info" + ChatColor.GRAY + " | " + ChatColor.GOLD + "/mineur status"
-                + ChatColor.GRAY + " : affiche zone, monde, pattern, vitesse, Y mineur, coffres et etat.");
+                + ChatColor.GRAY + " : affiche zone, monde, pattern, vitesse, bonus et etat du mineur selectionne.");
 
         lines.add(ChatColor.GOLD + "/mineur autoriser <joueur>" + ChatColor.GRAY + " | "
                 + ChatColor.GOLD + "/mineur trust <joueur>" + ChatColor.GRAY
@@ -178,6 +187,8 @@ public class Mineur implements CommandExecutor, Listener {
         lines.add(ChatColor.DARK_GRAY + "--------------------------------------------------");
         lines.add(ChatColor.YELLOW + "Exemples rapides:");
         lines.add(ChatColor.GRAY + "  /mineur");
+        lines.add(ChatColor.GRAY + "  /mineur list");
+        lines.add(ChatColor.GRAY + "  /mineur select 2");
         lines.add(ChatColor.GRAY + "  /mineur vitesse rapide");
         lines.add(ChatColor.GRAY + "  /mineur pattern branche");
         lines.add(ChatColor.GRAY + "  /mineur pause");
@@ -187,6 +198,17 @@ public class Mineur implements CommandExecutor, Listener {
     }
 
     private void createMineFromSelection(Player player) {
+        UUID ownerId = player.getUniqueId();
+        JobManager jobManager = getJobManager();
+        if (jobManager != null && !jobManager.hasMinerJob(ownerId)) {
+            player.sendMessage(CMD_PREFIX + ChatColor.RED
+                    + "Tu dois avoir le metier " + ChatColor.GOLD + "Mineur"
+                    + ChatColor.RED + " pour poser un PNJ mineur.");
+            player.sendMessage(CMD_PREFIX + ChatColor.YELLOW + "Utilise " + ChatColor.GOLD + "/job mineur"
+                    + ChatColor.YELLOW + " pour debloquer cette fonctionnalite.");
+            return;
+        }
+
         Selection selection = selections.get(player.getUniqueId());
         if (selection == null || !selection.isComplete()) {
             player.sendMessage(CMD_PREFIX + ChatColor.RED + "Sélection invalide. Utilise /mineur et clique deux blocs à la même hauteur.");
@@ -217,7 +239,18 @@ public class Mineur implements CommandExecutor, Listener {
         int width = (maxX - minX) + 1;
         int length = (maxZ - minZ) + 1;
 
-        UUID ownerId = player.getUniqueId();
+        int activeMines = getSessionsForOwner(ownerId).size();
+        int maxMines = getMaxMinesForOwner(ownerId);
+        if (activeMines >= maxMines) {
+            player.sendMessage(CMD_PREFIX + ChatColor.RED + "Limite atteinte: " + activeMines + "/" + maxMines + " mineur(s) actifs.");
+            Integer nextUnlock = getNextMineUnlockLevel(ownerId);
+            if (nextUnlock != null) {
+                player.sendMessage(CMD_PREFIX + ChatColor.YELLOW + "Prochain mineur debloque au niveau " + nextUnlock + ".");
+            } else {
+                player.sendMessage(CMD_PREFIX + ChatColor.YELLOW + "Tu as deja atteint le maximum de mineurs.");
+            }
+            return;
+        }
 
         Location base = new Location(world, minX, c1.getY(), minZ);
         MiningSessionState state = new MiningSessionState();
@@ -249,11 +282,67 @@ public class Mineur implements CommandExecutor, Listener {
         selections.remove(ownerId);
 
         sessions.add(state);
-        ownerToSession.put(ownerId, state.id);
+        registerOwnerSession(state, true);
         startRuntime(state, true);
         saveAllSessions();
 
         player.sendMessage(CMD_PREFIX + ChatColor.GREEN + "Mineur lancé pour une zone de " + width + "x" + length + ".");
+        player.sendMessage(CMD_PREFIX + ChatColor.GRAY + "Mineurs actifs: " + ChatColor.GREEN
+                + getSessionsForOwner(ownerId).size() + ChatColor.GRAY + "/" + ChatColor.GREEN + maxMines + ChatColor.GRAY + ".");
+    }
+
+    private void handleList(Player player) {
+        List<MiningSessionState> ownedSessions = getSessionsForOwner(player.getUniqueId());
+        if (ownedSessions.isEmpty()) {
+            player.sendMessage(CMD_PREFIX + ChatColor.RED + "Aucune session active.");
+            return;
+        }
+
+        UUID selectedId = selectedSessions.get(player.getUniqueId());
+        player.sendMessage(CMD_PREFIX + ChatColor.AQUA + "Mineurs actifs: " + ownedSessions.size()
+                + ChatColor.GRAY + "/" + ChatColor.GREEN + getMaxMinesForOwner(player.getUniqueId()));
+        for (int index = 0; index < ownedSessions.size(); index++) {
+            MiningSessionState state = ownedSessions.get(index);
+            World world = Bukkit.getWorld(state.worldUid);
+            String worldName = world != null ? world.getName() : "?";
+            String status = state.paused ? ChatColor.YELLOW + "en pause" : ChatColor.GREEN + "actif";
+            String selected = Objects.equals(selectedId, state.id) ? ChatColor.GOLD + " [selectionne]" : "";
+            player.sendMessage(ChatColor.GRAY + " - Mineur " + (index + 1)
+                    + ChatColor.DARK_GRAY + " | " + ChatColor.GRAY + worldName
+                    + ChatColor.DARK_GRAY + " | " + ChatColor.GRAY
+                    + state.base.getBlockX() + ", " + state.base.getBlockY() + ", " + state.base.getBlockZ()
+                    + ChatColor.DARK_GRAY + " | " + status + selected);
+        }
+    }
+
+    private void handleSelect(Player player, String[] args) {
+        List<MiningSessionState> ownedSessions = getSessionsForOwner(player.getUniqueId());
+        if (ownedSessions.isEmpty()) {
+            player.sendMessage(CMD_PREFIX + ChatColor.RED + "Aucune session active.");
+            return;
+        }
+        if (args.length < 2) {
+            player.sendMessage(CMD_PREFIX + ChatColor.RED + "Precise le numero du mineur a selectionner.");
+            return;
+        }
+
+        int index;
+        try {
+            index = Integer.parseInt(args[1]);
+        } catch (NumberFormatException ex) {
+            player.sendMessage(CMD_PREFIX + ChatColor.RED + "Numero invalide: " + args[1]);
+            return;
+        }
+
+        if (index < 1 || index > ownedSessions.size()) {
+            player.sendMessage(CMD_PREFIX + ChatColor.RED + "Numero invalide. Utilise /mineur list pour voir tes mineurs.");
+            return;
+        }
+
+        MiningSessionState selected = ownedSessions.get(index - 1);
+        setSelectedSession(player.getUniqueId(), selected.id);
+        saveAllSessions();
+        player.sendMessage(CMD_PREFIX + ChatColor.GREEN + "Mineur " + index + " selectionne.");
     }
 
     private void handleSpeed(Player player, String[] args) {
@@ -262,9 +351,8 @@ public class Mineur implements CommandExecutor, Listener {
             return;
         }
 
-        MiningSessionState state = findSessionByOwner(player.getUniqueId());
+        MiningSessionState state = requireSelectedSession(player);
         if (state == null) {
-            player.sendMessage(CMD_PREFIX + ChatColor.RED + "Aucune session active.");
             return;
         }
 
@@ -289,9 +377,8 @@ public class Mineur implements CommandExecutor, Listener {
             return;
         }
 
-        MiningSessionState state = findSessionByOwner(player.getUniqueId());
+        MiningSessionState state = requireSelectedSession(player);
         if (state == null) {
-            player.sendMessage(CMD_PREFIX + ChatColor.RED + "Aucune session active.");
             return;
         }
 
@@ -320,9 +407,8 @@ public class Mineur implements CommandExecutor, Listener {
     }
 
     private void handlePause(Player player, boolean pause) {
-        MiningSessionState state = findSessionByOwner(player.getUniqueId());
+        MiningSessionState state = requireSelectedSession(player);
         if (state == null) {
-            player.sendMessage(CMD_PREFIX + ChatColor.RED + "Aucune session active.");
             return;
         }
 
@@ -343,24 +429,32 @@ public class Mineur implements CommandExecutor, Listener {
     }
 
     private void handleStop(Player player) {
-        MiningSessionState state = findSessionByOwner(player.getUniqueId());
+        MiningSessionState state = requireSelectedSession(player);
         if (state == null) {
-            player.sendMessage(CMD_PREFIX + ChatColor.RED + "Aucune session active.");
             return;
         }
         stopSession(state.id, true, player);
     }
 
     private void handleInfo(Player player) {
-        MiningSessionState state = findSessionByOwner(player.getUniqueId());
+        MiningSessionState state = requireSelectedSession(player);
         if (state == null) {
-            player.sendMessage(CMD_PREFIX + ChatColor.RED + "Aucune session active.");
             return;
         }
 
         World world = Bukkit.getWorld(state.worldUid);
         String worldName = world != null ? world.getName() : "?";
+        JobManager jobManager = getJobManager();
+        int level = jobManager != null ? jobManager.getLevelForPlayer(player.getUniqueId()) : 1;
+        double speedBonus = jobManager != null ? jobManager.getMiningSpeedBonusPercent(player.getUniqueId()) : 0.0D;
+        double multiplier = state.speed.progressPerTick(getOwnerSpeedMultiplier(state.owner)) * state.speed.ticksPerStage;
         player.sendMessage(CMD_PREFIX + ChatColor.AQUA + "Session " + state.id + " :");
+        player.sendMessage(ChatColor.GRAY + " - Base : " + state.base.getBlockX() + ", " + state.base.getBlockY() + ", " + state.base.getBlockZ());
+        player.sendMessage(ChatColor.GRAY + " - Niveau mineur : " + ChatColor.GREEN + level
+                + ChatColor.GRAY + " | Bonus vitesse : " + ChatColor.GREEN + "+" + formatDecimal(speedBonus) + "%");
+        player.sendMessage(ChatColor.GRAY + " - Multiplicateur effectif : " + ChatColor.GREEN + "x" + formatDecimal(multiplier));
+        player.sendMessage(ChatColor.GRAY + " - Mineurs actifs : " + ChatColor.GREEN + getSessionsForOwner(player.getUniqueId()).size()
+                + ChatColor.GRAY + "/" + ChatColor.GREEN + getMaxMinesForOwner(player.getUniqueId()));
         player.sendMessage(ChatColor.GRAY + " • Monde : " + worldName);
         player.sendMessage(ChatColor.GRAY + " • Zone : " + state.width + "x" + state.length + " (Y " + state.base.getBlockY() + ")");
         int cursorY = state.cursor != null ? state.cursor.y : state.base.getBlockY();
@@ -377,9 +471,8 @@ public class Mineur implements CommandExecutor, Listener {
             return;
         }
 
-        MiningSessionState state = findSessionByOwner(player.getUniqueId());
+        MiningSessionState state = requireSelectedSession(player);
         if (state == null) {
-            player.sendMessage(CMD_PREFIX + ChatColor.RED + "Aucune session active.");
             return;
         }
 
@@ -527,12 +620,16 @@ public class Mineur implements CommandExecutor, Listener {
     }
 
     public void loadSavedSessions() {
+        for (RuntimeSession runtime : runtimes.values()) {
+            runtime.stop();
+        }
+        runtimes.clear();
         sessions.clear();
+        ownerSessions.clear();
+        selectedSessions.clear();
         sessions.addAll(sessionStore.load());
         for (MiningSessionState state : sessions) {
-            if (state.owner != null) {
-                ownerToSession.put(state.owner, state.id);
-            }
+            registerOwnerSession(state, false);
             startRuntime(state, false);
         }
         plugin.getLogger().info("Mineur : " + sessions.size() + " session(s) rechargée(s).");
@@ -544,10 +641,15 @@ public class Mineur implements CommandExecutor, Listener {
         }
         runtimes.clear();
         sessions.clear();
-        ownerToSession.clear();
+        ownerSessions.clear();
+        selectedSessions.clear();
     }
 
     private void startRuntime(MiningSessionState state, boolean freshlyCreated) {
+        RuntimeSession previous = runtimes.remove(state.id);
+        if (previous != null) {
+            previous.stop();
+        }
         RuntimeSession runtime = new RuntimeSession(state);
         runtimes.put(state.id, runtime);
 
@@ -582,16 +684,155 @@ public class Mineur implements CommandExecutor, Listener {
         return "(" + block.getX() + ", " + block.getY() + ", " + block.getZ() + ")";
     }
 
-    private MiningSessionState findSessionByOwner(UUID ownerId) {
-        UUID sessionId = ownerToSession.get(ownerId);
-        if (sessionId == null) {
+    private List<MiningSessionState> getSessionsForOwner(UUID ownerId) {
+        List<MiningSessionState> ownedSessions = new ArrayList<>();
+        if (ownerId == null) {
+            return ownedSessions;
+        }
+        for (UUID sessionId : ownerSessions.getOrDefault(ownerId, List.of())) {
+            MiningSessionState state = findSessionById(sessionId);
+            if (state != null) {
+                ownedSessions.add(state);
+            }
+        }
+        return ownedSessions;
+    }
+
+    private void registerOwnerSession(MiningSessionState state, boolean selectNew) {
+        if (state == null || state.owner == null) {
+            return;
+        }
+        List<UUID> owned = ownerSessions.computeIfAbsent(state.owner, ignored -> new ArrayList<>());
+        if (!owned.contains(state.id)) {
+            owned.add(state.id);
+        }
+        if (selectNew || state.selected || (owned.size() == 1 && !selectedSessions.containsKey(state.owner))) {
+            setSelectedSession(state.owner, state.id);
+        }
+    }
+
+    private void unregisterOwnerSession(MiningSessionState state) {
+        if (state == null || state.owner == null) {
+            return;
+        }
+
+        List<UUID> owned = ownerSessions.get(state.owner);
+        if (owned != null) {
+            owned.remove(state.id);
+            if (owned.isEmpty()) {
+                ownerSessions.remove(state.owner);
+            }
+        }
+
+        if (!Objects.equals(selectedSessions.get(state.owner), state.id)) {
+            return;
+        }
+        if (owned == null || owned.isEmpty()) {
+            selectedSessions.remove(state.owner);
+            return;
+        }
+        if (owned.size() == 1) {
+            setSelectedSession(state.owner, owned.get(0));
+            return;
+        }
+        for (UUID remainingId : owned) {
+            MiningSessionState remaining = findSessionById(remainingId);
+            if (remaining != null) {
+                remaining.selected = false;
+            }
+        }
+        selectedSessions.remove(state.owner);
+    }
+
+    private void setSelectedSession(UUID ownerId, UUID sessionId) {
+        if (ownerId == null || sessionId == null) {
+            return;
+        }
+        selectedSessions.put(ownerId, sessionId);
+        for (MiningSessionState state : getSessionsForOwner(ownerId)) {
+            state.selected = Objects.equals(state.id, sessionId);
+        }
+    }
+
+    private MiningSessionState resolveSelectedSession(UUID ownerId) {
+        List<MiningSessionState> ownedSessions = getSessionsForOwner(ownerId);
+        if (ownedSessions.isEmpty()) {
             return null;
         }
-        return findSessionById(sessionId);
+        if (ownedSessions.size() == 1) {
+            setSelectedSession(ownerId, ownedSessions.get(0).id);
+            return ownedSessions.get(0);
+        }
+
+        UUID selectedId = selectedSessions.get(ownerId);
+        if (selectedId == null) {
+            return null;
+        }
+
+        MiningSessionState selected = findSessionById(selectedId);
+        if (selected == null || !Objects.equals(selected.owner, ownerId)) {
+            selectedSessions.remove(ownerId);
+            return null;
+        }
+        return selected;
+    }
+
+    private MiningSessionState requireSelectedSession(Player player) {
+        List<MiningSessionState> ownedSessions = getSessionsForOwner(player.getUniqueId());
+        if (ownedSessions.isEmpty()) {
+            player.sendMessage(CMD_PREFIX + ChatColor.RED + "Aucune session active.");
+            return null;
+        }
+
+        MiningSessionState selected = resolveSelectedSession(player.getUniqueId());
+        if (selected != null) {
+            return selected;
+        }
+
+        player.sendMessage(CMD_PREFIX + ChatColor.YELLOW + "Plusieurs mineurs actifs. Utilise /mineur list puis /mineur select <n>.");
+        return null;
+    }
+
+    public void refreshOwnerSessions(UUID ownerId) {
+        for (MiningSessionState state : getSessionsForOwner(ownerId)) {
+            RuntimeSession runtime = runtimeOf(state.id);
+            if (runtime != null && !state.paused) {
+                restartLoop(runtime);
+            }
+        }
     }
 
     private RuntimeSession runtimeOf(UUID sessionId) {
         return runtimes.get(sessionId);
+    }
+
+    private JobManager getJobManager() {
+        if (plugin instanceof MinePlugin minePlugin) {
+            return minePlugin.getJobManager();
+        }
+        return null;
+    }
+
+    private int getMaxMinesForOwner(UUID ownerId) {
+        JobManager jobManager = getJobManager();
+        return jobManager != null ? jobManager.getMaxMinesForPlayer(ownerId) : 1;
+    }
+
+    private Integer getNextMineUnlockLevel(UUID ownerId) {
+        JobManager jobManager = getJobManager();
+        return jobManager != null ? jobManager.getNextMineUnlockLevelForPlayer(ownerId) : null;
+    }
+
+    private double getOwnerSpeedMultiplier(UUID ownerId) {
+        JobManager jobManager = getJobManager();
+        return jobManager != null ? jobManager.getMiningSpeedMultiplier(ownerId) : 1.0D;
+    }
+
+    private String formatDecimal(double value) {
+        if (Math.abs(value - Math.rint(value)) < 0.0001D) {
+            return Long.toString(Math.round(value));
+        }
+        return String.format(Locale.ROOT, "%.2f", value);
     }
 
     private boolean isSameBlock(Location location, Block block) {
@@ -844,6 +1085,7 @@ public class Mineur implements CommandExecutor, Listener {
         runtime.router = new InventoryRouter(resolveContainerBlocks(runtime));
         World world = runtime.state.base.getWorld();
         MiningIterator iterator = createIteratorFor(world, runtime.state.pattern, runtime.state.cursor);
+        double progressPerTick = runtime.state.speed.progressPerTick(getOwnerSpeedMultiplier(runtime.state.owner));
         RuntimeSession currentRuntime = runtime;
         runtime.loop = new MiningLoop(
                 plugin,
@@ -859,9 +1101,10 @@ public class Mineur implements CommandExecutor, Listener {
                 () -> onLoopCompletion(currentRuntime.state),
                 () -> onStorageBlocked(currentRuntime.state),
                 () -> onStorageFreed(currentRuntime.state),
-                runtime.state.waitingStorage
+                runtime.state.waitingStorage,
+                progressPerTick
         );
-        runtime.loop.runTaskTimer(plugin, 1L, Math.max(1L, runtime.state.speed.ticksPerStage));
+        runtime.loop.runTaskTimer(plugin, 1L, 1L);
     }
 
     private void onLoopCompletion(MiningSessionState state) {
@@ -1049,9 +1292,7 @@ public class Mineur implements CommandExecutor, Listener {
             if (removeState) {
                 sessions.remove(state);
             }
-            if (state.owner != null) {
-                ownerToSession.remove(state.owner, sessionId);
-            }
+            unregisterOwnerSession(state);
         }
         saveAllSessions();
         if (issuer != null) {
