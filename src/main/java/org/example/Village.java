@@ -6,8 +6,10 @@ import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.World;
 import org.bukkit.block.Block;
+import org.bukkit.block.BlockFace;
 import org.bukkit.block.CreatureSpawner;
 import org.bukkit.block.data.BlockData;
+import org.bukkit.block.data.type.Stairs;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandExecutor;
 import org.bukkit.command.CommandSender;
@@ -49,11 +51,12 @@ public final class Village implements CommandExecutor {
 
     private static final int VIL_SPAWNERS = 4;
     private static final int GOLEM_SPAWNERS = 2;
-    private static final int WALL_GAP = 6;
+    private static final int DEFAULT_WALL_GAP = 6;
 
     private final Random rng = new Random();
     private final JavaPlugin plugin;
     private final int plazaSize;
+    private final int wallGap;
     private final VillageLayoutSettings layoutSettings;
 
     private Set<Integer> villagerSpawnerIdx = Collections.emptySet();
@@ -72,6 +75,10 @@ public final class Village implements CommandExecutor {
         int roadHalf = cfg.getInt("village.roadHalf", 2);
         int spacing = cfg.getInt("village.spacing", 20);
         this.plazaSize = cfg.getInt("village.plazaSize", 9);
+        // Cette marge existait déjà dans la configuration mais n'était pas
+        // réellement utilisée partout. On la branche ici pour pouvoir régler
+        // proprement la respiration entre les maisons et la muraille.
+        this.wallGap = cfg.getInt("village.wallGap", DEFAULT_WALL_GAP);
         this.layoutSettings = new VillageLayoutSettings(
                 cfg.getString("village.layout-style", "semi_organic"),
                 rows,
@@ -169,17 +176,17 @@ public final class Village implements CommandExecutor {
 
         Queue<Runnable> todo = new LinkedList<>();
 
-        int rx = (bounds.maxX() - bounds.minX()) / 2 + WALL_GAP;
-        int rz = (bounds.maxZ() - bounds.minZ()) / 2 + WALL_GAP;
+        int rx = (bounds.maxX() - bounds.minX()) / 2 + wallGap;
+        int rz = (bounds.maxZ() - bounds.minZ()) / 2 + wallGap;
         int southWallZ = villageCenterZ + rz + 1;
         Location gateAnchor = new Location(world, villageCenterX, baseY + 1, southWallZ - 2);
         currentSession.getAnchors().put("gate", gateAnchor.clone());
 
         todo.addAll(prepareGroundActions(world,
-                bounds.minX() - layoutSettings.mainStreetHalf() - 5 - WALL_GAP,
-                bounds.maxX() + layoutSettings.mainStreetHalf() + 5 + WALL_GAP,
-                bounds.minZ() - layoutSettings.mainStreetHalf() - 5 - WALL_GAP,
-                bounds.maxZ() + layoutSettings.mainStreetHalf() + 5 + WALL_GAP,
+                bounds.minX() - layoutSettings.mainStreetHalf() - 5 - wallGap,
+                bounds.maxX() + layoutSettings.mainStreetHalf() + 5 + wallGap,
+                bounds.minZ() - layoutSettings.mainStreetHalf() - 5 - wallGap,
+                bounds.maxZ() + layoutSettings.mainStreetHalf() + 5 + wallGap,
                 baseY));
 
         Disposition.buildVillage(plugin,
@@ -212,10 +219,17 @@ public final class Village implements CommandExecutor {
         Location plazaAnchor = layout.anchors().getOrDefault("plaza", center);
         todo.add(() -> spawnVillager(world, plazaAnchor.clone().add(1, 1, 1), "Maire"));
 
+        // Les spawners visibles au milieu de la place faisaient très "plugin".
+        // On les enterre sous le dallage afin de conserver la mécanique tout
+        // en gardant une place crédible visuellement.
         for (int i = 0; i < GOLEM_SPAWNERS; i++) {
             int sign = i % 2 == 0 ? 1 : -1;
             int gx = plazaAnchor.getBlockX() + sign * (plazaSize / 2 + 2);
-            todo.add(createSpawnerAction(currentSession, world, gx, baseY + 1, plazaAnchor.getBlockZ(), EntityType.IRON_GOLEM));
+            int gz = plazaAnchor.getBlockZ();
+            todo.add(createSpawnerAction(currentSession, world, gx, baseY - 1, gz, EntityType.IRON_GOLEM));
+            int finalGx = gx;
+            int finalGz = gz;
+            todo.add(() -> setBlockTracked(currentSession, world, finalGx, baseY, finalGz, Material.POLISHED_ANDESITE));
         }
 
         buildActionsInBatches(todo, 250);
@@ -335,16 +349,41 @@ public final class Village implements CommandExecutor {
 
     private List<Runnable> prepareGroundActions(World world, int minX, int maxX, int minZ, int maxZ, int y) {
         List<Runnable> actions = new ArrayList<>();
+        int centerX = (minX + maxX) / 2;
+        int centerZ = (minZ + maxZ) / 2;
+        int radiusX = Math.max(1, (maxX - minX) / 2);
+        int radiusZ = Math.max(1, (maxZ - minZ) / 2);
+
         for (int x = minX; x <= maxX; x++) {
             for (int z = minZ; z <= maxZ; z++) {
                 final int fx = x;
                 final int fz = z;
                 actions.add(() -> {
-                    for (int h = 1; h <= 18; h++) {
-                        world.getBlockAt(fx, y + h, fz).setType(Material.AIR, false);
+                    // On conserve un terrain lisible pour les rues/terrasses tout en
+                    // évitant l'effet "moquette verte parfaite" sur toute la zone.
+                    int topY = world.getHighestBlockYAt(fx, fz);
+                    for (int clearY = y + 1; clearY <= Math.max(topY, y + 12); clearY++) {
+                        world.getBlockAt(fx, clearY, fz).setType(Material.AIR, false);
                     }
-                    setBlockTracked(world, fx, y - 1, fz, Material.DIRT);
-                    setBlockTracked(world, fx, y, fz, Material.GRASS_BLOCK);
+                    for (int fillY = Math.min(topY + 1, y - 2); fillY <= y - 1; fillY++) {
+                        if (fillY <= y - 2) {
+                            setBlockTracked(world, fx, fillY, fz, (fx + fillY + fz) % 5 == 0 ? Material.STONE : Material.DIRT);
+                        }
+                    }
+
+                    double edgeFactor = Math.max(Math.abs(fx - centerX) / (double) radiusX,
+                            Math.abs(fz - centerZ) / (double) radiusZ);
+                    Material topMaterial;
+                    if (edgeFactor > 0.9D) {
+                        topMaterial = Math.floorMod(fx * 17 + fz * 31, 3) == 0 ? Material.COARSE_DIRT : Material.MOSS_BLOCK;
+                    } else if (edgeFactor > 0.72D) {
+                        topMaterial = Math.floorMod(fx * 13 + fz * 19, 4) == 0 ? Material.PACKED_MUD : Material.GRASS_BLOCK;
+                    } else {
+                        topMaterial = Material.GRASS_BLOCK;
+                    }
+
+                    setBlockTracked(world, fx, y - 1, fz, (fx + fz) % 7 == 0 ? Material.COARSE_DIRT : Material.DIRT);
+                    setBlockTracked(world, fx, y, fz, topMaterial);
                 });
             }
         }
@@ -361,14 +400,40 @@ public final class Village implements CommandExecutor {
         int z2 = (bounds[3] + cz) / 2;
 
         int[][] points = {{x1, z1}, {x2, z1}, {x1, z2}, {x2, z2}};
-        int[][] offsets = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}};
         for (int[] point : points) {
-            actions.add(createSpawnerAction(currentSession, world, point[0], y + 1, point[1], EntityType.VILLAGER));
-            for (int[] offset : offsets) {
-                int fx = point[0] + offset[0];
-                int fz = point[1] + offset[1];
-                actions.add(() -> setBlockTracked(world, fx, y + 1, fz, Material.SEA_LANTERN));
+            int px = point[0];
+            int pz = point[1];
+
+            // Spawner enterré : le village conserve sa vie sans exposer des
+            // blocs techniques au milieu des rues.
+            actions.add(createSpawnerAction(currentSession, world, px, y - 1, pz, EntityType.VILLAGER));
+
+            // Petit nœud de quartier : potelet, lanterne et sol varié.
+            actions.add(() -> setBlockTracked(world, px, y, pz, Material.COBBLESTONE));
+            actions.add(() -> setBlockTracked(world, px, y + 1, pz, Material.COBBLESTONE_WALL));
+            actions.add(() -> setBlockTracked(world, px, y + 2, pz, Material.LANTERN));
+
+            int[][] ring = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}, {1, 1}, {1, -1}, {-1, 1}, {-1, -1}};
+            for (int[] offset : ring) {
+                int fx = px + offset[0];
+                int fz = pz + offset[1];
+                Material ground = Math.abs(offset[0]) + Math.abs(offset[1]) == 1
+                        ? Material.GRAVEL
+                        : Material.COARSE_DIRT;
+                actions.add(() -> setBlockTracked(world, fx, y, fz, ground));
             }
+
+            // Deux petits bancs pour suggérer une placette de quartier.
+            int benchAX = px - 1;
+            int benchAZ = pz + 2;
+            int benchBX = px + 1;
+            int benchBZ = pz - 2;
+            actions.add(() -> setBlockTracked(world, benchAX, y + 1, benchAZ, Material.SPRUCE_STAIRS));
+            actions.add(() -> org.example.village.VillageStyle.setStair(world, benchAX, y + 1, benchAZ,
+                    Material.SPRUCE_STAIRS, BlockFace.NORTH, Stairs.Half.BOTTOM, Stairs.Shape.STRAIGHT));
+            actions.add(() -> setBlockTracked(world, benchBX, y + 1, benchBZ, Material.SPRUCE_STAIRS));
+            actions.add(() -> org.example.village.VillageStyle.setStair(world, benchBX, y + 1, benchBZ,
+                    Material.SPRUCE_STAIRS, BlockFace.SOUTH, Stairs.Half.BOTTOM, Stairs.Shape.STRAIGHT));
         }
         return actions;
     }

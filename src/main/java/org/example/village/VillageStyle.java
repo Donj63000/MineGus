@@ -5,7 +5,10 @@ import org.bukkit.World;
 import org.bukkit.block.BlockFace;
 import org.bukkit.block.data.Bisected;
 import org.bukkit.block.data.Directional;
+import org.bukkit.block.data.type.Bed;
 import org.bukkit.block.data.type.Door;
+import org.bukkit.block.data.type.Gate;
+import org.bukkit.block.data.type.Slab;
 import org.bukkit.block.data.type.Stairs;
 import org.bukkit.block.data.type.TrapDoor;
 
@@ -16,6 +19,10 @@ import java.util.Random;
 /**
  * Helpers communs pour donner une direction visuelle medievale coherente
  * aux maisons, batiments speciaux et murailles.
+ *
+ * L'objectif n'est pas seulement de poser les bons blocs, mais surtout
+ * de poser les bons blocs AVEC la bonne orientation. C'est un point cle
+ * pour qu'un village paraisse construit par un vrai joueur soigneux.
  */
 public final class VillageStyle {
 
@@ -49,20 +56,27 @@ public final class VillageStyle {
         return ACCENT_PLANKS.get(random.nextInt(ACCENT_PLANKS.size()));
     }
 
+    /**
+     * Palette volontairement typée "village de joueur" :
+     * - soubassement pierre legerement vieilli,
+     * - colombages sombres,
+     * - murs clairs type enduit,
+     * - toits plus massifs et plus lisibles.
+     */
     public static Palette medievalPalette(Material accentPlanks) {
         Material accent = accentPlanks != null ? accentPlanks : Material.SPRUCE_PLANKS;
         Material roofStairs = stairsFrom(accent);
         Material roofSlab = slabFrom(accent);
-        Material door = materialFrom(accent, "_PLANKS", "_DOOR", Material.SPRUCE_DOOR);
-        Material shutter = materialFrom(accent, "_PLANKS", "_TRAPDOOR", Material.SPRUCE_TRAPDOOR);
-        Material fence = materialFrom(accent, "_PLANKS", "_FENCE", Material.SPRUCE_FENCE);
+        Material door = doorFrom(accent);
+        Material shutter = trapdoorFrom(accent);
+        Material fence = fenceFrom(accent);
         return new Palette(
                 Material.STONE_BRICKS,
-                Material.COBBLESTONE,
+                Material.MOSSY_COBBLESTONE,
                 Material.POLISHED_ANDESITE,
                 accent == Material.DARK_OAK_PLANKS ? Material.STRIPPED_DARK_OAK_LOG : Material.STRIPPED_SPRUCE_LOG,
-                Material.BIRCH_PLANKS,
-                Material.OAK_PLANKS,
+                Material.WHITE_TERRACOTTA,
+                accent == Material.DARK_OAK_PLANKS ? Material.SPRUCE_PLANKS : Material.OAK_PLANKS,
                 accent,
                 roofStairs,
                 roofSlab,
@@ -114,12 +128,19 @@ public final class VillageStyle {
     }
 
     public static void setTrapdoor(World world, int x, int y, int z, Material material, BlockFace facing, boolean open) {
+        setTrapdoor(world, x, y, z, material, facing, open, Bisected.Half.BOTTOM);
+    }
+
+    public static void setTrapdoor(World world, int x, int y, int z,
+                                   Material material, BlockFace facing,
+                                   boolean open, Bisected.Half half) {
         if (world == null) {
             return;
         }
         TrapDoor trapDoor = (TrapDoor) material.createBlockData();
         trapDoor.setFacing(facing);
         trapDoor.setOpen(open);
+        trapDoor.setHalf(half);
         world.getBlockAt(x, y, z).setBlockData(trapDoor, false);
     }
 
@@ -145,12 +166,64 @@ public final class VillageStyle {
         world.getBlockAt(x, y, z).setBlockData(directional, false);
     }
 
+    /** Pose un lit correctement oriente (tete + pied geres separement). */
+    public static void setBed(World world, int x, int y, int z, Material material, BlockFace facing, Bed.Part part) {
+        if (world == null) {
+            return;
+        }
+        Bed bed = (Bed) material.createBlockData();
+        bed.setFacing(facing);
+        bed.setPart(part);
+        bed.setOccupied(false);
+        world.getBlockAt(x, y, z).setBlockData(bed, false);
+    }
+
+    /** Pose une barriere avec sa vraie orientation. */
+    public static void setGate(World world, int x, int y, int z, Material material,
+                               BlockFace facing, boolean open, boolean inWall) {
+        if (world == null) {
+            return;
+        }
+        Gate gate = (Gate) material.createBlockData();
+        gate.setFacing(facing);
+        gate.setOpen(open);
+        gate.setPowered(false);
+        gate.setInWall(inWall);
+        world.getBlockAt(x, y, z).setBlockData(gate, false);
+    }
+
+    public static void setSlab(World world, int x, int y, int z, Material material, Slab.Type type) {
+        if (world == null) {
+            return;
+        }
+        Slab slab = (Slab) material.createBlockData();
+        slab.setType(type);
+        slab.setWaterlogged(false);
+        world.getBlockAt(x, y, z).setBlockData(slab, false);
+    }
+
     public static Material stairsFrom(Material planks) {
         return materialFrom(planks, "_PLANKS", "_STAIRS", Material.SPRUCE_STAIRS);
     }
 
     public static Material slabFrom(Material planks) {
         return materialFrom(planks, "_PLANKS", "_SLAB", Material.SPRUCE_SLAB);
+    }
+
+    public static Material doorFrom(Material planks) {
+        return materialFrom(planks, "_PLANKS", "_DOOR", Material.SPRUCE_DOOR);
+    }
+
+    public static Material trapdoorFrom(Material planks) {
+        return materialFrom(planks, "_PLANKS", "_TRAPDOOR", Material.SPRUCE_TRAPDOOR);
+    }
+
+    public static Material fenceFrom(Material planks) {
+        return materialFrom(planks, "_PLANKS", "_FENCE", Material.SPRUCE_FENCE);
+    }
+
+    public static Material fenceGateFrom(Material planks) {
+        return materialFrom(planks, "_PLANKS", "_FENCE_GATE", Material.SPRUCE_FENCE_GATE);
     }
 
     private static Material materialFrom(Material source, String from, String to, Material fallback) {

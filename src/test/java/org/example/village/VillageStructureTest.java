@@ -12,6 +12,7 @@ import java.util.Map;
 import java.util.Queue;
 import java.util.Random;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class VillageStructureTest {
@@ -28,7 +29,29 @@ class VillageStructureTest {
         assertTrue(blocks.values().contains(Material.LANTERN));
         assertTrue(blocks.values().contains(Material.RED_BANNER));
         assertTrue(blocks.values().contains(Material.DARK_OAK_STAIRS));
+        assertTrue(blocks.values().contains(Material.STONE_BRICK_SLAB));
+        assertTrue(blocks.values().contains(Material.IRON_BARS));
+        assertTrue(blocks.values().contains(Material.CAMPFIRE));
         assertTrue(blocks.keySet().stream().anyMatch(k -> Integer.parseInt(k.split(":")[1]) >= 73));
+    }
+
+    @Test
+    void medievalPaletteMatchesAccentWoodFamily() {
+        VillageStyle.Palette darkOakPalette = VillageStyle.medievalPalette(Material.DARK_OAK_PLANKS);
+        VillageStyle.Palette sprucePalette = VillageStyle.medievalPalette(Material.SPRUCE_PLANKS);
+
+        assertEquals(Material.DARK_OAK_DOOR, darkOakPalette.door());
+        assertEquals(Material.DARK_OAK_TRAPDOOR, darkOakPalette.shutter());
+        assertEquals(Material.DARK_OAK_FENCE, darkOakPalette.fence());
+        assertEquals(Material.DARK_OAK_STAIRS, darkOakPalette.roofStairs());
+        assertEquals(Material.DARK_OAK_SLAB, darkOakPalette.roofSlab());
+        assertEquals(Material.STRIPPED_DARK_OAK_LOG, darkOakPalette.timber());
+        assertEquals(Material.SPRUCE_PLANKS, darkOakPalette.floor());
+
+        assertEquals(Material.SPRUCE_DOOR, sprucePalette.door());
+        assertEquals(Material.SPRUCE_TRAPDOOR, sprucePalette.shutter());
+        assertEquals(Material.SPRUCE_FENCE, sprucePalette.fence());
+        assertEquals(Material.OAK_PLANKS, sprucePalette.floor());
     }
 
     @Test
