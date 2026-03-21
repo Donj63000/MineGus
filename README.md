@@ -78,8 +78,9 @@ Référence par défaut : `src/main/resources/config.yml`. Modifiez seulement la
 - `/job mineur` : choisit le métier de mineur.
 - `/job` ou `/job info` : affiche métier, niveau, XP et nombre de mines débloquées. L’XP se gagne en minant à la pioche; +1 slot de mine tous les 10 niveaux (jusqu’à 10).
 
-### /minegus (permission `mineplugin.admin`)
-- `/minegus fix forestier|golems` : commande de maintenance qui supprime les doublons de forestiers de /foret ou de golems gardes taggés dans tous les mondes.
+### /minegus
+- `/minegus` : affiche une aide rapide avec toutes les commandes principales du plugin, y compris les commandes restreintes marquées `[permission]` ou `[admin]`.
+- `/minegus fix forestier|golems` (permission `mineplugin.admin`) : commande de maintenance qui supprime les doublons de forestiers de /foret ou de golems gardes taggés dans tous les mondes.
 
 ## Persistance des données
 Les fonctionnalités sauvegardent leurs informations (YAML) dans `plugins/MinePlugin/` (`sessions.yml`, `farms.yml`, etc.) pour restaurer PNJ et structures au redémarrage.

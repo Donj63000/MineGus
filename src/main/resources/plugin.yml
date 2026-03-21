@@ -41,9 +41,10 @@ commands:
     usage: /marchand
     permission: mineplugin.marchand.spawn
   minegus:
-    description: Outils d'administration MineGus
-    usage: /minegus fix <forestier|golems>
-    permission: mineplugin.admin
+    description: Aide rapide et maintenance MineGus
+    usage: |
+      /minegus
+      /minegus fix <forestier|golems>
   job:
     description: Gestion des métiers (mineur, etc.)
     usage: |
@@ -67,7 +68,7 @@ permissions:
     description: Administrer le marchand (/marchand reload)
     default: op
   mineplugin.admin:
-    description: Accéder aux commandes d'administration MineGus
+    description: Utiliser les sous-commandes d'administration de /minegus
     default: op
 
 softdepend:
