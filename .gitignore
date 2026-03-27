@@ -1,5 +1,8 @@
 /MinePlugin.jar
 /target/
+/.codex_tmp/
+/.jdk24
+/village-visuel-upgrade.zip
 
 *.iml
 .idea/
