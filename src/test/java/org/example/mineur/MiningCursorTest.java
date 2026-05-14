@@ -16,9 +16,11 @@ class MiningCursorTest {
         MiningCursor cursor = new MiningCursor(base, 0, -3);
 
         assertEquals(base.getBlockX(), cursor.minX);
+        assertEquals(base.getBlockY(), cursor.minY);
         assertEquals(base.getBlockY(), cursor.y);
         assertEquals(base.getBlockZ(), cursor.minZ);
         assertEquals(1, cursor.width);
+        assertEquals(1, cursor.height);
         assertEquals(1, cursor.length);
         assertEquals(cursor.minX, cursor.x);
         assertEquals(cursor.minZ, cursor.z);
@@ -31,6 +33,8 @@ class MiningCursorTest {
         cursor.x = cursor.minX + 1;
         cursor.y -= 2;
         cursor.z = cursor.minZ + 2;
+        cursor.minY = cursor.y;
+        cursor.height = 3;
         cursor.scanXFirst = false;
 
         MiningCursor clone = cursor.copy();
@@ -40,8 +44,10 @@ class MiningCursorTest {
         assertEquals(cursor.y, clone.y);
         assertEquals(cursor.z, clone.z);
         assertEquals(cursor.minX, clone.minX);
+        assertEquals(cursor.minY, clone.minY);
         assertEquals(cursor.minZ, clone.minZ);
         assertEquals(cursor.width, clone.width);
+        assertEquals(cursor.height, clone.height);
         assertEquals(cursor.length, clone.length);
         assertFalse(clone.scanXFirst);
 
@@ -57,6 +63,8 @@ class MiningCursorTest {
         cursor.x = cursor.minX + 3;
         cursor.y -= 4;
         cursor.z = cursor.minZ + 4;
+        cursor.minY = cursor.y;
+        cursor.height = 5;
         cursor.scanXFirst = false;
 
         Map<String, Object> data = cursor.toMap();
@@ -66,8 +74,10 @@ class MiningCursorTest {
         assertEquals(cursor.y, restored.y);
         assertEquals(cursor.z, restored.z);
         assertEquals(cursor.minX, restored.minX);
+        assertEquals(cursor.minY, restored.minY);
         assertEquals(cursor.minZ, restored.minZ);
         assertEquals(cursor.width, restored.width);
+        assertEquals(cursor.height, restored.height);
         assertEquals(cursor.length, restored.length);
         assertFalse(restored.scanXFirst);
     }
@@ -87,8 +97,10 @@ class MiningCursorTest {
         assertEquals(50, restored.y);
         assertEquals(-2, restored.z);
         assertEquals(3, restored.minX);
+        assertEquals(50, restored.minY);
         assertEquals(-2, restored.minZ);
         assertEquals(1, restored.width);
+        assertEquals(1, restored.height);
         assertEquals(1, restored.length);
         assertTrue(restored.scanXFirst);
     }

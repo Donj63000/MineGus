@@ -51,6 +51,7 @@ class SessionStoreTest {
         state.owner = UUID.randomUUID();
         state.useBarrelMaster = false;
         state.selected = true;
+        state.tunnelHeight = 4;
         state.containers.add(new Vector(8, 64, 9));
 
         store.saveAll(List.of(state));
@@ -69,6 +70,7 @@ class SessionStoreTest {
             assertEquals(state.length, restored.length);
             assertNotNull(restored.cursor);
             assertEquals(state.cursor.minX, restored.cursor.minX);
+            assertEquals(state.tunnelHeight, restored.tunnelHeight);
             assertEquals(1, restored.containers.size());
             assertEquals(state.selected, restored.selected);
         }

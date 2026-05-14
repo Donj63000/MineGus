@@ -14,6 +14,13 @@ mineur:
   branch:
     spacing: 6        # espacement entre deux branches sur l'axe X
     gallery-width: 3  # largeur de la galerie principale (en blocs)
+  tunnel:
+    section-size: 10
+    height: 3
+    max-sections: 0   # 0 = infini
+  vein:
+    scan-radius: 5
+    max-blocks: 96
   limits:
     max-sessions-per-player: 1
   economy:

@@ -44,6 +44,7 @@ public final class MiningSessionState {
     public boolean infiniteTunnel = false;
     public BlockFace tunnelDirection = BlockFace.SOUTH;
     public int tunnelSectionSize = 10;
+    public int tunnelHeight = 3;
     public int tunnelSectionsMined = 0;
     public int maxTunnelSections = 0;
 
@@ -72,6 +73,7 @@ public final class MiningSessionState {
         map.put("infiniteTunnel", infiniteTunnel);
         map.put("tunnelDirection", tunnelDirection != null ? tunnelDirection.name() : null);
         map.put("tunnelSectionSize", tunnelSectionSize);
+        map.put("tunnelHeight", tunnelHeight);
         map.put("tunnelSectionsMined", tunnelSectionsMined);
         map.put("maxTunnelSections", maxTunnelSections);
         List<String> trustedList = new ArrayList<>();
@@ -143,6 +145,10 @@ public final class MiningSessionState {
         Object sizeObj = map.get("tunnelSectionSize");
         if (sizeObj instanceof Number n) {
             state.tunnelSectionSize = n.intValue();
+        }
+        Object heightObj = map.get("tunnelHeight");
+        if (heightObj instanceof Number n) {
+            state.tunnelHeight = Math.max(1, n.intValue());
         }
         Object minedObj = map.get("tunnelSectionsMined");
         if (minedObj instanceof Number n) {

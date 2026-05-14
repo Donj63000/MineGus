@@ -6,10 +6,13 @@ import org.bukkit.Chunk;
 import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.NamespacedKey;
+import org.bukkit.OfflinePlayer;
 import org.bukkit.World;
 import org.bukkit.block.Block;
+import org.bukkit.block.BlockState;
 import org.bukkit.block.BlockFace;
 import org.bukkit.block.Container;
+import org.bukkit.block.DoubleChest;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandExecutor;
 import org.bukkit.command.CommandSender;
@@ -19,10 +22,16 @@ import org.bukkit.entity.Player;
 import org.bukkit.entity.Villager;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
+import org.bukkit.event.block.Action;
 import org.bukkit.event.block.BlockBreakEvent;
+import org.bukkit.event.block.BlockExplodeEvent;
+import org.bukkit.event.entity.EntityExplodeEvent;
+import org.bukkit.event.inventory.InventoryMoveItemEvent;
+import org.bukkit.event.inventory.InventoryOpenEvent;
 import org.bukkit.event.player.PlayerInteractEvent;
 import org.bukkit.inventory.EntityEquipment;
 import org.bukkit.inventory.Inventory;
+import org.bukkit.inventory.InventoryHolder;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.meta.ItemMeta;
 import org.bukkit.inventory.meta.LeatherArmorMeta;
@@ -40,6 +49,8 @@ import org.example.mineur.MiningPattern;
 import org.example.mineur.MiningSessionState;
 import org.example.mineur.MiningSpeed;
 import org.example.mineur.QuarryIterator;
+import org.example.mineur.TunnelIterator;
+import org.example.mineur.VeinFirstIterator;
 import org.example.mineur.builders.StairBuilder;
 import org.example.mineur.builders.SupportBuilder;
 import org.example.mineur.builders.TorchPlacer;
@@ -66,6 +77,7 @@ public class Mineur implements CommandExecutor, Listener {
     private final JavaPlugin plugin;
     private final SessionStore sessionStore;
     private final NamespacedKey containerOwnerKey;
+    private final NamespacedKey containerSessionKey;
 
     private final List<MiningSessionState> sessions = new ArrayList<>();
     private final Map<UUID, Selection> selections = new HashMap<>();
@@ -77,6 +89,7 @@ public class Mineur implements CommandExecutor, Listener {
         this.plugin = plugin;
         this.sessionStore = new SessionStore(plugin.getDataFolder());
         this.containerOwnerKey = new NamespacedKey(plugin, "mineur-owner");
+        this.containerSessionKey = new NamespacedKey(plugin, "mineur-session");
 
         plugin.saveDefaultConfig();
 
@@ -164,7 +177,7 @@ public class Mineur implements CommandExecutor, Listener {
         lines.add(ChatColor.GRAY + "  carriere/quarry = balayage complet couche par couche.");
         lines.add(ChatColor.GRAY + "  branche/branch = galerie principale + branches regulieres.");
         lines.add(ChatColor.GRAY + "  tunnel = avance en tunnel directionnel.");
-        lines.add(ChatColor.GRAY + "  veine/vein_first = alias temporaire (actuellement fallback sur carriere).");
+        lines.add(ChatColor.GRAY + "  veine/vein_first = priorise les minerais proches et vide chaque veine detectee.");
         lines.add(ChatColor.GRAY + "  Note: changer de pattern desactive le chainage auto carriere -> tunnel.");
 
         lines.add(ChatColor.GOLD + "/mineur pause" + ChatColor.GRAY
@@ -274,10 +287,11 @@ public class Mineur implements CommandExecutor, Listener {
             state.chainTunnelAfterQuarry = false;
         }
         state.infiniteTunnel = false;
-        state.tunnelDirection = BlockFace.SOUTH;
-        state.tunnelSectionSize = 10;
+        state.tunnelDirection = directionFromYaw(player.getLocation().getYaw());
+        state.tunnelSectionSize = getConfiguredTunnelSectionSize();
+        state.tunnelHeight = getConfiguredTunnelHeight();
         state.tunnelSectionsMined = 0;
-        state.maxTunnelSections = 0;
+        state.maxTunnelSections = plugin.getConfig().getInt("mineur.tunnel.max-sections", 0);
 
         selections.remove(ownerId);
 
@@ -292,33 +306,39 @@ public class Mineur implements CommandExecutor, Listener {
     }
 
     private void handleList(Player player) {
-        List<MiningSessionState> ownedSessions = getSessionsForOwner(player.getUniqueId());
-        if (ownedSessions.isEmpty()) {
-            player.sendMessage(CMD_PREFIX + ChatColor.RED + "Aucune session active.");
+        List<MiningSessionState> accessibleSessions = getAccessibleSessions(player);
+        if (accessibleSessions.isEmpty()) {
+            player.sendMessage(CMD_PREFIX + ChatColor.RED + "Aucune session active ou partagée.");
             return;
         }
 
         UUID selectedId = selectedSessions.get(player.getUniqueId());
-        player.sendMessage(CMD_PREFIX + ChatColor.AQUA + "Mineurs actifs: " + ownedSessions.size()
+        int ownedCount = getSessionsForOwner(player.getUniqueId()).size();
+        player.sendMessage(CMD_PREFIX + ChatColor.AQUA + "Mineurs accessibles: " + accessibleSessions.size()
+                + ChatColor.GRAY + " | A toi: " + ChatColor.GREEN + ownedCount
                 + ChatColor.GRAY + "/" + ChatColor.GREEN + getMaxMinesForOwner(player.getUniqueId()));
-        for (int index = 0; index < ownedSessions.size(); index++) {
-            MiningSessionState state = ownedSessions.get(index);
+        for (int index = 0; index < accessibleSessions.size(); index++) {
+            MiningSessionState state = accessibleSessions.get(index);
             World world = Bukkit.getWorld(state.worldUid);
             String worldName = world != null ? world.getName() : "?";
             String status = state.paused ? ChatColor.YELLOW + "en pause" : ChatColor.GREEN + "actif";
             String selected = Objects.equals(selectedId, state.id) ? ChatColor.GOLD + " [selectionne]" : "";
+            String access = Objects.equals(state.owner, player.getUniqueId())
+                    ? ChatColor.GREEN + "proprietaire"
+                    : ChatColor.AQUA + "autorise";
             player.sendMessage(ChatColor.GRAY + " - Mineur " + (index + 1)
                     + ChatColor.DARK_GRAY + " | " + ChatColor.GRAY + worldName
                     + ChatColor.DARK_GRAY + " | " + ChatColor.GRAY
                     + state.base.getBlockX() + ", " + state.base.getBlockY() + ", " + state.base.getBlockZ()
-                    + ChatColor.DARK_GRAY + " | " + status + selected);
+                    + ChatColor.DARK_GRAY + " | " + status
+                    + ChatColor.DARK_GRAY + " | " + access + selected);
         }
     }
 
     private void handleSelect(Player player, String[] args) {
-        List<MiningSessionState> ownedSessions = getSessionsForOwner(player.getUniqueId());
-        if (ownedSessions.isEmpty()) {
-            player.sendMessage(CMD_PREFIX + ChatColor.RED + "Aucune session active.");
+        List<MiningSessionState> accessibleSessions = getAccessibleSessions(player);
+        if (accessibleSessions.isEmpty()) {
+            player.sendMessage(CMD_PREFIX + ChatColor.RED + "Aucune session active ou partagée.");
             return;
         }
         if (args.length < 2) {
@@ -334,12 +354,12 @@ public class Mineur implements CommandExecutor, Listener {
             return;
         }
 
-        if (index < 1 || index > ownedSessions.size()) {
-            player.sendMessage(CMD_PREFIX + ChatColor.RED + "Numero invalide. Utilise /mineur list pour voir tes mineurs.");
+        if (index < 1 || index > accessibleSessions.size()) {
+            player.sendMessage(CMD_PREFIX + ChatColor.RED + "Numero invalide. Utilise /mineur list pour voir les mineurs accessibles.");
             return;
         }
 
-        MiningSessionState selected = ownedSessions.get(index - 1);
+        MiningSessionState selected = accessibleSessions.get(index - 1);
         setSelectedSession(player.getUniqueId(), selected.id);
         saveAllSessions();
         player.sendMessage(CMD_PREFIX + ChatColor.GREEN + "Mineur " + index + " selectionne.");
@@ -388,15 +408,23 @@ public class Mineur implements CommandExecutor, Listener {
             return;
         }
 
-        if (pattern == MiningPattern.VEIN_FIRST) {
-            player.sendMessage(CMD_PREFIX + ChatColor.YELLOW + "Ce pattern n'est pas encore implémenté, QUARRY sera utilisé à la place.");
-        }
-
         state.pattern = pattern;
-
-        // Comportement manuel : pas de chaînage automatique
         state.chainTunnelAfterQuarry = false;
         state.infiniteTunnel = false;
+
+        if (pattern == MiningPattern.TUNNEL) {
+            state.tunnelDirection = directionFromYaw(player.getLocation().getYaw());
+            state.tunnelHeight = getConfiguredTunnelHeight();
+            prepareTunnelCursor(state, state.base, state.width, state.length, state.tunnelHeight);
+            player.sendMessage(CMD_PREFIX + ChatColor.GRAY + "Direction du tunnel: "
+                    + ChatColor.AQUA + formatDirection(state.tunnelDirection) + ChatColor.GRAY + ".");
+        } else {
+            state.cursor = new MiningCursor(state.base, state.width, state.length);
+            state.cursor.y = state.base.getBlockY();
+            state.cursor.minY = state.base.getBlockY();
+            state.cursor.height = 1;
+        }
+
         saveAllSessions();
         player.sendMessage(CMD_PREFIX + ChatColor.GREEN + "Pattern défini sur " + pattern.name().toLowerCase(Locale.ROOT) + ".");
 
@@ -433,6 +461,10 @@ public class Mineur implements CommandExecutor, Listener {
         if (state == null) {
             return;
         }
+        if (!canAdministrateSession(player, state)) {
+            player.sendMessage(CMD_PREFIX + ChatColor.RED + "Seul le propriétaire peut arrêter définitivement ce mineur.");
+            return;
+        }
         stopSession(state.id, true, player);
     }
 
@@ -445,23 +477,33 @@ public class Mineur implements CommandExecutor, Listener {
         World world = Bukkit.getWorld(state.worldUid);
         String worldName = world != null ? world.getName() : "?";
         JobManager jobManager = getJobManager();
-        int level = jobManager != null ? jobManager.getLevelForPlayer(player.getUniqueId()) : 1;
-        double speedBonus = jobManager != null ? jobManager.getMiningSpeedBonusPercent(player.getUniqueId()) : 0.0D;
+        UUID statsOwner = state.owner != null ? state.owner : player.getUniqueId();
+        int level = jobManager != null ? jobManager.getLevelForPlayer(statsOwner) : 1;
+        double speedBonus = jobManager != null ? jobManager.getMiningSpeedBonusPercent(statsOwner) : 0.0D;
         double multiplier = state.speed.progressPerTick(getOwnerSpeedMultiplier(state.owner)) * state.speed.ticksPerStage;
+        OfflinePlayer owner = state.owner != null ? Bukkit.getOfflinePlayer(state.owner) : null;
+        String ownerName = owner != null && owner.getName() != null ? owner.getName() : "?";
+
         player.sendMessage(CMD_PREFIX + ChatColor.AQUA + "Session " + state.id + " :");
+        player.sendMessage(ChatColor.GRAY + " - Propriétaire : " + ChatColor.GREEN + ownerName);
         player.sendMessage(ChatColor.GRAY + " - Base : " + state.base.getBlockX() + ", " + state.base.getBlockY() + ", " + state.base.getBlockZ());
         player.sendMessage(ChatColor.GRAY + " - Niveau mineur : " + ChatColor.GREEN + level
                 + ChatColor.GRAY + " | Bonus vitesse : " + ChatColor.GREEN + "+" + formatDecimal(speedBonus) + "%");
         player.sendMessage(ChatColor.GRAY + " - Multiplicateur effectif : " + ChatColor.GREEN + "x" + formatDecimal(multiplier));
-        player.sendMessage(ChatColor.GRAY + " - Mineurs actifs : " + ChatColor.GREEN + getSessionsForOwner(player.getUniqueId()).size()
-                + ChatColor.GRAY + "/" + ChatColor.GREEN + getMaxMinesForOwner(player.getUniqueId()));
+        player.sendMessage(ChatColor.GRAY + " - Mineurs du propriétaire : " + ChatColor.GREEN + getSessionsForOwner(statsOwner).size()
+                + ChatColor.GRAY + "/" + ChatColor.GREEN + getMaxMinesForOwner(statsOwner));
         player.sendMessage(ChatColor.GRAY + " • Monde : " + worldName);
         player.sendMessage(ChatColor.GRAY + " • Zone : " + state.width + "x" + state.length + " (Y " + state.base.getBlockY() + ")");
         int cursorY = state.cursor != null ? state.cursor.y : state.base.getBlockY();
         player.sendMessage(ChatColor.GRAY + " • Curseur Y : " + cursorY + " / stop " + getStopY() + ".");
         player.sendMessage(ChatColor.GRAY + " • Vitesse : " + state.speed.name().toLowerCase(Locale.ROOT));
         player.sendMessage(ChatColor.GRAY + " • Pattern : " + state.pattern.name().toLowerCase(Locale.ROOT));
+        if (state.pattern == MiningPattern.TUNNEL || state.infiniteTunnel) {
+            player.sendMessage(ChatColor.GRAY + " • Tunnel : direction " + ChatColor.AQUA + formatDirection(state.tunnelDirection)
+                    + ChatColor.GRAY + ", hauteur " + ChatColor.AQUA + Math.max(1, state.tunnelHeight));
+        }
         player.sendMessage(ChatColor.GRAY + " • Conteneurs : " + state.containers.size());
+        player.sendMessage(ChatColor.GRAY + " • Joueurs autorisés : " + ChatColor.GREEN + state.trusted.size());
         player.sendMessage(ChatColor.GRAY + " • Statut : " + (state.paused ? ChatColor.YELLOW + "en pause" : ChatColor.GREEN + "actif"));
     }
 
@@ -475,6 +517,10 @@ public class Mineur implements CommandExecutor, Listener {
         if (state == null) {
             return;
         }
+        if (!canAdministrateSession(player, state)) {
+            player.sendMessage(CMD_PREFIX + ChatColor.RED + "Seul le propriétaire peut modifier les autorisations de cette mine.");
+            return;
+        }
 
         Player targetOnline = Bukkit.getPlayerExact(args[1]);
         UUID targetId;
@@ -483,8 +529,8 @@ public class Mineur implements CommandExecutor, Listener {
             targetId = targetOnline.getUniqueId();
             targetName = targetOnline.getName();
         } else {
-            var offline = Bukkit.getOfflinePlayer(args[1]);
-            if (offline == null || offline.getUniqueId() == null) {
+            OfflinePlayer offline = Bukkit.getOfflinePlayer(args[1]);
+            if (offline.getUniqueId() == null) {
                 player.sendMessage(CMD_PREFIX + ChatColor.RED + "Joueur introuvable : " + args[1]);
                 return;
             }
@@ -497,9 +543,12 @@ public class Mineur implements CommandExecutor, Listener {
             return;
         }
 
-        state.trusted.add(targetId);
-        saveAllSessions();
-        player.sendMessage(CMD_PREFIX + ChatColor.GREEN + targetName + " est autorisé à interagir avec ton mineur.");
+        if (state.trusted.add(targetId)) {
+            saveAllSessions();
+            player.sendMessage(CMD_PREFIX + ChatColor.GREEN + targetName + " est autorisé à interagir avec ton mineur.");
+        } else {
+            player.sendMessage(CMD_PREFIX + ChatColor.YELLOW + targetName + " était déjà autorisé.");
+        }
     }
 
     private void onStorageBlocked(MiningSessionState state) {
@@ -550,41 +599,56 @@ public class Mineur implements CommandExecutor, Listener {
         if (event.getClickedBlock() == null) {
             return;
         }
-        if (event.getItem() == null || event.getItem().getType() != Material.STICK) {
-            return;
-        }
-        ItemMeta meta = event.getItem().getItemMeta();
-        if (meta == null || !SELECTOR_NAME.equals(meta.getDisplayName())) {
-            return;
-        }
 
-        event.setCancelled(true);
         Player player = event.getPlayer();
-        Selection selection = selections.computeIfAbsent(player.getUniqueId(), id -> new Selection());
         Block clicked = event.getClickedBlock();
+        ItemStack item = event.getItem();
+        if (item != null && item.getType() == Material.STICK) {
+            ItemMeta meta = item.getItemMeta();
+            if (meta != null && SELECTOR_NAME.equals(meta.getDisplayName())) {
+                event.setCancelled(true);
+                Selection selection = selections.computeIfAbsent(player.getUniqueId(), id -> new Selection());
 
-        if (selection.getCorner1() == null) {
-            selection.setCorner1(clicked);
-            player.sendMessage(CMD_PREFIX + ChatColor.AQUA + "Premier coin: " + coords(clicked));
-        } else if (selection.getCorner2() == null) {
-            selection.setCorner2(clicked);
-            player.sendMessage(CMD_PREFIX + ChatColor.AQUA + "Second coin: " + coords(clicked));
-            if (selection.getCorner1().getY() != selection.getCorner2().getY()) {
-                player.sendMessage(CMD_PREFIX + ChatColor.RED + "Les blocs doivent être au même Y.");
-                selection.setCorner2(null);
-            } else {
-                createMineFromSelection(player);
+                if (selection.getCorner1() == null) {
+                    selection.setCorner1(clicked);
+                    player.sendMessage(CMD_PREFIX + ChatColor.AQUA + "Premier coin: " + coords(clicked));
+                } else if (selection.getCorner2() == null) {
+                    selection.setCorner2(clicked);
+                    player.sendMessage(CMD_PREFIX + ChatColor.AQUA + "Second coin: " + coords(clicked));
+                    if (selection.getCorner1().getY() != selection.getCorner2().getY()) {
+                        player.sendMessage(CMD_PREFIX + ChatColor.RED + "Les blocs doivent être au même Y.");
+                        selection.setCorner2(null);
+                    } else {
+                        createMineFromSelection(player);
+                    }
+                } else {
+                    selection.setCorner1(clicked);
+                    selection.setCorner2(null);
+                    player.sendMessage(CMD_PREFIX + ChatColor.AQUA + "Sélection réinitialisée. Premier coin: " + coords(clicked));
+                }
+                return;
             }
-        } else {
-            selection.setCorner1(clicked);
-            selection.setCorner2(null);
-            player.sendMessage(CMD_PREFIX + ChatColor.AQUA + "Sélection réinitialisée. Premier coin: " + coords(clicked));
+        }
+
+        if (event.getAction() == Action.RIGHT_CLICK_BLOCK || event.getAction() == Action.LEFT_CLICK_BLOCK) {
+            MiningSessionState protectedSession = findProtectedContainerSession(clicked);
+            if (protectedSession != null && !isAuthorizedForSession(player, protectedSession)) {
+                event.setCancelled(true);
+                player.sendMessage(CMD_PREFIX + ChatColor.RED + "Ce stockage appartient à un mineur protégé.");
+            }
         }
     }
 
     @EventHandler
     public void onBlockBreak(BlockBreakEvent event) {
         Block broken = event.getBlock();
+        MiningSessionState protectedSession = findProtectedContainerSession(broken);
+        if (protectedSession != null && !isAuthorizedForSession(event.getPlayer(), protectedSession)) {
+            event.setCancelled(true);
+            event.getPlayer().sendMessage(CMD_PREFIX + ChatColor.RED + "Ce conteneur appartient à un mineur protégé.");
+            return;
+        }
+
         for (RuntimeSession runtime : new ArrayList<>(runtimes.values())) {
             MiningSessionState state = runtime.state;
             if (!broken.getWorld().getUID().equals(state.worldUid)) {
@@ -613,6 +677,36 @@ public class Mineur implements CommandExecutor, Listener {
                 break;
             }
         }
+    }
+
+    @EventHandler
+    public void onInventoryOpen(InventoryOpenEvent event) {
+        if (!(event.getPlayer() instanceof Player player)) {
+            return;
+        }
+        MiningSessionState protectedSession = findProtectedContainerSession(event.getInventory().getHolder());
+        if (protectedSession != null && !isAuthorizedForSession(player, protectedSession)) {
+            event.setCancelled(true);
+            player.sendMessage(CMD_PREFIX + ChatColor.RED + "Ce stockage appartient à un mineur protégé.");
+        }
+    }
+
+    @EventHandler
+    public void onInventoryMove(InventoryMoveItemEvent event) {
+        if (findProtectedContainerSession(event.getSource().getHolder()) != null
+                || findProtectedContainerSession(event.getDestination().getHolder()) != null) {
+            event.setCancelled(true);
+        }
+    }
+
+    @EventHandler
+    public void onBlockExplode(BlockExplodeEvent event) {
+        event.blockList().removeIf(block -> findProtectedContainerSession(block) != null);
+    }
+
+    @EventHandler
+    public void onEntityExplode(EntityExplodeEvent event) {
+        event.blockList().removeIf(block -> findProtectedContainerSession(block) != null);
     }
 
     public void saveAllSessions() {
@@ -698,6 +792,30 @@ public class Mineur implements CommandExecutor, Listener {
         return ownedSessions;
     }
 
+    private List<MiningSessionState> getAccessibleSessions(Player player) {
+        List<MiningSessionState> accessible = new ArrayList<>();
+        if (player == null) {
+            return accessible;
+        }
+        if (player.hasPermission("mineplugin.mineur.admin")) {
+            accessible.addAll(sessions);
+            return accessible;
+        }
+
+        Set<UUID> seen = new HashSet<>();
+        for (MiningSessionState state : getSessionsForOwner(player.getUniqueId())) {
+            if (seen.add(state.id)) {
+                accessible.add(state);
+            }
+        }
+        for (MiningSessionState state : sessions) {
+            if (state.trusted.contains(player.getUniqueId()) && seen.add(state.id)) {
+                accessible.add(state);
+            }
+        }
+        return accessible;
+    }
+
     private void registerOwnerSession(MiningSessionState state, boolean selectNew) {
         if (state == null || state.owner == null) {
             return;
@@ -744,52 +862,57 @@ public class Mineur implements CommandExecutor, Listener {
         selectedSessions.remove(state.owner);
     }
 
-    private void setSelectedSession(UUID ownerId, UUID sessionId) {
-        if (ownerId == null || sessionId == null) {
+    private void setSelectedSession(UUID viewerId, UUID sessionId) {
+        if (viewerId == null || sessionId == null) {
             return;
         }
-        selectedSessions.put(ownerId, sessionId);
-        for (MiningSessionState state : getSessionsForOwner(ownerId)) {
+        selectedSessions.put(viewerId, sessionId);
+        MiningSessionState selected = findSessionById(sessionId);
+        if (selected == null || !Objects.equals(selected.owner, viewerId)) {
+            return;
+        }
+        for (MiningSessionState state : getSessionsForOwner(viewerId)) {
             state.selected = Objects.equals(state.id, sessionId);
         }
     }
 
-    private MiningSessionState resolveSelectedSession(UUID ownerId) {
-        List<MiningSessionState> ownedSessions = getSessionsForOwner(ownerId);
-        if (ownedSessions.isEmpty()) {
+    private MiningSessionState resolveSelectedSession(Player player) {
+        List<MiningSessionState> accessibleSessions = getAccessibleSessions(player);
+        if (accessibleSessions.isEmpty()) {
             return null;
         }
-        if (ownedSessions.size() == 1) {
-            setSelectedSession(ownerId, ownedSessions.get(0).id);
-            return ownedSessions.get(0);
+        if (accessibleSessions.size() == 1) {
+            setSelectedSession(player.getUniqueId(), accessibleSessions.get(0).id);
+            return accessibleSessions.get(0);
         }
 
-        UUID selectedId = selectedSessions.get(ownerId);
+        UUID selectedId = selectedSessions.get(player.getUniqueId());
         if (selectedId == null) {
             return null;
         }
 
-        MiningSessionState selected = findSessionById(selectedId);
-        if (selected == null || !Objects.equals(selected.owner, ownerId)) {
-            selectedSessions.remove(ownerId);
-            return null;
+        for (MiningSessionState state : accessibleSessions) {
+            if (Objects.equals(state.id, selectedId)) {
+                return state;
+            }
         }
-        return selected;
+        selectedSessions.remove(player.getUniqueId());
+        return null;
     }
 
     private MiningSessionState requireSelectedSession(Player player) {
-        List<MiningSessionState> ownedSessions = getSessionsForOwner(player.getUniqueId());
-        if (ownedSessions.isEmpty()) {
-            player.sendMessage(CMD_PREFIX + ChatColor.RED + "Aucune session active.");
+        List<MiningSessionState> accessibleSessions = getAccessibleSessions(player);
+        if (accessibleSessions.isEmpty()) {
+            player.sendMessage(CMD_PREFIX + ChatColor.RED + "Aucune session active ou partagée.");
             return null;
         }
 
-        MiningSessionState selected = resolveSelectedSession(player.getUniqueId());
+        MiningSessionState selected = resolveSelectedSession(player);
         if (selected != null) {
             return selected;
         }
 
-        player.sendMessage(CMD_PREFIX + ChatColor.YELLOW + "Plusieurs mineurs actifs. Utilise /mineur list puis /mineur select <n>.");
+        player.sendMessage(CMD_PREFIX + ChatColor.YELLOW + "Plusieurs mineurs accessibles. Utilise /mineur list puis /mineur select <n>.");
         return null;
     }
 
@@ -874,6 +997,83 @@ public class Mineur implements CommandExecutor, Listener {
         return blocks;
     }
 
+    private boolean canAdministrateSession(Player player, MiningSessionState state) {
+        return player != null && state != null
+                && (Objects.equals(player.getUniqueId(), state.owner) || player.hasPermission("mineplugin.mineur.admin"));
+    }
+
+    private boolean isAuthorizedForSession(Player player, MiningSessionState state) {
+        return player != null && state != null
+                && (Objects.equals(player.getUniqueId(), state.owner)
+                || state.trusted.contains(player.getUniqueId())
+                || player.hasPermission("mineplugin.mineur.admin"));
+    }
+
+    private MiningSessionState findProtectedContainerSession(InventoryHolder holder) {
+        if (holder == null) {
+            return null;
+        }
+        if (holder instanceof BlockState blockState) {
+            return findProtectedContainerSession(blockState.getBlock());
+        }
+        if (holder instanceof DoubleChest doubleChest) {
+            MiningSessionState left = findProtectedContainerSession(doubleChest.getLeftSide());
+            if (left != null) {
+                return left;
+            }
+            return findProtectedContainerSession(doubleChest.getRightSide());
+        }
+        return null;
+    }
+
+    private MiningSessionState findProtectedContainerSession(Block block) {
+        if (block == null || !(block.getState() instanceof Container container)) {
+            return null;
+        }
+
+        for (MiningSessionState state : sessions) {
+            if (!block.getWorld().getUID().equals(state.worldUid)) {
+                continue;
+            }
+            for (Vector vector : state.containers) {
+                if (vector.getBlockX() == block.getX()
+                        && vector.getBlockY() == block.getY()
+                        && vector.getBlockZ() == block.getZ()) {
+                    return state;
+                }
+            }
+        }
+
+        PersistentDataContainer data = container.getPersistentDataContainer();
+        String sessionId = data.get(containerSessionKey, PersistentDataType.STRING);
+        if (sessionId != null && !sessionId.isEmpty()) {
+            try {
+                MiningSessionState byId = findSessionById(UUID.fromString(sessionId));
+                if (byId != null) {
+                    return byId;
+                }
+            } catch (IllegalArgumentException ignored) {
+                // Invalid metadata, ignore and fall back to owner metadata.
+            }
+        }
+
+        String ownerId = data.get(containerOwnerKey, PersistentDataType.STRING);
+        if (ownerId == null || ownerId.isEmpty()) {
+            return null;
+        }
+        try {
+            UUID owner = UUID.fromString(ownerId);
+            for (MiningSessionState state : sessions) {
+                if (Objects.equals(state.owner, owner)) {
+                    return state;
+                }
+            }
+        } catch (IllegalArgumentException ignored) {
+            // Invalid metadata.
+        }
+        return null;
+    }
+
     private void clearZoneForState(MiningSessionState state) {
         Location base = state.base;
         World world = base.getWorld();
@@ -911,16 +1111,22 @@ public class Mineur implements CommandExecutor, Listener {
 
     private void registerChunks(MiningSessionState state, RuntimeSession runtime) {
         World world = state.base.getWorld();
-        int minX = state.base.getBlockX();
-        int maxX = state.base.getBlockX() + state.width - 1;
-        int minZ = state.base.getBlockZ();
-        int maxZ = state.base.getBlockZ() + state.length - 1;
+        if (world == null) {
+            return;
+        }
+
+        MiningCursor active = state.cursor;
+        int minX = active != null ? active.minX : state.base.getBlockX();
+        int maxX = minX + Math.max(1, active != null ? active.width : state.width) - 1;
+        int minZ = active != null ? active.minZ : state.base.getBlockZ();
+        int maxZ = minZ + Math.max(1, active != null ? active.length : state.length) - 1;
 
         for (int cx = minX >> 4; cx <= maxX >> 4; cx++) {
             for (int cz = minZ >> 4; cz <= maxZ >> 4; cz++) {
                 Chunk chunk = world.getChunkAt(cx, cz);
-                chunk.addPluginChunkTicket(plugin);
-                runtime.ticketChunks.add(chunk);
+                if (runtime.ticketChunks.add(chunk)) {
+                    chunk.addPluginChunkTicket(plugin);
+                }
             }
         }
     }
@@ -964,7 +1170,7 @@ public class Mineur implements CommandExecutor, Listener {
                 }
                 runtime.containerLocations.add(block.getLocation());
                 state.containers.add(block.getLocation().toVector());
-                markContainerOwner(block, state.owner);
+                markContainerOwner(block, state);
             }
             return;
         }
@@ -981,7 +1187,7 @@ public class Mineur implements CommandExecutor, Listener {
                     if (block.getType() == Material.BARREL) {
                         runtime.containerLocations.add(block.getLocation());
                         state.containers.add(block.getLocation().toVector());
-                        markContainerOwner(block, state.owner);
+                        markContainerOwner(block, state);
                     }
                 }
             }
@@ -1026,15 +1232,16 @@ public class Mineur implements CommandExecutor, Listener {
         return locations;
     }
 
-    private void markContainerOwner(Block block, UUID owner) {
-        if (owner == null) {
+    private void markContainerOwner(Block block, MiningSessionState state) {
+        if (state == null || state.owner == null) {
             return;
         }
         if (!(block.getState() instanceof Container container)) {
             return;
         }
         PersistentDataContainer data = container.getPersistentDataContainer();
-        data.set(containerOwnerKey, PersistentDataType.STRING, owner.toString());
+        data.set(containerOwnerKey, PersistentDataType.STRING, state.owner.toString());
+        data.set(containerSessionKey, PersistentDataType.STRING, state.id.toString());
         container.update(true);
     }
 
@@ -1083,8 +1290,9 @@ public class Mineur implements CommandExecutor, Listener {
             runtime.state.cursor = new MiningCursor(runtime.state.base, runtime.state.width, runtime.state.length);
         }
         runtime.router = new InventoryRouter(resolveContainerBlocks(runtime));
+        registerChunks(runtime.state, runtime);
         World world = runtime.state.base.getWorld();
-        MiningIterator iterator = createIteratorFor(world, runtime.state.pattern, runtime.state.cursor);
+        MiningIterator iterator = createIteratorFor(world, runtime.state, runtime.state.cursor);
         double progressPerTick = runtime.state.speed.progressPerTick(getOwnerSpeedMultiplier(runtime.state.owner));
         RuntimeSession currentRuntime = runtime;
         runtime.loop = new MiningLoop(
@@ -1137,7 +1345,7 @@ public class Mineur implements CommandExecutor, Listener {
                 ? state.cursor.copy()
                 : new MiningCursor(state.base, state.width, state.length);
         World world = state.base.getWorld();
-        MiningIterator iterator = createIteratorFor(world, state.pattern, cursorSnapshot);
+        MiningIterator iterator = createIteratorFor(world, state, cursorSnapshot);
         while (iterator.hasNext()) {
             Block block = iterator.next();
             if (block != null) {
@@ -1162,8 +1370,8 @@ public class Mineur implements CommandExecutor, Listener {
 
     /**
      * Initialise le tunnel infini une fois la carrière terminée.
-     * On place un premier tronçon 10x10 au fond de la carrière,
-     * collé sur un côté, dans une direction aléatoire.
+     * On place un premier tronçon au fond de la carrière, collé sur un côté,
+     * dans une direction aléatoire.
      */
     private boolean initializeTunnelPhase(MiningSessionState state) {
         World world = state.base != null ? state.base.getWorld() : null;
@@ -1171,8 +1379,8 @@ public class Mineur implements CommandExecutor, Listener {
             return false;
         }
 
-        int tunnelSize = 10;
-
+        int tunnelSize = getConfiguredTunnelSectionSize();
+        int tunnelHeight = getConfiguredTunnelHeight();
         int stopY = getStopY();
         int tunnelY = Math.max(world.getMinHeight(), stopY);
 
@@ -1214,28 +1422,24 @@ public class Mineur implements CommandExecutor, Listener {
         }
 
         Location tunnelBase = new Location(world, minX, tunnelY, minZ);
-
-        // On garde state.base pour la carrière initiale,
-        // on ne change que le curseur et le pattern.
-        state.cursor = new MiningCursor(tunnelBase, tunnelSize, tunnelSize);
-        int topY = Math.min(world.getMaxHeight() - 1, tunnelY + tunnelSize - 1);
-        state.cursor.y = topY;
-        state.minerY = tunnelY;
         state.pattern = MiningPattern.TUNNEL;
         state.chainTunnelAfterQuarry = false;
         state.infiniteTunnel = true;
         state.tunnelDirection = face;
         state.tunnelSectionSize = tunnelSize;
+        state.tunnelHeight = tunnelHeight;
         state.tunnelSectionsMined = 0;
-        state.maxTunnelSections = 0;
+        state.maxTunnelSections = plugin.getConfig().getInt("mineur.tunnel.max-sections", 0);
+        prepareTunnelCursor(state, tunnelBase, tunnelSize, tunnelSize, tunnelHeight);
+        state.minerY = tunnelY;
 
         saveAllSessions();
         return true;
     }
 
     /**
-     * Prolonge le tunnel infini en ajoutant une nouvelle section 10x10
-     * dans la même direction que la précédente.
+     * Prolonge le tunnel infini en ajoutant une nouvelle section dans la même
+     * direction que la précédente.
      *
      * @return true si une nouvelle section a été créée, false sinon.
      */
@@ -1249,6 +1453,7 @@ public class Mineur implements CommandExecutor, Listener {
             return false;
         }
 
+        state.tunnelSectionsMined++;
         if (state.maxTunnelSections > 0
                 && state.tunnelSectionsMined >= state.maxTunnelSections) {
             state.infiniteTunnel = false;
@@ -1256,10 +1461,11 @@ public class Mineur implements CommandExecutor, Listener {
             return false;
         }
 
-        int section = state.tunnelSectionSize > 0 ? state.tunnelSectionSize : 10;
+        int section = state.tunnelSectionSize > 0 ? state.tunnelSectionSize : getConfiguredTunnelSectionSize();
+        int height = state.tunnelHeight > 0 ? state.tunnelHeight : getConfiguredTunnelHeight();
 
         int x = state.cursor.minX;
-        int y = Math.max(world.getMinHeight(), getStopY());
+        int y = Math.max(world.getMinHeight(), state.cursor.minY);
         int z = state.cursor.minZ;
 
         switch (state.tunnelDirection) {
@@ -1271,12 +1477,7 @@ public class Mineur implements CommandExecutor, Listener {
         }
 
         Location newBase = new Location(world, x, y, z);
-
-        // Nouvelle section alignée sur la précédente
-        state.cursor = new MiningCursor(newBase, section, section);
-        int topY = Math.min(world.getMaxHeight() - 1, y + section - 1);
-        state.cursor.y = topY;
-        state.tunnelSectionsMined++;
+        prepareTunnelCursor(state, newBase, section, section, height);
 
         saveAllSessions();
         return true;
@@ -1293,6 +1494,7 @@ public class Mineur implements CommandExecutor, Listener {
                 sessions.remove(state);
             }
             unregisterOwnerSession(state);
+            selectedSessions.entrySet().removeIf(entry -> Objects.equals(entry.getValue(), state.id));
         }
         saveAllSessions();
         if (issuer != null) {
@@ -1313,20 +1515,101 @@ public class Mineur implements CommandExecutor, Listener {
     }
 
     private MiningIterator createIteratorFor(World world,
-                                             MiningPattern pattern,
+                                             MiningSessionState state,
                                              MiningCursor cursor) {
-        int stopY = getStopY();
         if (world == null) {
             throw new IllegalStateException("World null dans createIteratorFor");
         }
-        return switch (pattern) {
+        if (state == null) {
+            throw new IllegalStateException("Session null dans createIteratorFor");
+        }
+        if (cursor == null) {
+            cursor = new MiningCursor(state.base, state.width, state.length);
+            state.cursor = cursor;
+        }
+
+        int stopY = getStopY();
+        return switch (state.pattern) {
             case QUARRY -> new QuarryIterator(world, cursor, stopY);
             case BRANCH -> {
                 int spacing = plugin.getConfig().getInt("mineur.branch.spacing", 6);
                 int galleryWidth = plugin.getConfig().getInt("mineur.branch.gallery-width", 3);
                 yield new BranchIterator(world, cursor, stopY, spacing, galleryWidth);
             }
-            case TUNNEL, VEIN_FIRST -> new QuarryIterator(world, cursor, stopY);
+            case TUNNEL -> {
+                int height = state.tunnelHeight > 0 ? state.tunnelHeight : getConfiguredTunnelHeight();
+                ensureTunnelCursorDefaults(cursor, height);
+                yield new TunnelIterator(world, cursor, height);
+            }
+            case VEIN_FIRST -> {
+                int scanRadius = Math.max(0, plugin.getConfig().getInt("mineur.vein.scan-radius", 5));
+                int maxBlocks = Math.max(1, plugin.getConfig().getInt("mineur.vein.max-blocks", 96));
+                MiningIterator delegate = new QuarryIterator(world, cursor, stopY);
+                yield new VeinFirstIterator(world, delegate, scanRadius, maxBlocks);
+            }
+        };
+    }
+
+    private void prepareTunnelCursor(MiningSessionState state, Location tunnelBase, int width, int length, int height) {
+        int safeWidth = Math.max(1, width);
+        int safeLength = Math.max(1, length);
+        int safeHeight = Math.max(1, height);
+        MiningCursor cursor = new MiningCursor(tunnelBase, safeWidth, safeLength);
+        cursor.minY = tunnelBase.getBlockY();
+        cursor.y = tunnelBase.getBlockY();
+        cursor.height = safeHeight;
+        state.cursor = cursor;
+        state.tunnelHeight = safeHeight;
+    }
+
+    private void ensureTunnelCursorDefaults(MiningCursor cursor, int height) {
+        int safeHeight = Math.max(1, height);
+        cursor.height = safeHeight;
+        if (cursor.minY == 0 && cursor.y != 0) {
+            cursor.minY = cursor.y;
+        }
+        if (cursor.y < cursor.minY || cursor.y >= cursor.minY + safeHeight) {
+            cursor.y = cursor.minY;
+        }
+        cursor.width = Math.max(1, cursor.width);
+        cursor.length = Math.max(1, cursor.length);
+    }
+
+    private int getConfiguredTunnelSectionSize() {
+        return Math.max(1, plugin.getConfig().getInt("mineur.tunnel.section-size", 10));
+    }
+
+    private int getConfiguredTunnelHeight() {
+        return Math.max(1, plugin.getConfig().getInt("mineur.tunnel.height", 3));
+    }
+
+    private BlockFace directionFromYaw(float yaw) {
+        float normalized = yaw % 360.0F;
+        if (normalized < 0.0F) {
+            normalized += 360.0F;
+        }
+        if (normalized >= 45.0F && normalized < 135.0F) {
+            return BlockFace.WEST;
+        }
+        if (normalized >= 135.0F && normalized < 225.0F) {
+            return BlockFace.NORTH;
+        }
+        if (normalized >= 225.0F && normalized < 315.0F) {
+            return BlockFace.EAST;
+        }
+        return BlockFace.SOUTH;
+    }
+
+    private String formatDirection(BlockFace face) {
+        if (face == null) {
+            return "inconnue";
+        }
+        return switch (face) {
+            case NORTH -> "nord";
+            case SOUTH -> "sud";
+            case EAST -> "est";
+            case WEST -> "ouest";
+            default -> face.name().toLowerCase(Locale.ROOT);
         };
     }
 

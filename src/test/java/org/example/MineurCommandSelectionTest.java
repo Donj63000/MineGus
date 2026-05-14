@@ -3,6 +3,9 @@ package org.example;
 import be.seeseemelk.mockbukkit.MockBukkit;
 import be.seeseemelk.mockbukkit.ServerMock;
 import org.bukkit.Location;
+import org.bukkit.World;
+import org.bukkit.block.Block;
+import org.bukkit.block.Container;
 import org.bukkit.entity.Player;
 import org.example.mineur.MiningCursor;
 import org.example.mineur.MiningSessionState;
@@ -16,6 +19,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
+import org.bukkit.util.Vector;
+
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.mockito.Mockito.doAnswer;
@@ -104,6 +110,91 @@ class MineurCommandSelectionTest {
 
         assertTrue(messages.stream().anyMatch(line -> line.contains("Tu dois avoir le metier")));
         assertTrue(messages.stream().anyMatch(line -> line.contains("/job mineur")));
+    }
+
+    @Test
+    void trustedPlayerCanSelectSharedMinerButCannotStopIt() throws Exception {
+        server = MockBukkit.mock();
+        MinePlugin plugin = MockBukkit.load(MinePlugin.class);
+        Mineur mineur = plugin.getMineur();
+
+        Player player = mock(Player.class);
+        UUID playerId = UUID.randomUUID();
+        UUID otherOwnerId = UUID.randomUUID();
+        List<String> messages = new ArrayList<>();
+        when(player.getUniqueId()).thenReturn(playerId);
+        when(player.hasPermission("mineplugin.mineur.use")).thenReturn(true);
+        doAnswer(invocation -> {
+            messages.add(invocation.getArgument(0));
+            return null;
+        }).when(player).sendMessage(org.mockito.ArgumentMatchers.anyString());
+
+        MiningSessionState owned = createState(playerId, 10, 64, 10);
+        MiningSessionState shared = createState(otherOwnerId, 40, 64, 40);
+        shared.trusted.add(playerId);
+
+        @SuppressWarnings("unchecked")
+        List<MiningSessionState> sessions = (List<MiningSessionState>) field(mineur, "sessions").get(mineur);
+        sessions.clear();
+        sessions.add(owned);
+        sessions.add(shared);
+
+        @SuppressWarnings("unchecked")
+        Map<UUID, List<UUID>> ownerSessions = (Map<UUID, List<UUID>>) field(mineur, "ownerSessions").get(mineur);
+        ownerSessions.clear();
+        ownerSessions.put(playerId, new ArrayList<>(List.of(owned.id)));
+        ownerSessions.put(otherOwnerId, new ArrayList<>(List.of(shared.id)));
+
+        mineur.onCommand(player, null, "mineur", new String[]{"list"});
+        assertTrue(messages.stream().anyMatch(line -> line.contains("Mineurs accessibles")));
+        assertTrue(messages.stream().anyMatch(line -> line.contains("40, 64, 40")));
+
+        messages.clear();
+        mineur.onCommand(player, null, "mineur", new String[]{"select", "2"});
+        assertTrue(messages.stream().anyMatch(line -> line.contains("Mineur 2 selectionne")));
+
+        messages.clear();
+        mineur.onCommand(player, null, "mineur", new String[]{"info"});
+        assertTrue(messages.stream().anyMatch(line -> line.contains("Base : 40, 64, 40")));
+
+        messages.clear();
+        mineur.onCommand(player, null, "mineur", new String[]{"stop"});
+        assertTrue(messages.stream().anyMatch(line -> line.contains("Seul le propriétaire")));
+        assertTrue(sessions.contains(shared));
+    }
+
+    @Test
+    void protectedContainerIsResolvedFromSessionCoordinates() throws Exception {
+        server = MockBukkit.mock();
+        MinePlugin plugin = MockBukkit.load(MinePlugin.class);
+        Mineur mineur = plugin.getMineur();
+
+        UUID worldUid = UUID.randomUUID();
+        MiningSessionState state = createState(UUID.randomUUID(), 0, 64, 0);
+        state.worldUid = worldUid;
+        state.containers.add(new Vector(3, 64, 4));
+
+        @SuppressWarnings("unchecked")
+        List<MiningSessionState> sessions = (List<MiningSessionState>) field(mineur, "sessions").get(mineur);
+        sessions.clear();
+        sessions.add(state);
+
+        World world = mock(World.class);
+        when(world.getUID()).thenReturn(worldUid);
+
+        Block block = mock(Block.class);
+        Container container = mock(Container.class);
+        when(block.getState()).thenReturn(container);
+        when(block.getWorld()).thenReturn(world);
+        when(block.getX()).thenReturn(3);
+        when(block.getY()).thenReturn(64);
+        when(block.getZ()).thenReturn(4);
+
+        Method findProtectedContainerSession = mineur.getClass()
+                .getDeclaredMethod("findProtectedContainerSession", Block.class);
+        findProtectedContainerSession.setAccessible(true);
+
+        assertSame(state, findProtectedContainerSession.invoke(mineur, block));
     }
 
     private static Field field(Object target, String name) throws NoSuchFieldException {
