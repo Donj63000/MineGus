@@ -26,6 +26,7 @@ Notes:
 ## Configuration
 Après le premier démarrage, éditez `plugins/MinePlugin/config.yml` :
 - `/mineur` : `stop-at-y` (Y cible), `default.pattern`, `default.speed`, `default.supports-every`, `default.torch-layers`, `default.use-barrel-master`, `branch.spacing`, `branch.gallery-width`, `limits.max-sessions-per-player`, `economy.*`.
+- `/garde` : `follow-radius` (distance maximale avant rappel), `comfort-distance` (distance de suivi), `respawn-delay-seconds` et les attributs sous `attributes.*`. Les valeurs invalides ou hors limites reviennent aux valeurs par défaut sûres.
 - `/eleveur` : limites d’animaux, temps de recharge, chances de loot cuit, prix en émeraudes.
 - `/village` : tailles des maisons/grille (`houseSmall`, `houseBig`, `roadHalf`, `spacing`, `plazaSize`, `rows`, `cols`, `wallGap`).
 
@@ -35,7 +36,7 @@ Référence par défaut : `src/main/resources/config.yml`. Modifiez seulement la
 1. Connectez‑vous (opérateur) et tapez `/ping` pour vérifier le chargement.
 2. Utilisez les commandes ci‑dessous pour créer vos premières zones.
 3. Pour arrêter une zone (mine, champ, forêt, ranch), retirez tous les coffres associés.
-4. Les données sont sauvegardées dans `plugins/MinePlugin/` et restaurées au redémarrage.
+4. Les données des fonctionnalités persistantes sont sauvegardées dans `plugins/MinePlugin/` et restaurées au redémarrage ; les gardes de `/garde` restent volontairement temporaires.
 
 ## COMMANDES EN JEU
 ### /ping
@@ -43,6 +44,15 @@ Référence par défaut : `src/main/resources/config.yml`. Modifiez seulement la
 
 ### /army
 - Invoque 5 loups apprivoisés et 2 golems nommés autour du joueur, protégés pendant 5 minutes avant disparition automatique.
+
+### /garde (permission `mineplugin.garde.use`, accordée par défaut)
+- `/garde` est une commande bascule : la première utilisation invoque exactement deux gardes et la suivante les renvoie, y compris lorsqu’un respawn est en attente.
+- Les gardes sont des Husks vanilla nommés exactement `Garde Royale` ; ce ne sont pas des PNJ joueurs Steve, ce qui demanderait une dépendance externe.
+- Chaque garde porte une armure complète en netherite (Protection IV, Solidité III, Raccommodage) et une épée en netherite (Tranchant V, Solidité III, Raccommodage). Leur équipement et leur expérience ne sont jamais lâchés à la mort.
+- Ils ont 100 PV, 16 dégâts d’attaque, une vitesse de 0,35 et une résistance au recul de 0,6 par défaut. Ces valeurs sont configurables dans `garde.attributes`.
+- Ils suivent leur propriétaire ; s’ils changent de monde, se perdent, restent bloqués ou dépassent `garde.follow-radius` (20 blocs par défaut), ils sont rappelés près de lui sans dégâts de chute.
+- Lorsqu’un joueur protégé est blessé par des dégâts non annulés, les deux gardes ciblent son véritable agresseur, y compris en PvP et par projectile. La cible est abandonnée après 10 secondes sans nouvelle agression, ou si elle quitte le monde ou le rayon de protection.
+- Lorsqu’un garde meurt, il réapparaît après `garde.respawn-delay-seconds` (20 secondes par défaut), seulement si son duo est toujours actif et que le propriétaire est connecté. Les gardes sont supprimés à la déconnexion, au renvoi et à l’arrêt du plugin ; ils ne persistent pas après un redémarrage.
 
 ### /mineur (permission `mineplugin.mineur.use`)
 - `/mineur` : donne le bâton « Sélecteur de mine ». Clique deux blocs au même Y pour créer automatiquement la mine (cadre, coffres, PNJ mineur, golems). Par défaut, le pattern `QUARRY` creuse jusqu’à `stop-at-y` puis enchaîne sur un tunnel infini 10×10.
@@ -83,7 +93,7 @@ Référence par défaut : `src/main/resources/config.yml`. Modifiez seulement la
 - `/minegus fix forestier|golems` (permission `mineplugin.admin`) : commande de maintenance qui supprime les doublons de forestiers de /foret ou de golems gardes taggés dans tous les mondes.
 
 ## Persistance des données
-Les fonctionnalités sauvegardent leurs informations (YAML) dans `plugins/MinePlugin/` (`sessions.yml`, `farms.yml`, etc.) pour restaurer PNJ et structures au redémarrage.
+Les fonctionnalités persistantes sauvegardent leurs informations (YAML) dans `plugins/MinePlugin/` (`sessions.yml`, `farms.yml`, etc.) pour restaurer PNJ et structures au redémarrage. Les deux gardes de `/garde` ne sont jamais sauvegardés et tout garde résiduel est retiré au chargement d’un chunk après un redémarrage.
 
 ## Structure du projet
 - `src/main/java/` : code source du plugin.
@@ -100,6 +110,7 @@ Les fonctionnalités sauvegardent leurs informations (YAML) dans `plugins/MinePl
 - `org.example.Village` : gère `/village` et `undo`. Orchestration asynchrone via une file de `Runnable` pour routes, place, lots, bâtiments, spawners PNJ/golems et muraille; lit la config (`rows`, `cols`, `houseSmall`, `houseBig`, `roadHalf`, `spacing`, `plazaSize`).
 - `org.example.Batiments` : helpers statiques de bâtiments (maisons pivotées, toitures, détails). Écrit via `Village#setBlockTracked` pour permettre l’undo.
 - `org.example.Golem` : sentinelle golem avec rayon de patrouille, retour au point d’ancrage (pathfinder/teleport), attributs ajustés.
+- `org.example.RoyalGuardManager` : gère `/garde`, les deux Husks personnels, leur suivi, leur combat, leur rappel et leur respawn différé.
 - `org.example.Armure` : gère `/armure`. Donne l’équipement “roi GIDON”, applique/retire les buffs en boucle, invoque des loups gardes à la prise de dégâts et programme leur disparition.
 - `org.example.TeleportUtils` : `safeTeleport` (utilise `teleportAsync` si dispo, sinon `teleport`).
 - `org.example.village.Disposition` : répartition des lots et planification des tâches (routes, maisons, fermes, lampadaires).
@@ -180,6 +191,7 @@ categories:
 
 ## Scénarios de test recommandés
 - Sanity de base : `/ping`, `/army` (spawn + disparition programmée).
+- Gardes royaux : exécuter `/garde`, vérifier l’apparition de deux Husks `Garde Royale` équipés, s’éloigner de plus de 20 blocs puis changer de monde pour confirmer leur rappel sûr, tester une attaque PvP et un projectile, vérifier qu’ils n’attaquent ni leur propriétaire ni leur binôme, bloquer leur chemin pour contrôler le rappel, tuer un garde et vérifier son retour après 20 secondes, puis exécuter `/garde` à nouveau ou se déconnecter pour vérifier le renvoi et l’annulation du respawn.
 - Mineur : `/mineur`, sélection de deux blocs au même Y, vérifier cadre + coffres + PNJ; changer `/mineur vitesse rapide`.
 - Champ : `/champ`, récolte/stockage, suppression des coffres → arrêt automatique.
 - Forêt : `/foret`, coupe/replantation automatique, persistance après redémarrage.

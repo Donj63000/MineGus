@@ -90,6 +90,8 @@ public final class MinegusCommand implements CommandExecutor {
                 + " = acces restreint, " + ChatColor.RED + "[admin]" + ChatColor.GRAY + " = maintenance.");
         lines.add(ChatColor.GOLD + "/ping" + ChatColor.GRAY + " : verifie que le plugin repond.");
         lines.add(ChatColor.GOLD + "/army" + ChatColor.GRAY + " : invoque des loups et golems temporaires.");
+        lines.add(ChatColor.GOLD + "/garde" + ChatColor.GRAY
+                + " : invoque ou renvoie tes deux gardes royaux.");
         lines.add(ChatColor.GOLD + "/mineur" + ChatColor.GRAY
                 + " : cree et pilote un mineur automatique. Voir " + ChatColor.GOLD + "/mineur aide" + ChatColor.GRAY + ".");
         lines.add(ChatColor.GOLD + "/champ" + ChatColor.GRAY + " : cree un champ automatise avec selection.");

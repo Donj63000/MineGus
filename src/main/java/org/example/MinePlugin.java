@@ -75,12 +75,18 @@ public class MinePlugin extends JavaPlugin implements Listener {
 
     private MerchantManager merchantManager;
 
+    /**
+     * Gère le duo de gardes royaux invoqué par /garde.
+     */
+    private RoyalGuardManager royalGuardManager;
+
     public Mineur getMineur() { return mineur; }
     public Agriculture getAgriculture() { return agriculture; }
     public Foret getForet() { return foret; }
     public Eleveur getEleveur() { return eleveur; }
     public JobManager getJobManager() { return jobManager; }
     public MerchantManager getMerchantManager() { return merchantManager; }
+    public RoyalGuardManager getRoyalGuardManager() { return royalGuardManager; }
 
 
     @Override
@@ -100,6 +106,12 @@ public class MinePlugin extends JavaPlugin implements Listener {
         }
         if (getCommand("minegus") != null) {
             getCommand("minegus").setExecutor(new MinegusCommand(this));
+        }
+
+        // Ici, j'initialise les gardes avant les autres systèmes qui peuvent les cibler.
+        royalGuardManager = new RoyalGuardManager(this);
+        if (getCommand("garde") != null) {
+            getCommand("garde").setExecutor(royalGuardManager);
         }
 
 
@@ -169,6 +181,9 @@ public class MinePlugin extends JavaPlugin implements Listener {
         }
         if (merchantManager != null) {
             merchantManager.shutdown();
+        }
+        if (royalGuardManager != null) {
+            royalGuardManager.shutdown();
         }
 
         // Nettoyage /army

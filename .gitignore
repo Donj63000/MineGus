@@ -7,3 +7,6 @@
 *.iml
 .idea/
 MineGus.iml
+
+__pycache__/
+*.py[cod]

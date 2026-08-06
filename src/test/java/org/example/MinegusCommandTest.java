@@ -4,12 +4,15 @@ import be.seeseemelk.mockbukkit.MockBukkit;
 import be.seeseemelk.mockbukkit.ServerMock;
 import org.bukkit.ChatColor;
 import org.bukkit.command.CommandSender;
+import org.bukkit.permissions.Permission;
+import org.bukkit.permissions.PermissionDefault;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
 import java.util.List;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -35,6 +38,7 @@ class MinegusCommandTest {
 
         assertTrue(help.contains("/ping"));
         assertTrue(help.contains("/army"));
+        assertTrue(help.contains("/garde"));
         assertTrue(help.contains("/mineur"));
         assertTrue(help.contains("/mineur aide"));
         assertTrue(help.contains("/champ"));
@@ -60,6 +64,7 @@ class MinegusCommandTest {
         String help = plainText(messages);
         assertTrue(help.contains("Commandes disponibles"));
         assertTrue(help.contains("/ping"));
+        assertTrue(help.contains("/garde"));
         assertTrue(help.contains("/marchand"));
         assertTrue(help.contains("/minegus fix <forestier|golems>"));
     }
@@ -80,12 +85,17 @@ class MinegusCommandTest {
     }
 
     @Test
-    void pluginYmlLeavesMinegusCommandPublic() {
+    void pluginYmlRegistersGuardCommandAndLeavesMinegusPublic() {
         server = MockBukkit.mock();
         MinePlugin plugin = MockBukkit.load(MinePlugin.class);
 
         assertNotNull(plugin.getCommand("minegus"));
         assertNull(plugin.getCommand("minegus").getPermission());
+        assertNotNull(plugin.getCommand("garde"));
+        assertEquals("mineplugin.garde.use", plugin.getCommand("garde").getPermission());
+        Permission guardPermission = server.getPluginManager().getPermission("mineplugin.garde.use");
+        assertNotNull(guardPermission);
+        assertEquals(PermissionDefault.TRUE, guardPermission.getDefault());
     }
 
     private static List<String> captureMessages(CommandSender sender) {

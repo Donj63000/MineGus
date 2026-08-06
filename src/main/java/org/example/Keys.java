@@ -13,6 +13,9 @@ public final class Keys {
     private static NamespacedKey workerId;
     private static NamespacedKey hutId;
     private static NamespacedKey guardFor;
+    private static NamespacedKey royalGuardType;
+    private static NamespacedKey royalGuardOwner;
+    private static NamespacedKey royalGuardSlot;
 
     private Keys() {
     }
@@ -25,6 +28,9 @@ public final class Keys {
         workerId = new NamespacedKey(plugin, "worker_id");
         hutId = new NamespacedKey(plugin, "hut_id");
         guardFor = new NamespacedKey(plugin, "guard_for");
+        royalGuardType = new NamespacedKey(plugin, "royal_guard_type");
+        royalGuardOwner = new NamespacedKey(plugin, "royal_guard_owner");
+        royalGuardSlot = new NamespacedKey(plugin, "royal_guard_slot");
     }
 
     public static NamespacedKey workerType() {
@@ -45,6 +51,21 @@ public final class Keys {
     public static NamespacedKey guardFor() {
         ensureInitialized();
         return guardFor;
+    }
+
+    public static NamespacedKey royalGuardType() {
+        ensureInitialized();
+        return royalGuardType;
+    }
+
+    public static NamespacedKey royalGuardOwner() {
+        ensureInitialized();
+        return royalGuardOwner;
+    }
+
+    public static NamespacedKey royalGuardSlot() {
+        ensureInitialized();
+        return royalGuardSlot;
     }
 
     private static void ensureInitialized() {

@@ -27,6 +27,17 @@ mineur:
     enable: false
     cost-per-layer: 0
 
+# Paramètres des gardes royaux
+garde:
+  follow-radius: 20
+  comfort-distance: 3
+  respawn-delay-seconds: 20
+  attributes:
+    max-health: 100.0
+    attack-damage: 16.0
+    movement-speed: 0.35
+    knockback-resistance: 0.6
+
 # Paramètres de l'éleveur
 # Limite d'animaux par espèce dans un enclos
 # Temps de restock du PNJ en ticks

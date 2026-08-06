@@ -8,6 +8,10 @@ commands:
   army:
     description: Fait apparaître 5 loups + 2 golems
     usage: /army
+  garde:
+    description: Invoque ou renvoie deux gardes royaux
+    usage: /garde
+    permission: mineplugin.garde.use
   ping:
     description: Répond « Pong ! »
     usage: /ping
@@ -58,6 +62,9 @@ permissions:
   mineplugin.mineur.admin:
     description: Administrer toutes les sessions du mineur
     default: op
+  mineplugin.garde.use:
+    description: Invoquer ou renvoyer ses gardes royaux (/garde)
+    default: true
   mineplugin.marchand.spawn:
     description: Invoquer le marchand PNJ (/marchand)
     default: op
