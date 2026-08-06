@@ -74,7 +74,7 @@ public final class RoyalGuardManager implements TabExecutor, Listener {
     private static final String USE_PERMISSION = "mineplugin.garde.use";
     private static final int GUARD_COUNT = 2;
     private static final long FOLLOW_PERIOD_TICKS = 20L;
-    private static final long THREAT_TARGET_REFRESH_PERIOD_TICKS = 5L;
+    private static final long COMBAT_MAINTENANCE_PERIOD_TICKS = 5L;
     private static final int MAX_PATH_FAILURES = 3;
     private static final double DEFAULT_FOLLOW_RADIUS = 20.0D;
     private static final double DEFAULT_COMFORT_DISTANCE = 3.0D;
@@ -83,10 +83,13 @@ public final class RoyalGuardManager implements TabExecutor, Listener {
     private static final int DEFAULT_RESPAWN_DELAY_SECONDS = 20;
     private static final boolean DEFAULT_FRIENDLY_FIRE = false;
     private static final boolean DEFAULT_IRON_GOLEM_NEUTRALITY = true;
+    private static final boolean DEFAULT_IRON_GOLEM_RETALIATION = true;
     private static final boolean DEFAULT_NOTIFICATIONS = true;
+    private static final double DEFAULT_IRON_GOLEM_NEUTRALITY_RADIUS = 32.0D;
     private static final double DEFAULT_MAX_HEALTH = 100.0D;
     private static final double DEFAULT_ATTACK_DAMAGE = 16.0D;
     private static final double DEFAULT_MOVEMENT_SPEED = 0.35D;
+    private static final double DEFAULT_FOLLOW_RANGE = 48.0D;
     private static final double DEFAULT_KNOCKBACK_RESISTANCE = 0.6D;
     private static final double FOLLOW_SPEED = 1.15D;
     private static final double MAX_FOLLOW_RADIUS = 128.0D;
@@ -97,7 +100,9 @@ public final class RoyalGuardManager implements TabExecutor, Listener {
     private static final double MAX_CONFIGURED_HEALTH = 1024.0D;
     private static final double MAX_CONFIGURED_ATTACK_DAMAGE = 2048.0D;
     private static final double MAX_CONFIGURED_MOVEMENT_SPEED = 1024.0D;
+    private static final double MAX_CONFIGURED_FOLLOW_RANGE = 128.0D;
     private static final double MAX_CONFIGURED_KNOCKBACK_RESISTANCE = 1.0D;
+    private static final double MAX_IRON_GOLEM_NEUTRALITY_RADIUS = 64.0D;
     private static final int SAFE_LOCATION_SEARCH_RADIUS = 4;
     private static final int SAFE_LOCATION_VERTICAL_RANGE = 4;
     private static final long ERROR_LOG_COOLDOWN_MILLIS = 30_000L;
@@ -111,7 +116,9 @@ public final class RoyalGuardManager implements TabExecutor, Listener {
     private final Map<UUID, GuardSquad> squads = new HashMap<>();
     private final Map<UUID, Husk> guardsById = new HashMap<>();
     private final Map<UUID, Long> lastNavigationErrorLogAt = new HashMap<>();
+    private final Map<UUID, BukkitTask> pendingIronGolemDeaggroTasks = new HashMap<>();
     private BukkitTask followTask;
+    private BukkitTask combatTask;
     private boolean shuttingDown;
 
     public RoyalGuardManager(JavaPlugin plugin) {
@@ -139,8 +146,25 @@ public final class RoyalGuardManager implements TabExecutor, Listener {
         removeOrphanedGuards();
 
         if (startFollowTask) {
+            startMaintenanceTasks();
+        }
+    }
+
+    private void startMaintenanceTasks() {
+        try {
             followTask = Bukkit.getScheduler().runTaskTimer(plugin, this::followActiveSquads,
                     FOLLOW_PERIOD_TICKS, FOLLOW_PERIOD_TICKS);
+            combatTask = Bukkit.getScheduler().runTaskTimer(plugin, this::maintainActiveThreats,
+                    1L, COMBAT_MAINTENANCE_PERIOD_TICKS);
+        } catch (RuntimeException exception) {
+            // Si le second enregistrement échoue, on annule aussi le premier afin de ne jamais
+            // laisser un gestionnaire partiellement initialisé tourner en arrière-plan.
+            cancelTaskQuietly(followTask);
+            cancelTaskQuietly(combatTask);
+            followTask = null;
+            combatTask = null;
+            HandlerList.unregisterAll(this);
+            throw exception;
         }
     }
 
@@ -311,10 +335,10 @@ public final class RoyalGuardManager implements TabExecutor, Listener {
 
     /**
      * Empêche le propriétaire ou l'autre membre du duo de blesser accidentellement un garde.
-     * Le traitement est effectué avant MONITOR afin que la défense automatique respecte bien
-     * l'état final d'annulation de l'événement.
+     * Le listener s'exécute même si un autre plugin a déjà annulé le coup afin de retirer aussi
+     * une éventuelle cible amicale restée mémorisée par l'IA.
      */
-    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
+    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = false)
     public void onGuardFriendlyFire(EntityDamageByEntityEvent event) {
         if (isFriendlyFireEnabled() || !isTrackedGuard(event.getEntity())) {
             return;
@@ -327,35 +351,46 @@ public final class RoyalGuardManager implements TabExecutor, Listener {
         }
 
         event.setCancelled(true);
-        if (event.getEntity() instanceof Mob guard && guard.getTarget() != null
-                && guard.getTarget().getUniqueId().equals(attacker.getUniqueId())) {
-            guard.setTarget(null);
+        if (event.getEntity() instanceof Husk guard) {
+            GuardSquad squad = squads.get(ownerId);
+            if (squad != null && squad.active) {
+                // Une menace ennemie déjà valide reste prioritaire : un coup accidentel du maître
+                // ne doit jamais remettre le garde à l'état passif au milieu d'un combat.
+                restoreCurrentThreatTarget(squad, guard);
+            } else if (guard.getTarget() != null
+                    && guard.getTarget().getUniqueId().equals(attacker.getUniqueId())) {
+                guard.setTarget(null);
+            }
         }
     }
 
     /**
-     * Les gardes sont des Husks : sans protection explicite, les golems de fer les considèrent
-     * comme des monstres hostiles. Le ciblage est bloqué de façon événementielle, sans scan du monde.
+     * Les gardes sont des Husks : les golems de fer vanilla, ceux des villages MineGus et ceux
+     * créés par un joueur les considèrent donc comme des monstres. On neutralise l'acquisition
+     * avant qu'elle soit appliquée, puis on la vérifie encore au tick suivant.
      */
-    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
+    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = false)
     public void onIronGolemTargetsGuard(EntityTargetLivingEntityEvent event) {
         if (!(event.getEntity() instanceof IronGolem golem)
-                || !isTrackedGuard(event.getTarget())
+                || !isRoyalGuard(event.getTarget())
                 || !isIronGolemNeutralityEnabled()) {
             return;
         }
 
+        // setTarget(null) sur l'événement évite que le moteur applique la nouvelle cible.
+        // L'annulation protège aussi contre les implémentations qui ignoreraient la substitution.
+        event.setTarget(null);
         event.setCancelled(true);
-        neutralizeIronGolemAggression(golem, event.getTarget());
+        neutralizeIronGolemAggression(golem);
     }
 
     /**
-     * Filet de sécurité contre les attaques forcées par un autre plugin ou une cible déjà acquise :
-     * le coup du golem est annulé et son agressivité envers ce garde est supprimée.
+     * Second filet de sécurité : même si une cible a été injectée directement par un autre plugin
+     * ou conservée par l'IA vanilla, aucun coup de golem ne peut atteindre un garde suivi.
      */
-    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
+    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = false)
     public void onIronGolemDamagesGuard(EntityDamageByEntityEvent event) {
-        if (!isTrackedGuard(event.getEntity()) || !isIronGolemNeutralityEnabled()) {
+        if (!isRoyalGuard(event.getEntity()) || !isIronGolemNeutralityEnabled()) {
             return;
         }
 
@@ -364,13 +399,26 @@ public final class RoyalGuardManager implements TabExecutor, Listener {
             return;
         }
 
+        // Le coup reste sans dégâts même si le golem avait obtenu sa cible par NMS ou par un autre plugin.
         event.setCancelled(true);
-        neutralizeIronGolemAggression(golem, event.getEntity());
+        neutralizeIronGolemAggression(golem);
+
+        if (!isIronGolemRetaliationEnabled() || !isTrackedGuard(event.getEntity())) {
+            return;
+        }
+
+        UUID ownerId = ownerOf(event.getEntity());
+        GuardSquad squad = ownerId == null ? null : squads.get(ownerId);
+        if (squad != null && squad.active) {
+            // Ce cas ne devrait survenir qu'en dernier recours : la tentative de frappe prouve
+            // néanmoins une agression réelle, donc le duo contre-attaque sans exposer le garde aux dégâts.
+            engageThreat(squad, golem);
+        }
     }
 
     /**
-     * Un garde attaqué devient une source de protection pour tout le duo. Auparavant les Husks
-     * recevaient les coups sans pouvoir se défendre, car leur ciblage vanilla était toujours annulé.
+     * Un garde attaqué devient une source de protection pour tout le duo. Le listener MONITOR
+     * ne réagit qu'aux dégâts réellement acceptés après les protections des autres plugins.
      */
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void onGuardDamaged(EntityDamageByEntityEvent event) {
@@ -393,42 +441,48 @@ public final class RoyalGuardManager implements TabExecutor, Listener {
         engageThreat(squad, attacker);
     }
 
-    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
+    /**
+     * Le Husk ne doit jamais choisir une cible de lui-même. Lorsqu'une menace légitime existe,
+     * toute tentative de changement ou d'oubli est redirigée vers cette menace au niveau de
+     * l'événement, sans appeler setTarget depuis le listener et donc sans récursion d'événements.
+     */
+    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = false)
     public void onGuardTargets(EntityTargetLivingEntityEvent event) {
         if (!isRoyalGuard(event.getEntity())) {
             return;
         }
 
-        LivingEntity target = event.getTarget();
-        if (target == null) {
+        UUID ownerId = ownerOf(event.getEntity());
+        GuardSquad squad = ownerId == null ? null : squads.get(ownerId);
+        if (squad == null || !squad.active || !isTrackedGuard(event.getEntity())) {
+            rejectAutonomousGuardTarget(event);
             return;
         }
 
-        UUID ownerId = ownerOf(event.getEntity());
-        GuardSquad squad = ownerId == null ? null : squads.get(ownerId);
-        boolean targetIsInAnotherWorld = !isInSameWorld(event.getEntity(), target);
-        if (squad == null || !squad.active || targetIsInAnotherWorld || !isCurrentThreat(ownerId, target)) {
-            if (targetIsInAnotherWorld && squad != null && squad.threatId != null
-                    && squad.threatId.equals(target.getUniqueId())) {
+        LivingEntity threat = squad.threat;
+        boolean validThreat = threat != null
+                && isCurrentThreat(ownerId, threat)
+                && isInSameWorld(event.getEntity(), threat);
+        if (!validThreat) {
+            if (squad.threatId != null) {
                 clearThreat(squad);
             }
-            event.setCancelled(true);
-            if (event.getEntity() instanceof Husk guard && squad != null && squad.active) {
-                // Ne jamais remplacer une menace valide par « aucune cible » : c'était la cause
-                // principale des gardes qui recevaient des coups puis restaient passifs.
-                restoreCurrentThreatTarget(squad, guard);
-            } else if (event.getEntity() instanceof Mob mob) {
-                mob.setTarget(null);
-            }
+            rejectAutonomousGuardTarget(event);
+            return;
+        }
+
+        LivingEntity requestedTarget = event.getTarget();
+        if (requestedTarget == null
+                || !requestedTarget.getUniqueId().equals(threat.getUniqueId())) {
+            // On conserve l'état d'annulation décidé par un autre plugin. Si l'événement est actif,
+            // Paper appliquera directement la menace à la place de la cible vanilla indésirable.
+            event.setTarget(threat);
         }
     }
 
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
     public void onGuardDamages(EntityDamageByEntityEvent event) {
-        if (event.isCancelled()) {
-            return;
-        }
-        if (!isRoyalGuard(event.getDamager())) {
+        if (event.isCancelled() || !isTrackedGuard(event.getDamager())) {
             return;
         }
 
@@ -439,6 +493,7 @@ public final class RoyalGuardManager implements TabExecutor, Listener {
                 || !isCurrentThreat(ownerId, target)) {
             event.setCancelled(true);
             if (event.getDamager() instanceof Husk guard && squad != null && squad.active) {
+                // Une animation d'attaque parasite ne doit pas effacer la vraie cible en cours.
                 restoreCurrentThreatTarget(squad, guard);
             } else if (event.getDamager() instanceof Mob mob) {
                 mob.setTarget(null);
@@ -550,16 +605,31 @@ public final class RoyalGuardManager implements TabExecutor, Listener {
         shuttingDown = true;
         HandlerList.unregisterAll(this);
 
-        if (followTask != null) {
-            followTask.cancel();
-            followTask = null;
+        cancelTaskQuietly(followTask);
+        cancelTaskQuietly(combatTask);
+        followTask = null;
+        combatTask = null;
+        for (BukkitTask task : new ArrayList<>(pendingIronGolemDeaggroTasks.values())) {
+            cancelTaskQuietly(task);
         }
+        pendingIronGolemDeaggroTasks.clear();
 
         List<UUID> ownerIds = new ArrayList<>(squads.keySet());
         ownerIds.forEach(this::dismissSquad);
         removeOrphanedGuards();
         guardsById.clear();
         lastNavigationErrorLogAt.clear();
+    }
+
+    private void cancelTaskQuietly(BukkitTask task) {
+        if (task == null) {
+            return;
+        }
+        try {
+            task.cancel();
+        } catch (RuntimeException ignored) {
+            // Paper peut avoir déjà annulé la tâche pendant la désactivation du plugin.
+        }
     }
 
     void followActiveSquads() {
@@ -588,6 +658,16 @@ public final class RoyalGuardManager implements TabExecutor, Listener {
                 clearThreat(squad);
             }
 
+            if (isIronGolemNeutralityEnabled()) {
+                try {
+                    // Balayage borné une fois par seconde : il rattrape les cibles injectées sans
+                    // événement, sans jamais parcourir tous les golems ni toutes les entités du monde.
+                    neutralizeNearbyIronGolems(owner);
+                } catch (RuntimeException exception) {
+                    logNavigationFailure(squad, -1, exception);
+                }
+            }
+
             for (int slot = 0; slot < GUARD_COUNT; slot++) {
                 try {
                     Husk guard = getLiveGuard(squad, slot);
@@ -602,6 +682,40 @@ public final class RoyalGuardManager implements TabExecutor, Listener {
                     resetNavigationState(squad, slot);
                     tryRecallAfterFailure(squad, owner, slot);
                 }
+            }
+        }
+    }
+
+    /**
+     * Confirme les cibles de combat quatre fois par seconde avec une seule tâche globale.
+     * Cette stratégie est plus légère et plus simple à nettoyer qu'une tâche par joueur.
+     */
+    void maintainActiveThreats() {
+        if (shuttingDown) {
+            return;
+        }
+
+        for (GuardSquad squad : new ArrayList<>(squads.values())) {
+            if (!squad.active || squad.threatId == null) {
+                continue;
+            }
+
+            try {
+                Player owner = getOnlineOwner(squad);
+                if (owner == null) {
+                    dismissSquad(squad.ownerId);
+                    continue;
+                }
+
+                expireThreatIfNeeded(squad);
+                clearThreatIfNoLongerRelevant(squad, owner);
+                if (squad.threatId != null && squad.threat != null) {
+                    applyThreatToGuards(squad, owner);
+                }
+            } catch (RuntimeException exception) {
+                logNavigationFailure(squad, -1, exception);
+                // Une menace corrompue ne doit pas bloquer les futurs combats de l'escouade.
+                clearThreatAndTargets(squad);
             }
         }
     }
@@ -791,6 +905,7 @@ public final class RoyalGuardManager implements TabExecutor, Listener {
                 guard, Attribute.MAX_HEALTH, settings.maxHealth());
         setRequiredAttribute(guard, Attribute.ATTACK_DAMAGE, settings.attackDamage());
         setRequiredAttribute(guard, Attribute.MOVEMENT_SPEED, settings.movementSpeed());
+        setRequiredAttribute(guard, Attribute.FOLLOW_RANGE, settings.followRange());
         setRequiredAttribute(guard, Attribute.KNOCKBACK_RESISTANCE, settings.knockbackResistance());
         guard.setHealth(maxHealth.getBaseValue());
 
@@ -921,7 +1036,6 @@ public final class RoyalGuardManager implements TabExecutor, Listener {
         squad.threat = attacker;
         squad.threatExpiresAtNanos = System.nanoTime() + getThreatDurationNanos();
         applyThreatToGuards(squad, owner);
-        ensureThreatTargetRefresh(squad);
     }
 
     private void applyThreatToGuards(GuardSquad squad, Player owner) {
@@ -943,72 +1057,96 @@ public final class RoyalGuardManager implements TabExecutor, Listener {
         }
     }
 
+    private void rejectAutonomousGuardTarget(EntityTargetLivingEntityEvent event) {
+        if (event.getTarget() == null) {
+            return;
+        }
+        event.setTarget(null);
+        event.setCancelled(true);
+    }
+
+    private void neutralizeIronGolemAggression(IronGolem golem) {
+        clearIronGolemRoyalGuardTarget(golem);
+        scheduleIronGolemDeaggroVerification(golem);
+    }
+
     /**
-     * Certaines IA vanilla peuvent réévaluer leur cible après le coup initial. Une seule tâche
-     * légère par escouade en combat confirme donc la cible au tick suivant, puis toutes les cinq
-     * ticks uniquement tant qu'une menace existe. Elle ne refait aucun setTarget si la cible tient.
+     * Efface uniquement une cible royale : une cible légitime différente (raider, zombie, etc.)
+     * n'est jamais supprimée par erreur.
      */
-    private void ensureThreatTargetRefresh(GuardSquad squad) {
-        if (shuttingDown || !plugin.isEnabled() || !squad.active || squad.targetRefreshTask != null) {
+    private void clearIronGolemRoyalGuardTarget(IronGolem golem) {
+        if (golem == null || !golem.isValid() || golem.isDead()) {
+            return;
+        }
+
+        LivingEntity currentTarget = golem.getTarget();
+        if (currentTarget == null || !isRoyalGuard(currentTarget)) {
+            return;
+        }
+
+        golem.setTarget(null);
+        // Cet état contrôle notamment l'animation d'attaque. L'IA pourra le réactiver
+        // normalement dès qu'elle choisira une autre cible légitime.
+        golem.setAggressive(false);
+    }
+
+    /**
+     * Au moment de EntityTargetLivingEntityEvent, la nouvelle cible n'est pas toujours encore
+     * visible via golem.getTarget(). La vérification au tick suivant ferme précisément cette fenêtre.
+     */
+    private void scheduleIronGolemDeaggroVerification(IronGolem golem) {
+        if (shuttingDown || !plugin.isEnabled() || golem == null) {
+            return;
+        }
+
+        UUID golemId = golem.getUniqueId();
+        if (pendingIronGolemDeaggroTasks.containsKey(golemId)) {
             return;
         }
 
         try {
-            squad.targetRefreshTask = Bukkit.getScheduler().runTaskTimer(plugin, () -> {
+            BukkitTask task = Bukkit.getScheduler().runTask(plugin, () -> {
                 try {
-                    maintainThreatTargets(squad);
-                } catch (RuntimeException exception) {
-                    // Une entité momentanément déchargée ne doit ni casser le scheduler Bukkit,
-                    // ni empêcher les futures confirmations de cible de cette escouade.
-                    logNavigationFailure(squad, -1, exception);
+                    if (!shuttingDown && isIronGolemNeutralityEnabled()) {
+                        clearIronGolemRoyalGuardTarget(golem);
+                    }
+                } finally {
+                    pendingIronGolemDeaggroTasks.remove(golemId);
                 }
-            }, 1L, THREAT_TARGET_REFRESH_PERIOD_TICKS);
+            });
+            pendingIronGolemDeaggroTasks.put(golemId, task);
         } catch (RuntimeException exception) {
-            squad.targetRefreshTask = null;
+            pendingIronGolemDeaggroTasks.remove(golemId);
             plugin.getLogger().log(Level.WARNING,
-                    "Impossible de maintenir la cible de combat des gardes de " + squad.ownerId + ".",
+                    "Impossible de confirmer la neutralisation du golem de fer " + golemId + ".",
                     exception);
         }
     }
 
-    private void maintainThreatTargets(GuardSquad squad) {
-        if (shuttingDown || !squad.active || squads.get(squad.ownerId) != squad) {
-            cancelThreatTargetRefresh(squad);
+    /**
+     * Rattrape à faible fréquence les cibles posées directement par du code NMS ou par un plugin
+     * qui ne déclencherait pas l'événement Bukkit. Le rayon est borné et centré sur le propriétaire ;
+     * les événements et l'annulation des dégâts restent les protections principales hors de ce rayon.
+     */
+    private void neutralizeNearbyIronGolems(Player owner) {
+        double radius = getPositiveConfig(
+                "garde.iron-golem-neutrality-radius",
+                DEFAULT_IRON_GOLEM_NEUTRALITY_RADIUS,
+                MAX_IRON_GOLEM_NEUTRALITY_RADIUS);
+        List<Entity> nearbyEntities = owner.getNearbyEntities(radius, radius, radius);
+        if (nearbyEntities == null || nearbyEntities.isEmpty()) {
             return;
         }
 
-        Player owner = getOnlineOwner(squad);
-        if (owner == null || squad.threatId == null || squad.threat == null) {
-            clearThreatAndTargets(squad);
-            return;
+        for (Entity nearbyEntity : nearbyEntities) {
+            if (!(nearbyEntity instanceof IronGolem golem)) {
+                continue;
+            }
+            LivingEntity target = golem.getTarget();
+            if (target != null && isRoyalGuard(target)) {
+                neutralizeIronGolemAggression(golem);
+            }
         }
-
-        clearThreatIfNoLongerRelevant(squad, owner);
-        if (squad.threat != null) {
-            applyThreatToGuards(squad, owner);
-        }
-    }
-
-    private void cancelThreatTargetRefresh(GuardSquad squad) {
-        BukkitTask task = squad.targetRefreshTask;
-        squad.targetRefreshTask = null;
-        if (task == null) {
-            return;
-        }
-        try {
-            task.cancel();
-        } catch (RuntimeException ignored) {
-            // La tâche peut déjà être terminée ou annulée pendant l'arrêt du serveur.
-        }
-    }
-
-    private void neutralizeIronGolemAggression(IronGolem golem, Entity guardEntity) {
-        LivingEntity currentTarget = golem.getTarget();
-        if (currentTarget != null && currentTarget.getUniqueId().equals(guardEntity.getUniqueId())) {
-            golem.setTarget(null);
-        }
-        // La neutralité est volontairement unidirectionnelle : le golem ne peut pas frapper
-        // un garde, mais le duo conserve le droit de défendre son propriétaire contre ce golem.
     }
 
     private void expireThreatIfNeeded(GuardSquad squad) {
@@ -1036,15 +1174,21 @@ public final class RoyalGuardManager implements TabExecutor, Listener {
     private void clearThreatAndTargets(GuardSquad squad) {
         clearThreat(squad);
         for (int slot = 0; slot < GUARD_COUNT; slot++) {
-            Husk guard = getLiveGuard(squad, slot);
-            if (guard != null) {
-                guard.setTarget(null);
+            try {
+                Husk guard = getLiveGuard(squad, slot);
+                if (guard != null) {
+                    // L'appel explicite couvre aussi une cible conservée côté moteur mais non reflétée
+                    // momentanément par getTarget() pendant un changement de monde ou un déchargement.
+                    guard.setTarget(null);
+                }
+            } catch (RuntimeException exception) {
+                // Un garde momentanément déchargé ne doit pas empêcher le second d'être nettoyé.
+                logNavigationFailure(squad, slot, exception);
             }
         }
     }
 
     private void clearThreat(GuardSquad squad) {
-        cancelThreatTargetRefresh(squad);
         squad.threatId = null;
         squad.threat = null;
         squad.threatExpiresAtNanos = 0L;
@@ -1074,6 +1218,15 @@ public final class RoyalGuardManager implements TabExecutor, Listener {
                 guard.setTarget(null);
             }
             return;
+        }
+
+        // Ces indicateurs sont persistants sur l'entité. On les répare seulement pendant un combat
+        // au cas où un autre plugin ou une ancienne sauvegarde aurait neutralisé l'IA du garde.
+        if (!guard.hasAI()) {
+            guard.setAI(true);
+        }
+        if (!guard.isAware()) {
+            guard.setAware(true);
         }
 
         if (currentTarget == null || !currentTarget.getUniqueId().equals(threat.getUniqueId())) {
@@ -1406,6 +1559,11 @@ public final class RoyalGuardManager implements TabExecutor, Listener {
                 "garde.iron-golem-neutrality", DEFAULT_IRON_GOLEM_NEUTRALITY);
     }
 
+    private boolean isIronGolemRetaliationEnabled() {
+        return plugin.getConfig().getBoolean(
+                "garde.iron-golem-retaliation", DEFAULT_IRON_GOLEM_RETALIATION);
+    }
+
     private enum GuardCommandAction {
         TOGGLE,
         SUMMON,
@@ -1433,9 +1591,19 @@ public final class RoyalGuardManager implements TabExecutor, Listener {
     record GuardSettings(double maxHealth,
                          double attackDamage,
                          double movementSpeed,
+                         double followRange,
                          double knockbackResistance) {
 
         static GuardSettings from(JavaPlugin plugin) {
+            double protectionRadius = positiveBounded(
+                    plugin.getConfig().getDouble("garde.protection-radius", DEFAULT_PROTECTION_RADIUS),
+                    DEFAULT_PROTECTION_RADIUS,
+                    MAX_PROTECTION_RADIUS);
+            double configuredFollowRange = positiveBounded(
+                    plugin.getConfig().getDouble("garde.attributes.follow-range", DEFAULT_FOLLOW_RANGE),
+                    DEFAULT_FOLLOW_RANGE,
+                    MAX_CONFIGURED_FOLLOW_RANGE);
+
             return new GuardSettings(
                     positiveBounded(plugin.getConfig().getDouble("garde.attributes.max-health", DEFAULT_MAX_HEALTH),
                             DEFAULT_MAX_HEALTH, MAX_CONFIGURED_HEALTH),
@@ -1443,6 +1611,9 @@ public final class RoyalGuardManager implements TabExecutor, Listener {
                             DEFAULT_ATTACK_DAMAGE, MAX_CONFIGURED_ATTACK_DAMAGE),
                     positiveBounded(plugin.getConfig().getDouble("garde.attributes.movement-speed", DEFAULT_MOVEMENT_SPEED),
                             DEFAULT_MOVEMENT_SPEED, MAX_CONFIGURED_MOVEMENT_SPEED),
+                    // La portée de détection ne doit jamais être inférieure au rayon dans lequel
+                    // le plugin demande au garde de poursuivre une menace.
+                    Math.max(configuredFollowRange, protectionRadius),
                     nonNegativeBounded(plugin.getConfig().getDouble("garde.attributes.knockback-resistance", DEFAULT_KNOCKBACK_RESISTANCE),
                             DEFAULT_KNOCKBACK_RESISTANCE, MAX_CONFIGURED_KNOCKBACK_RESISTANCE)
             );
@@ -1465,7 +1636,6 @@ public final class RoyalGuardManager implements TabExecutor, Listener {
         private final Map<Integer, Integer> pathFailures = new HashMap<>();
         private final Map<Integer, Location> lastLocations = new HashMap<>();
         private final Map<Integer, Integer> stuckChecks = new HashMap<>();
-        private BukkitTask targetRefreshTask;
         private boolean active = true;
         private UUID threatId;
         private LivingEntity threat;

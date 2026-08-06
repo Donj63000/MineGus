@@ -110,6 +110,7 @@ class RoyalGuardManagerTest {
         plugin.getConfig().set("garde.attributes.max-health", Double.POSITIVE_INFINITY);
         plugin.getConfig().set("garde.attributes.attack-damage", 4096.0D);
         plugin.getConfig().set("garde.attributes.movement-speed", -1.0D);
+        plugin.getConfig().set("garde.attributes.follow-range", 512.0D);
         plugin.getConfig().set("garde.attributes.knockback-resistance", 2.0D);
 
         RoyalGuardManager.GuardSettings settings = RoyalGuardManager.GuardSettings.from(plugin);
@@ -117,7 +118,18 @@ class RoyalGuardManagerTest {
         assertEquals(100.0D, settings.maxHealth());
         assertEquals(16.0D, settings.attackDamage());
         assertEquals(0.35D, settings.movementSpeed());
+        assertEquals(48.0D, settings.followRange());
         assertEquals(0.6D, settings.knockbackResistance());
+    }
+
+    @Test
+    void followRangeCannotBeLowerThanTheConfiguredProtectionRadius() {
+        plugin.getConfig().set("garde.protection-radius", 64.0D);
+        plugin.getConfig().set("garde.attributes.follow-range", 20.0D);
+
+        RoyalGuardManager.GuardSettings settings = RoyalGuardManager.GuardSettings.from(plugin);
+
+        assertEquals(64.0D, settings.followRange());
     }
 
     @Test
@@ -128,6 +140,21 @@ class RoyalGuardManagerTest {
 
         assertEquals(EventPriority.MONITOR, handler.priority());
         assertTrue(handler.ignoreCancelled());
+    }
+
+    @Test
+    void golemProtectionHandlersRunLastAndObserveAlreadyCancelledEvents() throws NoSuchMethodException {
+        EventHandler targetHandler = RoyalGuardManager.class
+                .getMethod("onIronGolemTargetsGuard", EntityTargetLivingEntityEvent.class)
+                .getAnnotation(EventHandler.class);
+        EventHandler damageHandler = RoyalGuardManager.class
+                .getMethod("onIronGolemDamagesGuard", EntityDamageByEntityEvent.class)
+                .getAnnotation(EventHandler.class);
+
+        assertEquals(EventPriority.HIGHEST, targetHandler.priority());
+        assertFalse(targetHandler.ignoreCancelled());
+        assertEquals(EventPriority.HIGHEST, damageHandler.priority());
+        assertFalse(damageHandler.ignoreCancelled());
     }
 
     @Test
@@ -230,20 +257,23 @@ class RoyalGuardManagerTest {
         when(ownerTarget.getEntity()).thenReturn(fixture.first.guard);
         when(ownerTarget.getTarget()).thenReturn(fixture.owner);
         manager.onGuardTargets(ownerTarget);
-        verify(ownerTarget).setCancelled(true);
+        verify(ownerTarget).setTarget(projectileAttacker);
+        verify(ownerTarget, never()).setCancelled(true);
 
         EntityTargetLivingEntityEvent siblingTarget = mock(EntityTargetLivingEntityEvent.class);
         when(siblingTarget.getEntity()).thenReturn(fixture.first.guard);
         when(siblingTarget.getTarget()).thenReturn(fixture.second.guard);
         manager.onGuardTargets(siblingTarget);
-        verify(siblingTarget).setCancelled(true);
+        verify(siblingTarget).setTarget(projectileAttacker);
+        verify(siblingTarget, never()).setCancelled(true);
 
         EntityTargetLivingEntityEvent unrelatedTarget = mock(EntityTargetLivingEntityEvent.class);
         LivingEntity unrelatedTargetEntity = livingEntity(fixture.world);
         when(unrelatedTarget.getEntity()).thenReturn(fixture.first.guard);
         when(unrelatedTarget.getTarget()).thenReturn(unrelatedTargetEntity);
         manager.onGuardTargets(unrelatedTarget);
-        verify(unrelatedTarget).setCancelled(true);
+        verify(unrelatedTarget).setTarget(projectileAttacker);
+        verify(unrelatedTarget, never()).setCancelled(true);
 
         EntityTargetLivingEntityEvent realThreat = mock(EntityTargetLivingEntityEvent.class);
         when(realThreat.getEntity()).thenReturn(fixture.first.guard);
@@ -305,14 +335,17 @@ class RoyalGuardManagerTest {
 
         clearInvocations(fixture.first.guard);
         EntityTargetLivingEntityEvent distraction = mock(EntityTargetLivingEntityEvent.class);
-        LivingEntity unrelatedTarget = livingEntity(fixture.world);
         when(distraction.getEntity()).thenReturn(fixture.first.guard);
+        LivingEntity unrelatedTarget = livingEntity(fixture.world);
         when(distraction.getTarget()).thenReturn(unrelatedTarget);
 
         manager.onGuardTargets(distraction);
 
-        verify(distraction).setCancelled(true);
-        verify(fixture.first.guard).setTarget(attacker);
+        verify(distraction).setTarget(attacker);
+        verify(distraction, never()).setCancelled(true);
+        // Le listener corrige l'événement lui-même et n'appelle pas setTarget(), ce qui évite
+        // une récursion de EntityTargetLivingEntityEvent.
+        verify(fixture.first.guard, never()).setTarget(any(LivingEntity.class));
         verify(fixture.first.guard, never()).setTarget((LivingEntity) null);
     }
 
@@ -330,9 +363,9 @@ class RoyalGuardManagerTest {
 
         clearInvocations(fixture.first.guard);
         EntityDamageByEntityEvent invalidSwing = mock(EntityDamageByEntityEvent.class);
-        LivingEntity unrelatedTarget = livingEntity(fixture.world);
         when(invalidSwing.isCancelled()).thenReturn(false);
         when(invalidSwing.getDamager()).thenReturn(fixture.first.guard);
+        LivingEntity unrelatedTarget = livingEntity(fixture.world);
         when(invalidSwing.getEntity()).thenReturn(unrelatedTarget);
 
         manager.onGuardDamages(invalidSwing);
@@ -361,7 +394,7 @@ class RoyalGuardManagerTest {
     }
 
     @Test
-    void ironGolemsCannotTargetOrDamageTrackedGuardsByDefault() {
+    void ironGolemsCannotKeepOrDamageARoyalGuardAndACancelledHitTriggersDefence() {
         GuardFixture fixture = new GuardFixture();
         manager.onCommand(fixture.owner, null, "garde", new String[0]);
         IronGolem golem = ironGolem(fixture.world);
@@ -373,18 +406,90 @@ class RoyalGuardManagerTest {
 
         manager.onIronGolemTargetsGuard(targetEvent);
 
+        verify(targetEvent).setTarget(null);
         verify(targetEvent).setCancelled(true);
-        verify(golem).setTarget(null);
+        verify(golem).setTarget((LivingEntity) null);
 
+        clearInvocations(fixture.first.guard, fixture.second.guard);
         EntityDamageByEntityEvent damageEvent = mock(EntityDamageByEntityEvent.class);
-        when(damageEvent.isCancelled()).thenReturn(false);
         when(damageEvent.getEntity()).thenReturn(fixture.first.guard);
         when(damageEvent.getDamager()).thenReturn(golem);
 
         manager.onIronGolemDamagesGuard(damageEvent);
-        // Le dispatcher Bukkit transmet ensuite l'état annulé au listener MONITOR de riposte.
-        when(damageEvent.isCancelled()).thenReturn(true);
-        manager.onGuardDamaged(damageEvent);
+
+        verify(damageEvent).setCancelled(true);
+        verify(fixture.first.guard).setTarget(golem);
+        verify(fixture.second.guard).setTarget(golem);
+    }
+
+    @Test
+    void golemTargetAcquiredAfterTheEventIsPurgedOnTheNextTick() {
+        GuardFixture fixture = new GuardFixture();
+        manager.onCommand(fixture.owner, null, "garde", new String[0]);
+        IronGolem golem = ironGolem(fixture.world);
+        // Pendant l'événement, getTarget() expose encore l'ancienne valeur ; la nouvelle cible
+        // n'apparaît qu'au tick suivant, ce qui reproduit la fenêtre observée en jeu.
+        when(golem.getTarget()).thenReturn(null, fixture.first.guard);
+
+        EntityTargetLivingEntityEvent targetEvent = mock(EntityTargetLivingEntityEvent.class);
+        when(targetEvent.getEntity()).thenReturn(golem);
+        when(targetEvent.getTarget()).thenReturn(fixture.first.guard);
+
+        manager.onIronGolemTargetsGuard(targetEvent);
+
+        verify(golem, never()).setTarget((LivingEntity) null);
+        server.getScheduler().performTicks(1);
+
+        verify(golem).setTarget((LivingEntity) null);
+        verify(golem).setAggressive(false);
+    }
+
+    @Test
+    void pendingGolemDeaggroVerificationIsCancelledOnManagerShutdown() {
+        GuardFixture fixture = new GuardFixture();
+        manager.onCommand(fixture.owner, null, "garde", new String[0]);
+        IronGolem golem = ironGolem(fixture.world);
+        when(golem.getTarget()).thenReturn(null, fixture.first.guard);
+
+        EntityTargetLivingEntityEvent targetEvent = mock(EntityTargetLivingEntityEvent.class);
+        when(targetEvent.getEntity()).thenReturn(golem);
+        when(targetEvent.getTarget()).thenReturn(fixture.first.guard);
+        manager.onIronGolemTargetsGuard(targetEvent);
+
+        manager.shutdown();
+        server.getScheduler().performTicks(1);
+
+        verify(golem, never()).setTarget((LivingEntity) null);
+    }
+
+    @Test
+    void boundedFallbackSweepPurgesATargetInjectedWithoutABukkitTargetEvent() {
+        GuardFixture fixture = new GuardFixture();
+        manager.onCommand(fixture.owner, null, "garde", new String[0]);
+        IronGolem golem = ironGolem(fixture.world);
+        when(golem.getTarget()).thenReturn(fixture.first.guard);
+        when(fixture.owner.getNearbyEntities(32.0D, 32.0D, 32.0D))
+                .thenReturn(List.<Entity>of(golem));
+
+        manager.followActiveSquads();
+
+        verify(golem).setTarget((LivingEntity) null);
+        verify(golem).setAggressive(false);
+    }
+
+    @Test
+    void golemRetaliationCanBeDisabledWithoutAllowingDamage() {
+        GuardFixture fixture = new GuardFixture();
+        plugin.getConfig().set("garde.iron-golem-retaliation", false);
+        manager.onCommand(fixture.owner, null, "garde", new String[0]);
+        IronGolem golem = ironGolem(fixture.world);
+        when(golem.getTarget()).thenReturn(fixture.first.guard);
+
+        EntityDamageByEntityEvent damageEvent = mock(EntityDamageByEntityEvent.class);
+        when(damageEvent.getEntity()).thenReturn(fixture.first.guard);
+        when(damageEvent.getDamager()).thenReturn(golem);
+
+        manager.onIronGolemDamagesGuard(damageEvent);
 
         verify(damageEvent).setCancelled(true);
         verify(fixture.first.guard, never()).setTarget(golem);
@@ -413,11 +518,14 @@ class RoyalGuardManagerTest {
         when(retaliation.getTarget()).thenReturn(fixture.first.guard);
         manager.onIronGolemTargetsGuard(retaliation);
 
+        verify(retaliation).setTarget(null);
         verify(retaliation).setCancelled(true);
-        verify(fixture.first.guard, never()).setTarget(null);
-        verify(fixture.second.guard, never()).setTarget(null);
+        verify(fixture.first.guard, never()).setTarget((LivingEntity) null);
+        verify(fixture.second.guard, never()).setTarget((LivingEntity) null);
 
-        server.getScheduler().performTicks(1);
+        // La neutralité du golem est unidirectionnelle : elle n'efface jamais la menace
+        // mémorisée par les gardes lorsqu'ils protègent leur propriétaire.
+        manager.maintainActiveThreats();
         verify(fixture.first.guard).setTarget(golem);
         verify(fixture.second.guard).setTarget(golem);
     }
@@ -449,7 +557,11 @@ class RoyalGuardManagerTest {
     }
 
     @Test
-    void retaliationTargetIsReassertedOnTheNextTick() {
+    void retaliationTargetIsReassertedByTheSingleGlobalCombatTask() {
+        manager.shutdown();
+        manager = new RoyalGuardManager(plugin, (guard, target, speed) -> true, true, guardFactory,
+                (owner, slot) -> owner.getLocation().clone().add(slot == 0 ? 2.0D : -2.0D, 0.0D, 0.0D));
+
         GuardFixture fixture = new GuardFixture();
         manager.onCommand(fixture.owner, null, "garde", new String[0]);
         LivingEntity attacker = livingEntity(fixture.world);
@@ -791,6 +903,7 @@ class RoyalGuardManagerTest {
         assertEquals(100.0D, request.settings().maxHealth());
         assertEquals(16.0D, request.settings().attackDamage());
         assertEquals(0.35D, request.settings().movementSpeed());
+        assertEquals(48.0D, request.settings().followRange());
         assertEquals(0.6D, request.settings().knockbackResistance());
     }
 

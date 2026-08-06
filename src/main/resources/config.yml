@@ -40,15 +40,23 @@ garde:
   respawn-delay-seconds: 20
   # false protège les gardes contre les coups accidentels de leur propriétaire.
   friendly-fire: false
-  # true empêche les golems de fer de cibler ou de blesser les gardes royaux.
-  # Passez à false pour autoriser les combats garde contre golem ; les gardes riposteront alors normalement.
+  # true empêche tous les golems de fer (naturels, villageois ou créés par MineGus)
+  # de conserver un garde royal comme cible et bloque leurs dégâts.
   iron-golem-neutrality: true
+  # Rayon du filet de sécurité local contre une cible injectée sans événement Bukkit.
+  # Le contrôle principal reste événementiel ; ce balayage borné ne s'exécute qu'une fois par seconde.
+  iron-golem-neutrality-radius: 32
+  # Si un golem parvient malgré tout à tenter une frappe, les dégâts restent annulés
+  # et le duo contre-attaque. Passez à false pour une neutralité strictement pacifique.
+  iron-golem-retaliation: true
   # Messages lors de la mort et du retour d'un garde.
   notifications: true
   attributes:
     max-health: 100.0
     attack-damage: 16.0
     movement-speed: 0.35
+    # Portée de poursuite du Husk ; elle est automatiquement relevée au moins à protection-radius.
+    follow-range: 48.0
     knockback-resistance: 0.6
 
 # Paramètres de l'éleveur
