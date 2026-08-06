@@ -9,6 +9,7 @@ import org.bukkit.World;
 import org.bukkit.damage.DamageSource;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.Husk;
+import org.bukkit.entity.IronGolem;
 import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Player;
 import org.bukkit.entity.Projectile;
@@ -38,6 +39,8 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.clearInvocations;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -283,6 +286,188 @@ class RoyalGuardManagerTest {
         when(attack.getDamager()).thenReturn(attacker);
 
         manager.onGuardDamaged(attack);
+
+        verify(fixture.first.guard).setTarget(attacker);
+        verify(fixture.second.guard).setTarget(attacker);
+    }
+
+    @Test
+    void anUnrelatedVanillaTargetCannotEraseTheCurrentAggressor() {
+        GuardFixture fixture = new GuardFixture();
+        manager.onCommand(fixture.owner, null, "garde", new String[0]);
+        LivingEntity attacker = livingEntity(fixture.world);
+
+        EntityDamageByEntityEvent attack = mock(EntityDamageByEntityEvent.class);
+        when(attack.isCancelled()).thenReturn(false);
+        when(attack.getEntity()).thenReturn(fixture.first.guard);
+        when(attack.getDamager()).thenReturn(attacker);
+        manager.onGuardDamaged(attack);
+
+        clearInvocations(fixture.first.guard);
+        EntityTargetLivingEntityEvent distraction = mock(EntityTargetLivingEntityEvent.class);
+        LivingEntity unrelatedTarget = livingEntity(fixture.world);
+        when(distraction.getEntity()).thenReturn(fixture.first.guard);
+        when(distraction.getTarget()).thenReturn(unrelatedTarget);
+
+        manager.onGuardTargets(distraction);
+
+        verify(distraction).setCancelled(true);
+        verify(fixture.first.guard).setTarget(attacker);
+        verify(fixture.first.guard, never()).setTarget((LivingEntity) null);
+    }
+
+    @Test
+    void anInvalidSwingCannotEraseTheCurrentAggressor() {
+        GuardFixture fixture = new GuardFixture();
+        manager.onCommand(fixture.owner, null, "garde", new String[0]);
+        LivingEntity attacker = livingEntity(fixture.world);
+
+        EntityDamageByEntityEvent attack = mock(EntityDamageByEntityEvent.class);
+        when(attack.isCancelled()).thenReturn(false);
+        when(attack.getEntity()).thenReturn(fixture.first.guard);
+        when(attack.getDamager()).thenReturn(attacker);
+        manager.onGuardDamaged(attack);
+
+        clearInvocations(fixture.first.guard);
+        EntityDamageByEntityEvent invalidSwing = mock(EntityDamageByEntityEvent.class);
+        LivingEntity unrelatedTarget = livingEntity(fixture.world);
+        when(invalidSwing.isCancelled()).thenReturn(false);
+        when(invalidSwing.getDamager()).thenReturn(fixture.first.guard);
+        when(invalidSwing.getEntity()).thenReturn(unrelatedTarget);
+
+        manager.onGuardDamages(invalidSwing);
+
+        verify(invalidSwing).setCancelled(true);
+        verify(fixture.first.guard).setTarget(attacker);
+        verify(fixture.first.guard, never()).setTarget((LivingEntity) null);
+    }
+
+    @Test
+    void targetFailureOnOneGuardDoesNotPreventItsPartnerFromDefending() {
+        GuardFixture fixture = new GuardFixture();
+        manager.onCommand(fixture.owner, null, "garde", new String[0]);
+        LivingEntity attacker = livingEntity(fixture.world);
+        doThrow(new IllegalStateException("Cible temporairement indisponible"))
+                .when(fixture.first.guard).setTarget(attacker);
+
+        EntityDamageByEntityEvent attack = mock(EntityDamageByEntityEvent.class);
+        when(attack.isCancelled()).thenReturn(false);
+        when(attack.getEntity()).thenReturn(fixture.first.guard);
+        when(attack.getDamager()).thenReturn(attacker);
+
+        manager.onGuardDamaged(attack);
+
+        verify(fixture.second.guard).setTarget(attacker);
+    }
+
+    @Test
+    void ironGolemsCannotTargetOrDamageTrackedGuardsByDefault() {
+        GuardFixture fixture = new GuardFixture();
+        manager.onCommand(fixture.owner, null, "garde", new String[0]);
+        IronGolem golem = ironGolem(fixture.world);
+        when(golem.getTarget()).thenReturn(fixture.first.guard);
+
+        EntityTargetLivingEntityEvent targetEvent = mock(EntityTargetLivingEntityEvent.class);
+        when(targetEvent.getEntity()).thenReturn(golem);
+        when(targetEvent.getTarget()).thenReturn(fixture.first.guard);
+
+        manager.onIronGolemTargetsGuard(targetEvent);
+
+        verify(targetEvent).setCancelled(true);
+        verify(golem).setTarget(null);
+
+        EntityDamageByEntityEvent damageEvent = mock(EntityDamageByEntityEvent.class);
+        when(damageEvent.isCancelled()).thenReturn(false);
+        when(damageEvent.getEntity()).thenReturn(fixture.first.guard);
+        when(damageEvent.getDamager()).thenReturn(golem);
+
+        manager.onIronGolemDamagesGuard(damageEvent);
+        // Le dispatcher Bukkit transmet ensuite l'état annulé au listener MONITOR de riposte.
+        when(damageEvent.isCancelled()).thenReturn(true);
+        manager.onGuardDamaged(damageEvent);
+
+        verify(damageEvent).setCancelled(true);
+        verify(fixture.first.guard, never()).setTarget(golem);
+        verify(fixture.second.guard, never()).setTarget(golem);
+    }
+
+    @Test
+    void ironGolemNeutralityStillAllowsTheDuoToDefendItsOwner() {
+        GuardFixture fixture = new GuardFixture();
+        manager.onCommand(fixture.owner, null, "garde", new String[0]);
+        IronGolem golem = ironGolem(fixture.world);
+
+        EntityDamageByEntityEvent ownerAttack = mock(EntityDamageByEntityEvent.class);
+        when(ownerAttack.isCancelled()).thenReturn(false);
+        when(ownerAttack.getEntity()).thenReturn(fixture.owner);
+        when(ownerAttack.getDamager()).thenReturn(golem);
+        manager.onOwnerDamaged(ownerAttack);
+
+        verify(fixture.first.guard).setTarget(golem);
+        verify(fixture.second.guard).setTarget(golem);
+
+        clearInvocations(fixture.first.guard, fixture.second.guard);
+        when(golem.getTarget()).thenReturn(fixture.first.guard);
+        EntityTargetLivingEntityEvent retaliation = mock(EntityTargetLivingEntityEvent.class);
+        when(retaliation.getEntity()).thenReturn(golem);
+        when(retaliation.getTarget()).thenReturn(fixture.first.guard);
+        manager.onIronGolemTargetsGuard(retaliation);
+
+        verify(retaliation).setCancelled(true);
+        verify(fixture.first.guard, never()).setTarget(null);
+        verify(fixture.second.guard, never()).setTarget(null);
+
+        server.getScheduler().performTicks(1);
+        verify(fixture.first.guard).setTarget(golem);
+        verify(fixture.second.guard).setTarget(golem);
+    }
+
+    @Test
+    void disablingIronGolemNeutralityMakesTheDuoRetaliateNormally() {
+        GuardFixture fixture = new GuardFixture();
+        plugin.getConfig().set("garde.iron-golem-neutrality", false);
+        manager.onCommand(fixture.owner, null, "garde", new String[0]);
+        IronGolem golem = ironGolem(fixture.world);
+
+        EntityTargetLivingEntityEvent targetEvent = mock(EntityTargetLivingEntityEvent.class);
+        when(targetEvent.getEntity()).thenReturn(golem);
+        when(targetEvent.getTarget()).thenReturn(fixture.first.guard);
+        manager.onIronGolemTargetsGuard(targetEvent);
+        verify(targetEvent, never()).setCancelled(true);
+
+        EntityDamageByEntityEvent damageEvent = mock(EntityDamageByEntityEvent.class);
+        when(damageEvent.isCancelled()).thenReturn(false);
+        when(damageEvent.getEntity()).thenReturn(fixture.first.guard);
+        when(damageEvent.getDamager()).thenReturn(golem);
+        manager.onIronGolemDamagesGuard(damageEvent);
+        verify(damageEvent, never()).setCancelled(true);
+
+        manager.onGuardDamaged(damageEvent);
+
+        verify(fixture.first.guard).setTarget(golem);
+        verify(fixture.second.guard).setTarget(golem);
+    }
+
+    @Test
+    void retaliationTargetIsReassertedOnTheNextTick() {
+        GuardFixture fixture = new GuardFixture();
+        manager.onCommand(fixture.owner, null, "garde", new String[0]);
+        LivingEntity attacker = livingEntity(fixture.world);
+
+        EntityDamageByEntityEvent attack = mock(EntityDamageByEntityEvent.class);
+        when(attack.isCancelled()).thenReturn(false);
+        when(attack.getEntity()).thenReturn(fixture.first.guard);
+        when(attack.getDamager()).thenReturn(attacker);
+        manager.onGuardDamaged(attack);
+
+        clearInvocations(fixture.first.guard, fixture.second.guard);
+        server.getScheduler().performTicks(1);
+
+        verify(fixture.first.guard).setTarget(attacker);
+        verify(fixture.second.guard).setTarget(attacker);
+
+        clearInvocations(fixture.first.guard, fixture.second.guard);
+        server.getScheduler().performTicks(5);
 
         verify(fixture.first.guard).setTarget(attacker);
         verify(fixture.second.guard).setTarget(attacker);
@@ -618,6 +803,16 @@ class RoyalGuardManagerTest {
         when(death.getEntity()).thenReturn(guard);
         when(death.getDrops()).thenReturn(drops);
         return death;
+    }
+
+    private IronGolem ironGolem(World world) {
+        IronGolem golem = mock(IronGolem.class);
+        when(golem.getUniqueId()).thenReturn(UUID.randomUUID());
+        when(golem.getWorld()).thenReturn(world);
+        when(golem.getLocation()).thenReturn(new Location(world, 1.0D, 64.0D, 0.0D));
+        when(golem.isValid()).thenReturn(true);
+        when(golem.isDead()).thenReturn(false);
+        return golem;
     }
 
     private LivingEntity livingEntity(World world) {

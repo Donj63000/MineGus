@@ -40,6 +40,9 @@ garde:
   respawn-delay-seconds: 20
   # false protège les gardes contre les coups accidentels de leur propriétaire.
   friendly-fire: false
+  # true empêche les golems de fer de cibler ou de blesser les gardes royaux.
+  # Passez à false pour autoriser les combats garde contre golem ; les gardes riposteront alors normalement.
+  iron-golem-neutrality: true
   # Messages lors de la mort et du retour d'un garde.
   notifications: true
   attributes:
