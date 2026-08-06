@@ -29,9 +29,19 @@ mineur:
 
 # Paramètres des gardes royaux
 garde:
+  # Distance maximale entre le joueur et un garde avant rappel sécurisé.
   follow-radius: 20
+  # Distance à laquelle un garde cesse de recalculer un chemin vers son propriétaire.
   comfort-distance: 3
+  # Distance maximale entre le joueur et l'agresseur avant abandon de la poursuite.
+  protection-radius: 32
+  # Durée pendant laquelle une agression reste prioritaire.
+  threat-duration-seconds: 10
   respawn-delay-seconds: 20
+  # false protège les gardes contre les coups accidentels de leur propriétaire.
+  friendly-fire: false
+  # Messages lors de la mort et du retour d'un garde.
+  notifications: true
   attributes:
     max-health: 100.0
     attack-damage: 16.0

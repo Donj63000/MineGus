@@ -9,8 +9,10 @@ commands:
     description: Fait apparaître 5 loups + 2 golems
     usage: /army
   garde:
-    description: Invoque ou renvoie deux gardes royaux
-    usage: /garde
+    description: Invoque, renvoie ou inspecte deux gardes royaux
+    usage: |
+      /garde
+      /garde <invoquer|renvoyer|statut|aide>
     permission: mineplugin.garde.use
   ping:
     description: Répond « Pong ! »

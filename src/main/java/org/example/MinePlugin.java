@@ -112,6 +112,7 @@ public class MinePlugin extends JavaPlugin implements Listener {
         royalGuardManager = new RoyalGuardManager(this);
         if (getCommand("garde") != null) {
             getCommand("garde").setExecutor(royalGuardManager);
+            getCommand("garde").setTabCompleter(royalGuardManager);
         }
 
 

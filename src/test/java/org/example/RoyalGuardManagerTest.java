@@ -6,6 +6,7 @@ import org.bukkit.ChatColor;
 import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.World;
+import org.bukkit.damage.DamageSource;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.Husk;
 import org.bukkit.entity.LivingEntity;
@@ -31,6 +32,7 @@ import java.util.Deque;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -140,6 +142,36 @@ class RoyalGuardManagerTest {
     }
 
     @Test
+    void explicitSubcommandsAreIdempotentAndATypoNeverDismissesTheSquad() {
+        GuardFixture fixture = new GuardFixture();
+
+        manager.onCommand(fixture.owner, null, "garde", new String[0]);
+        manager.onCommand(fixture.owner, null, "garde", new String[]{"invoquer"});
+        manager.onCommand(fixture.owner, null, "garde", new String[]{"commande-inconnue"});
+
+        assertTrue(manager.hasActiveSquad(fixture.ownerId));
+        assertEquals(2, manager.activeGuardCount(fixture.ownerId));
+        assertEquals(2, guardFactory.requests.size());
+        verify(fixture.owner).sendMessage(ChatColor.RED + "Sous-commande inconnue.");
+
+        manager.onCommand(fixture.owner, null, "garde", new String[]{"renvoyer"});
+
+        assertFalse(manager.hasActiveSquad(fixture.ownerId));
+        verify(fixture.first.guard).remove();
+        verify(fixture.second.guard).remove();
+    }
+
+    @Test
+    void tabCompletionExposesTheSafeExplicitActions() {
+        GuardFixture fixture = new GuardFixture();
+
+        assertEquals(List.of("statut"),
+                manager.onTabComplete(fixture.owner, null, "garde", new String[]{"st"}));
+        assertEquals(List.of("invoquer", "renvoyer", "statut", "aide"),
+                manager.onTabComplete(fixture.owner, null, "garde", new String[]{""}));
+    }
+
+    @Test
     void failedInitialSpawnRollsBackThePartialDuoAndReportsTheFailure() {
         GuardFixture fixture = new GuardFixture();
         guardFactory.clearAvailable();
@@ -240,6 +272,61 @@ class RoyalGuardManagerTest {
     }
 
     @Test
+    void anAttackOnEitherGuardMakesTheWholeDuoDefendItself() {
+        GuardFixture fixture = new GuardFixture();
+        manager.onCommand(fixture.owner, null, "garde", new String[0]);
+        LivingEntity attacker = livingEntity(fixture.world);
+
+        EntityDamageByEntityEvent attack = mock(EntityDamageByEntityEvent.class);
+        when(attack.isCancelled()).thenReturn(false);
+        when(attack.getEntity()).thenReturn(fixture.first.guard);
+        when(attack.getDamager()).thenReturn(attacker);
+
+        manager.onGuardDamaged(attack);
+
+        verify(fixture.first.guard).setTarget(attacker);
+        verify(fixture.second.guard).setTarget(attacker);
+    }
+
+    @Test
+    void ownerFriendlyFireIsCancelledWithoutTurningTheGuardsAgainstTheirOwner() {
+        GuardFixture fixture = new GuardFixture();
+        manager.onCommand(fixture.owner, null, "garde", new String[0]);
+
+        EntityDamageByEntityEvent friendlyFire = mock(EntityDamageByEntityEvent.class);
+        when(friendlyFire.isCancelled()).thenReturn(false);
+        when(friendlyFire.getEntity()).thenReturn(fixture.first.guard);
+        when(friendlyFire.getDamager()).thenReturn(fixture.owner);
+
+        manager.onGuardFriendlyFire(friendlyFire);
+
+        verify(friendlyFire).setCancelled(true);
+        verify(fixture.first.guard, never()).setTarget(fixture.owner);
+        verify(fixture.second.guard, never()).setTarget(fixture.owner);
+    }
+
+    @Test
+    void damageSourceCausingEntityWinsOverTheDirectProjectile() {
+        GuardFixture fixture = new GuardFixture();
+        manager.onCommand(fixture.owner, null, "garde", new String[0]);
+        LivingEntity attacker = livingEntity(fixture.world);
+        Projectile directProjectile = mock(Projectile.class);
+        DamageSource damageSource = mock(DamageSource.class);
+        when(damageSource.getCausingEntity()).thenReturn(attacker);
+
+        EntityDamageByEntityEvent attack = mock(EntityDamageByEntityEvent.class);
+        when(attack.isCancelled()).thenReturn(false);
+        when(attack.getEntity()).thenReturn(fixture.owner);
+        when(attack.getDamager()).thenReturn(directProjectile);
+        when(attack.getDamageSource()).thenReturn(damageSource);
+
+        manager.onOwnerDamaged(attack);
+
+        verify(fixture.first.guard).setTarget(attacker);
+        verify(fixture.second.guard).setTarget(attacker);
+    }
+
+    @Test
     void guardFromAnotherOwnerIsHandledAsARealAttackerButTheTwinIsIgnored() {
         GuardFixture fixture = new GuardFixture();
         manager.onCommand(fixture.owner, null, "garde", new String[0]);
@@ -290,6 +377,25 @@ class RoyalGuardManagerTest {
     }
 
     @Test
+    void aTemporaryRespawnFailureIsAutomaticallyRetried() {
+        GuardFixture fixture = new GuardFixture();
+        manager.onCommand(fixture.owner, null, "garde", new String[0]);
+        manager.onGuardDeath(deathOf(fixture.first.guard));
+
+        guardFactory.clearAvailable();
+        server.getScheduler().performTicks(400);
+        assertEquals(3, guardFactory.requests.size());
+        assertEquals(1, manager.activeGuardCount(fixture.ownerId));
+
+        GuardDouble replacement = guard(fixture.world, fixture.ownerId, 0);
+        guardFactory.add(replacement.guard);
+        server.getScheduler().performTicks(400);
+
+        assertEquals(4, guardFactory.requests.size());
+        assertEquals(2, manager.activeGuardCount(fixture.ownerId));
+    }
+
+    @Test
     void dismissalAndDisconnectCancelPendingRespawns() {
         GuardFixture dismissed = new GuardFixture();
         manager.onCommand(dismissed.owner, null, "garde", new String[0]);
@@ -308,6 +414,31 @@ class RoyalGuardManagerTest {
         server.getScheduler().performTicks(400);
         assertEquals(4, guardFactory.requests.size());
         assertFalse(manager.hasActiveSquad(disconnected.ownerId));
+    }
+
+    @Test
+    void aNavigationFailureOnOneGuardDoesNotStopTheOtherGuard() {
+        manager.shutdown();
+        AtomicInteger navigationAttempts = new AtomicInteger();
+        manager = new RoyalGuardManager(plugin, (guard, target, speed) -> {
+            if (navigationAttempts.getAndIncrement() == 0) {
+                throw new IllegalStateException("Pathfinder temporairement indisponible");
+            }
+            return true;
+        }, false, guardFactory,
+                (owner, slot) -> owner.getLocation().clone().add(slot == 0 ? 2.0D : -2.0D, 0.0D, 0.0D));
+
+        GuardFixture fixture = new GuardFixture();
+        manager.onCommand(fixture.owner, null, "garde", new String[0]);
+        when(fixture.first.guard.getLocation()).thenReturn(
+                new Location(fixture.world, 10.0D, 64.0D, 0.0D));
+        when(fixture.second.guard.getLocation()).thenReturn(
+                new Location(fixture.world, -10.0D, 64.0D, 0.0D));
+
+        manager.followActiveSquads();
+
+        assertEquals(2, navigationAttempts.get());
+        verify(fixture.first.guard).teleport(any(Location.class));
     }
 
     @Test
@@ -335,6 +466,20 @@ class RoyalGuardManagerTest {
 
         verify(fixture.first.guard).teleport(any(Location.class));
         verify(fixture.first.guard).setFallDistance(0.0F);
+    }
+
+    @Test
+    void aRejectedTeleportIsNotReportedAsASuccessfulRecall() {
+        GuardFixture fixture = new GuardFixture();
+        manager.onCommand(fixture.owner, null, "garde", new String[0]);
+        when(fixture.first.guard.getLocation()).thenReturn(
+                new Location(fixture.world, 30.0D, 64.0D, 0.0D));
+        when(fixture.first.guard.teleport(any(Location.class))).thenReturn(false);
+
+        manager.followActiveSquads();
+
+        verify(fixture.first.guard).teleport(any(Location.class));
+        verify(fixture.first.guard, never()).setFallDistance(0.0F);
     }
 
     @Test
@@ -402,6 +547,41 @@ class RoyalGuardManagerTest {
     }
 
     @Test
+    void malformedRoyalMarkerIsRemovedWhenItsChunkLoads() {
+        Husk malformed = mock(Husk.class);
+        PersistentDataContainer pdc = mock(PersistentDataContainer.class);
+        when(malformed.getPersistentDataContainer()).thenReturn(pdc);
+        when(pdc.get(Keys.royalGuardType(), PersistentDataType.STRING))
+                .thenReturn(RoyalGuardManager.GUARD_TYPE);
+        when(malformed.isDead()).thenReturn(false);
+
+        EntitiesLoadEvent event = mock(EntitiesLoadEvent.class);
+        when(event.getEntities()).thenReturn(List.<Entity>of(malformed));
+
+        manager.onEntitiesLoad(event);
+
+        verify(malformed).remove();
+    }
+
+    @Test
+    void malformedRoyalMarkerCannotDropRoyalEquipment() {
+        Husk malformed = mock(Husk.class);
+        PersistentDataContainer pdc = mock(PersistentDataContainer.class);
+        when(malformed.getPersistentDataContainer()).thenReturn(pdc);
+        when(pdc.get(Keys.royalGuardType(), PersistentDataType.STRING))
+                .thenReturn(RoyalGuardManager.GUARD_TYPE);
+
+        List<ItemStack> drops = new ArrayList<>();
+        drops.add(mock(ItemStack.class));
+        EntityDeathEvent death = deathOf(malformed, drops);
+
+        manager.onGuardDeath(death);
+
+        assertTrue(drops.isEmpty());
+        verify(death).setDroppedExp(0);
+    }
+
+    @Test
     void invalidGuardIdentityIsNeverAcceptedAsARoyalGuard() {
         Husk noOwner = mock(Husk.class);
         PersistentDataContainer noOwnerPdc = mock(PersistentDataContainer.class);
@@ -463,6 +643,8 @@ class RoyalGuardManagerTest {
             when(owner.getUniqueId()).thenReturn(ownerId);
             when(owner.hasPermission("mineplugin.garde.use")).thenReturn(true);
             when(owner.isOnline()).thenReturn(true);
+            when(owner.isDead()).thenReturn(false);
+            when(owner.getName()).thenReturn("Testeur");
             when(owner.getWorld()).thenReturn(world);
             when(owner.getLocation()).thenReturn(location);
 
@@ -476,6 +658,7 @@ class RoyalGuardManagerTest {
         when(guard.getUniqueId()).thenReturn(UUID.randomUUID());
         when(guard.getWorld()).thenReturn(world);
         when(guard.getLocation()).thenReturn(new Location(world, 2.0D, 64.0D, 0.0D));
+        when(guard.teleport(any(Location.class))).thenReturn(true);
         when(guard.isValid()).thenReturn(true);
         when(guard.isDead()).thenReturn(false);
         when(guard.getPersistentDataContainer()).thenReturn(pdc);

@@ -26,7 +26,7 @@ Notes:
 ## Configuration
 Après le premier démarrage, éditez `plugins/MinePlugin/config.yml` :
 - `/mineur` : `stop-at-y` (Y cible), `default.pattern`, `default.speed`, `default.supports-every`, `default.torch-layers`, `default.use-barrel-master`, `branch.spacing`, `branch.gallery-width`, `limits.max-sessions-per-player`, `economy.*`.
-- `/garde` : `follow-radius` (distance maximale avant rappel), `comfort-distance` (distance de suivi), `respawn-delay-seconds` et les attributs sous `attributes.*`. Les valeurs invalides ou hors limites reviennent aux valeurs par défaut sûres.
+- `/garde` : `follow-radius` (distance maximale avant rappel), `comfort-distance` (distance de suivi), `protection-radius` (rayon de poursuite), `threat-duration-seconds`, `respawn-delay-seconds`, `friendly-fire`, `notifications` et les attributs sous `attributes.*`. Les valeurs invalides ou hors limites reviennent aux valeurs par défaut sûres.
 - `/eleveur` : limites d’animaux, temps de recharge, chances de loot cuit, prix en émeraudes.
 - `/village` : tailles des maisons/grille (`houseSmall`, `houseBig`, `roadHalf`, `spacing`, `plazaSize`, `rows`, `cols`, `wallGap`).
 
@@ -46,13 +46,13 @@ Référence par défaut : `src/main/resources/config.yml`. Modifiez seulement la
 - Invoque 5 loups apprivoisés et 2 golems nommés autour du joueur, protégés pendant 5 minutes avant disparition automatique.
 
 ### /garde (permission `mineplugin.garde.use`, accordée par défaut)
-- `/garde` est une commande bascule : la première utilisation invoque exactement deux gardes et la suivante les renvoie, y compris lorsqu’un respawn est en attente.
-- Les gardes sont des Husks vanilla nommés exactement `Garde Royale` ; ce ne sont pas des PNJ joueurs Steve, ce qui demanderait une dépendance externe.
+- `/garde` reste une commande bascule. Les variantes explicites `/garde invoquer`, `/garde renvoyer`, `/garde statut` et `/garde aide` évitent toutefois un renvoi accidentel et donnent l’état des respawns en attente.
+- Les gardes sont des Husks vanilla adultes nommés exactement `Garde Royale` ; ce ne sont pas des PNJ joueurs Steve, ce qui demanderait une dépendance externe.
 - Chaque garde porte une armure complète en netherite (Protection IV, Solidité III, Raccommodage) et une épée en netherite (Tranchant V, Solidité III, Raccommodage). Leur équipement et leur expérience ne sont jamais lâchés à la mort.
 - Ils ont 100 PV, 16 dégâts d’attaque, une vitesse de 0,35 et une résistance au recul de 0,6 par défaut. Ces valeurs sont configurables dans `garde.attributes`.
 - Ils suivent leur propriétaire ; s’ils changent de monde, se perdent, restent bloqués ou dépassent `garde.follow-radius` (20 blocs par défaut), ils sont rappelés près de lui sans dégâts de chute.
-- Lorsqu’un joueur protégé est blessé par des dégâts non annulés, les deux gardes ciblent son véritable agresseur, y compris en PvP et par projectile. La cible est abandonnée après 10 secondes sans nouvelle agression, ou si elle quitte le monde ou le rayon de protection.
-- Lorsqu’un garde meurt, il réapparaît après `garde.respawn-delay-seconds` (20 secondes par défaut), seulement si son duo est toujours actif et que le propriétaire est connecté. Les gardes sont supprimés à la déconnexion, au renvoi et à l’arrêt du plugin ; ils ne persistent pas après un redémarrage.
+- Lorsqu’un joueur protégé ou l’un de ses gardes est blessé par des dégâts non annulés, les deux gardes ciblent le véritable agresseur, y compris pour les dégâts indirects attribués au tireur. Les coups accidentels du propriétaire sont bloqués par défaut. La cible est abandonnée après la durée configurée, ou si elle quitte le monde ou `protection-radius`.
+- Lorsqu’un garde meurt, il réapparaît après `garde.respawn-delay-seconds` (20 secondes par défaut), seulement si son duo est toujours actif et que le propriétaire est connecté. Un échec temporaire d’apparition est automatiquement reprogrammé. Les gardes sont supprimés à la déconnexion, au renvoi et à l’arrêt du plugin ; ils ne persistent pas après un redémarrage.
 
 ### /mineur (permission `mineplugin.mineur.use`)
 - `/mineur` : donne le bâton « Sélecteur de mine ». Clique deux blocs au même Y pour créer automatiquement la mine (cadre, coffres, PNJ mineur, golems). Par défaut, le pattern `QUARRY` creuse jusqu’à `stop-at-y` puis enchaîne sur un tunnel infini 10×10.
