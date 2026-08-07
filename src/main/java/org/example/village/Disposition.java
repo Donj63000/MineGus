@@ -237,15 +237,22 @@ public final class Disposition {
                 z0 - 2,
                 z0 + 2,
                 y + 4,
+                Material.SPRUCE_PLANKS,
                 Material.SPRUCE_STAIRS,
                 Material.SPRUCE_SLAB
         );
 
-        // Seau suspendu sous le sommet réel de la couverture.
-        place(tasks, sb, x0, y + 6, z0, Material.CHAIN);
-        place(tasks, sb, x0, y + 5, z0, Material.CHAIN);
-        place(tasks, sb, x0, y + 4, z0, Material.CHAIN);
-        place(tasks, sb, x0, y + 3, z0, Material.CAULDRON);
+        /*
+         * Le seau est suspendu sous une traverse, pas à travers le noyau du
+         * toit. L'ancienne chaîne remplaçait trois blocs centraux de la
+         * couverture et recréait exactement le trou que le pavillon devait
+         * supprimer.
+         */
+        for (int dx = -2; dx <= 2; dx++) {
+            place(tasks, sb, x0 + dx, y + 3, z0, Material.SPRUCE_LOG);
+        }
+        place(tasks, sb, x0, y + 2, z0, Material.CHAIN);
+        place(tasks, sb, x0, y + 1, z0, Material.CAULDRON);
     }
 
     private static void buildBench(List<Runnable> tasks, World world, int x, int y, int z, BlockFace facing, TerrainManager.SetBlock sb) {

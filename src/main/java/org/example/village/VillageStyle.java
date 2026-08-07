@@ -87,7 +87,12 @@ public final class VillageStyle {
                 fence,
                 roofStairs,
                 Material.STONE_BRICK_WALL,
-                Material.GLASS_PANE
+                /*
+                 * Un bloc de verre plein s'encastre dans la maçonnerie et ne
+                 * dépend pas des connexions latérales des vitres fines. Cela
+                 * évite les baies visuellement ouvertes avec certains packs.
+                 */
+                Material.GLASS
         );
     }
 

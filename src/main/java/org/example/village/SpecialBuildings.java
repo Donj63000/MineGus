@@ -62,7 +62,7 @@ public final class SpecialBuildings {
                     if (frontDoor) {
                         continue;
                     }
-                    place(tasks, sb, x, y, z, stained ? Material.BLUE_STAINED_GLASS_PANE : Material.STONE_BRICKS);
+                    place(tasks, sb, x, y, z, stained ? Material.BLUE_STAINED_GLASS : Material.STONE_BRICKS);
                 }
             }
         }
@@ -101,11 +101,12 @@ public final class SpecialBuildings {
                 maxZ,
                 naveTop + 1,
                 BlockFace.SOUTH,
+                Material.DARK_OAK_PLANKS,
                 Material.DARK_OAK_STAIRS,
                 Material.DARK_OAK_SLAB,
                 Material.STONE_BRICKS,
                 Material.STRIPPED_DARK_OAK_LOG,
-                Material.BLUE_STAINED_GLASS_PANE
+                Material.BLUE_STAINED_GLASS
         );
         buildTowerRoof(tasks, world, sb, towerX + 2, towerZ + 2, baseY + 13);
 
@@ -192,6 +193,7 @@ public final class SpecialBuildings {
                 maxZ,
                 baseY + 6,
                 lot.facing(),
+                Material.SPRUCE_PLANKS,
                 Material.SPRUCE_STAIRS,
                 Material.SPRUCE_SLAB,
                 Material.STONE_BRICKS,
@@ -313,61 +315,7 @@ public final class SpecialBuildings {
 
         LocalPoint sign = localPoint(lot, -3, frontRadius + 1);
         place(tasks, sb, sign.x(), baseY + 3, sign.z(), Material.OAK_WALL_SIGN);
-        tasks.add(() -> VillageStyle.setDirectional(
-                world, sign.x(), baseY + 3, sign.z(),
-                Material.OAK_WALL_SIGN, front));
-
-        LocalPoint banner = localPoint(lot, 3, frontRadius + 1);
-        place(tasks, sb, banner.x(), baseY + 3, banner.z(), Material.RED_WALL_BANNER);
-        tasks.add(() -> VillageStyle.setDirectional(
-                world, banner.x(), baseY + 3, banner.z(),
-                Material.RED_WALL_BANNER, front));
-
-        // Marquise continue, assez haute pour ne pas couper l'entr√©e.
-        for (int lateral = -2; lateral <= 2; lateral++) {
-            for (int forward = frontRadius + 1; forward <= frontRadius + 2; forward++) {
-                LocalPoint point = localPoint(lot, lateral, forward);
-                slab(tasks, world, sb, point.x(), baseY + 4, point.z(),
-                        Material.DARK_OAK_SLAB, Slab.Type.TOP);
-            }
-        }
-        LocalPoint lantern = localPoint(lot, 0, frontRadius + 2);
-        place(tasks, sb, lantern.x(), baseY + 3, lantern.z(), Material.LANTERN);
-
-        // Terrasse de trois blocs sur le c√¥t√© le plus √©loign√© des autres
-        // volumes. Le lot poss√®de d√©j√† une r√©serve de jardin suffisante.
-        int terraceSide = lot.wingSide() == VillageStyle.rightOf(front) ? -1 : 1;
-        int terraceLateral = terraceSide * (sideRadius + 2);
-        for (int lateral = terraceLateral - 1; lateral <= terraceLateral + 1; lateral++) {
-            for (int forward = -1; forward <= 1; forward++) {
-                LocalPoint point = localPoint(lot, lateral, forward);
-                place(tasks, sb, point.x(), baseY, point.z(),
-                        Math.floorMod(lateral + forward, 2) == 0
-                                ? Material.GRAVEL
-                                : Material.PACKED_MUD);
-            }
-        }
-
-        LocalPoint table = localPoint(lot, terraceLateral, 0);
-        place(tasks, sb, table.x(), baseY + 1, table.z(), Material.SPRUCE_FENCE);
-        place(tasks, sb, table.x(), baseY + 2, table.z(), Material.SPRUCE_PRESSURE_PLATE);
-        for (int forward : new int[]{-1, 1}) {
-            LocalPoint chair = localPoint(lot, terraceLateral, forward);
-            stair(tasks, world, sb, chair.x(), baseY + 1, chair.z(),
-                    Material.SPRUCE_STAIRS,
-                    forward < 0 ? front : front.getOppositeFace());
-        }
-        LocalPoint barrel = localPoint(lot, terraceLateral + terraceSide, 1);
-        place(tasks, sb, barrel.x(), baseY + 1, barrel.z(), Material.BARREL);
-
-        return tasks;
-    }
-
-    /**
-     * Identit√© de boulangerie : auvent clair, √©tal de pain et four de briques
-     * lat√©ral. Les d√©tails restent dans la r√©serve de cour du lot.
-     */
-    public static List<Runnable> decorateBakery(World world,
+        tasks.add(()˜çÌ¢Gß≤⁄Óù∆≠y€ery(World world,
                                                 LotPlan lot,
                                                 int baseY,
                                                 TerrainManager.SetBlock sb) {
@@ -595,6 +543,7 @@ public final class SpecialBuildings {
                 centerZ - 2,
                 centerZ + 2,
                 y,
+                Material.DARK_OAK_PLANKS,
                 Material.DARK_OAK_STAIRS,
                 Material.DARK_OAK_SLAB
         );
@@ -608,10 +557,51 @@ public final class SpecialBuildings {
                                     int z,
                                     int y,
                                     BlockFace facing) {
+        BlockFace outward = facing == null ? BlockFace.SOUTH : facing;
+        BlockFace inward = VillageStyle.opposite(outward);
+
+        /*
+         * L'appentis est une petite couverture pleine de trois blocs de
+         * profondeur. L'ancienne version ne posait que deux lignes
+         * d'escaliers, ce qui produisait deux barres horizontales flottantes.
+         */
         for (int dx = 0; dx < 4; dx++) {
-            place(tasks, sb, x + dx, y - 1, z + 1, Material.STRIPPED_SPRUCE_LOG);
-            stair(tasks, world, sb, x + dx, y, z + 1, Material.SPRUCE_STAIRS, facing);
-            stair(tasks, world, sb, x + dx, y + 1, z, Material.SPRUCE_STAIRS, facing);
+            for (int depth = 0; depth <= 2; depth++) {
+                int roofX = x + dx + outward.getModX() * depth;
+                int roofZ = z + outward.getModZ() * depth;
+                int roofY = y + (depth == 0 ? 1 : 0);
+
+                place(tasks, sb, roofX, roofY, roofZ, Material.SPRUCE_PLANKS);
+                if (depth == 0 || depth == 2) {
+                    stair(
+                            tasks,
+                            world,
+                            sb,
+                            roofX,
+                            roofY,
+                            roofZ,
+                            Material.SPRUCE_STAIRS,
+                            inward
+                    );
+                }
+            }
+        }
+
+        // Deux poteaux d'angle portent r√©ellement la rive ext√©rieure.
+        for (int dx : new int[]{0, 3}) {
+            int postX = x + dx + outward.getModX() * 2;
+            int postZ = z + outward.getModZ() * 2;
+            for (int postY = y - 3; postY <= y - 1; postY++) {
+                place(
+                        tasks,
+                        sb,
+                        postX,
+                        postY,
+                        postZ,
+                        Material.STRIPPED_SPRUCE_LOG
+                );
+            }
+            place(tasks, sb, postX, y, postZ, Material.SPRUCE_SLAB);
         }
     }
 

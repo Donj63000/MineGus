@@ -38,6 +38,18 @@ class VillageStructureTest {
         );
         queue.forEach(Runnable::run);
 
+        int[] bounds = WallBuilder.outerBounds(
+                new Location(null, 0, 64, 0),
+                10,
+                10
+        );
+        assertEquals(-16, bounds[0]);
+        assertEquals(16, bounds[1]);
+        assertEquals(-16, bounds[2]);
+        assertEquals(16, bounds[3]);
+        assertEquals(Material.DARK_OAK_STAIRS,
+                blocks.get(key(-16, 78, -16)));
+
         assertTrue(blocks.values().contains(Material.LANTERN));
         assertTrue(blocks.values().contains(Material.CHAIN));
         assertTrue(blocks.values().contains(Material.DARK_OAK_FENCE));
@@ -46,14 +58,24 @@ class VillageStructureTest {
         assertTrue(blocks.values().contains(Material.STONE_BRICK_SLAB));
         assertTrue(blocks.values().contains(Material.IRON_BARS));
 
-        // Le passage reste libre sur toute la hauteur utile.
-        for (int y = 65; y <= 68; y++) {
-            assertEquals(Material.AIR, blocks.get(key(0, y, 10)));
+        /*
+         * Avec rz=10 et une épaisseur de trois blocs, le châtelet est centré
+         * sur z=11. Le passage conserve cinq blocs libres sur toute sa
+         * profondeur et la herse reste entièrement relevée.
+         */
+        for (int y = 65; y <= 69; y++) {
+            assertEquals(Material.AIR, blocks.get(key(0, y, 11)));
         }
-        // La herse est visible dans la galerie, mais ne bloque pas l'arche.
-        assertEquals(Material.IRON_BARS, blocks.get(key(0, 69, 12)));
+        assertEquals(Material.CHISELED_STONE_BRICKS,
+                blocks.get(key(0, 70, 15)));
+        assertEquals(Material.IRON_BARS,
+                blocks.get(key(0, 71, 14)));
+
+        // Les tours et leurs épis dominent nettement les courtines.
         assertTrue(blocks.keySet().stream()
-                .anyMatch(position -> yOf(position) >= 73));
+                .anyMatch(position -> yOf(position) >= 86));
+        assertTrue(blocks.values().contains(Material.DEEPSLATE_BRICKS));
+        assertTrue(blocks.values().contains(Material.GRAY_STAINED_GLASS));
     }
 
     @Test
@@ -75,6 +97,8 @@ class VillageStructureTest {
         assertEquals(Material.SPRUCE_TRAPDOOR, sprucePalette.shutter());
         assertEquals(Material.SPRUCE_FENCE, sprucePalette.fence());
         assertEquals(Material.OAK_PLANKS, sprucePalette.floor());
+        assertEquals(Material.GLASS, sprucePalette.window());
+        assertEquals(Material.GLASS, darkOakPalette.window());
     }
 
     @Test
@@ -98,14 +122,65 @@ class VillageStructureTest {
                 Material.SPRUCE_SLAB,
                 Material.WHITE_TERRACOTTA,
                 Material.STRIPPED_SPRUCE_LOG,
-                Material.GLASS_PANE
+                Material.GLASS
         );
         tasks.forEach(Runnable::run);
 
-        assertEquals(Material.SPRUCE_SLAB, blocks.get(key(0, 73, 0)));
-        assertEquals(Material.GLASS_PANE, blocks.get(key(0, 71, -4)));
-        assertEquals(Material.GLASS_PANE, blocks.get(key(0, 71, 4)));
-        assertFalse(blocks.keySet().stream().anyMatch(position -> yOf(position) > 73));
+        assertEquals(Material.SPRUCE_SLAB, blocks.get(key(0, 75, 0)));
+        assertEquals(Material.SPRUCE_PLANKS, blocks.get(key(0, 74, 0)));
+        assertEquals(Material.GLASS, blocks.get(key(0, 71, -4)));
+        assertEquals(Material.GLASS, blocks.get(key(0, 71, 4)));
+        assertFalse(blocks.keySet().stream()
+                .anyMatch(position -> yOf(position) > 75));
+
+        /*
+         * Chaque niveau du noyau est plein entre ses deux rampants. Ces blocs
+         * empêchent le ciel d'apparaître entre deux rangées d'escaliers.
+         */
+        for (int layer = 0; layer <= 4; layer++) {
+            assertTrue(blocks.containsKey(key(0, 70 + layer, 0)));
+        }
+    }
+
+    @Test
+    void hipRoofUsesSolidShrinkingCoreAndSupportedCap() {
+        Map<String, Material> blocks = new HashMap<>();
+        List<Runnable> tasks = new ArrayList<>();
+        TerrainManager.SetBlock setBlock =
+                (x, y, z, material) -> blocks.put(key(x, y, z), material);
+
+        VillageRoofBuilder.buildHip(
+                tasks,
+                null,
+                setBlock,
+                -2,
+                2,
+                -2,
+                2,
+                70,
+                Material.DARK_OAK_PLANKS,
+                Material.DARK_OAK_STAIRS,
+                Material.DARK_OAK_SLAB
+        );
+        tasks.forEach(Runnable::run);
+
+        for (int layer = 0; layer <= 3; layer++) {
+            int min = -3 + layer;
+            int max = 3 - layer;
+            for (int x = min; x <= max; x++) {
+                for (int z = min; z <= max; z++) {
+                    assertTrue(
+                            blocks.containsKey(key(x, 70 + layer, z)),
+                            "Trou détecté dans le noyau de toiture en croupe"
+                    );
+                }
+            }
+        }
+
+        assertEquals(Material.DARK_OAK_PLANKS,
+                blocks.get(key(0, 73, 0)));
+        assertEquals(Material.DARK_OAK_SLAB,
+                blocks.get(key(0, 74, 0)));
     }
 
     @Test
@@ -136,7 +211,9 @@ class VillageStructureTest {
         SpecialBuildings.buildChurch(null, lot, 64, setBlock)
                 .forEach(Runnable::run);
 
-        assertTrue(blocks.values().contains(Material.BLUE_STAINED_GLASS_PANE));
+        assertTrue(blocks.values().contains(Material.BLUE_STAINED_GLASS));
+        assertFalse(blocks.values().stream()
+                .anyMatch(material -> material.name().endsWith("_GLASS_PANE")));
         assertTrue(blocks.values().contains(Material.QUARTZ_BLOCK));
         assertTrue(blocks.values().contains(Material.SPRUCE_STAIRS));
         assertTrue(blocks.values().contains(Material.DARK_OAK_STAIRS));
@@ -230,7 +307,9 @@ class VillageStructureTest {
 
         assertTrue(values.contains(Material.SPRUCE_STAIRS));
         assertTrue(values.contains(Material.SPRUCE_SLAB));
-        assertTrue(values.contains(Material.GLASS_PANE));
+        assertTrue(values.contains(Material.GLASS));
+        assertFalse(values.stream()
+                .anyMatch(material -> material.name().endsWith("_GLASS_PANE")));
         assertTrue(values.contains(Material.SPRUCE_DOOR));
         assertTrue(values.contains(Material.LANTERN));
         assertTrue(values.contains(Material.RED_WALL_BANNER)

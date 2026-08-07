@@ -1,0 +1,368 @@
+diff --git a/src/main/java/org/example/Village.java b/src/main/java/org/example/Village.java
+index 73e788a5a8d80b4ac81b68e4ad2cc0a2a1978287..cccb05af179d378067dce182ca71a0d1bf461e68 100644
+--- a/src/main/java/org/example/Village.java
++++ b/src/main/java/org/example/Village.java
+@@ -891,7 +891,12 @@ public final class Village implements CommandExecutor {
+          */
+         int clearTop = Math.min(
+                 world.getMaxHeight() - 1,
+-                Math.max(highestY, targetY + 14)
++                /*
++                 * Les nouvelles tours et le chÃ¢telet culminent Ã  environ
++                 * vingt-deux blocs au-dessus du sol. La marge de vingt-quatre
++                 * blocs Ã©vite qu'un tronc ou une canopÃ©e traverse leur toiture.
++                 */
++                Math.max(highestY, targetY + 24)
+         );
+         for (int y = targetY + 1; y <= clearTop; y++) {
+             Block block = world.getBlockAt(x, y, z);
+diff --git a/src/main/java/org/example/village/Disposition.java b/src/main/java/org/example/village/Disposition.java
+index f647297e8fb4e9a4fd017be6b6e870cc37fd5457..018b86fc62e34849dda62da727c8c22c2cd81c08 100644
+--- a/src/main/java/org/example/village/Disposition.java
++++ b/src/main/java/org/example/village/Disposition.java
+@@ -237,15 +237,22 @@ public final class Disposition {
+                 z0 - 2,
+                 z0 + 2,
+                 y + 4,
++                Material.SPRUCE_PLANKS,
+                 Material.SPRUCE_STAIRS,
+                 Material.SPRUCE_SLAB
+         );
+ 
+-        // Seau suspendu sous le sommet rÃ©el de la couverture.
+-        place(tasks, sb, x0, y + 6, z0, Material.CHAIN);
+-        place(tasks, sb, x0, y + 5, z0, Material.CHAIN);
+-        place(tasks, sb, x0, y + 4, z0, Material.CHAIN);
+-        place(tasks, sb, x0, y + 3, z0, Material.CAULDRON);
++        /*
++         * Le seau est suspendu sous une traverse, pas Ã  travers le noyau du
++         * toit. L'ancienne chaÃ®ne remplaÃ§ait trois blocs centraux de la
++         * couverture et recrÃ©ait exactement le trou que le pavillon devait
++         * supprimer.
++         */
++        for (int dx = -2; dx <= 2; dx++) {
++            place(tasks, sb, x0 + dx, y + 3, z0, Material.SPRUCE_LOG);
++        }
++        place(tasks, sb, x0, y + 2, z0, Material.CHAIN);
++        place(tasks, sb, x0, y + 1, z0, Material.CAULDRON);
+     }
+ 
+     private static void buildBench(List<Runnable> tasks, World world, int x, int y, int z, BlockFace facing, TerrainManager.SetBlock sb) {
+diff --git a/src/main/java/org/example/village/HouseBuilder.java b/src/main/java/org/example/village/HouseBuilder.java
+index 8b8a8af5b5b5e7e102e2e3bc94b11fb8efd39bc1..abba6ef9d6b66f76ff79adbc7bffb276312d5b3d 100644
+--- a/src/main/java/org/example/village/HouseBuilder.java
++++ b/src/main/java/org/example/village/HouseBuilder.java
+@@ -40,12 +40,22 @@ public final class HouseBuilder {
+ 
+         VillageStyle.Palette palette = VillageStyle.medievalPalette(spec.accentMaterial());
+ 
++        /*
++         * Deux niveaux habitables demandent sept blocs de faÃ§ade : quatre pour
++         * le rez-de-chaussÃ©e, deux pour la baie haute et un bandeau sous toit.
++         * Plusieurs variantes historiques ne dÃ©claraient que cinq ou six
++         * blocs ; leurs fenÃªtres supÃ©rieures Ã©taient alors coupÃ©es par le toit.
++         */
++        int effectiveWallHeight = spec.twoStory()
++                ? Math.max(7, spec.wallHeight())
++                : Math.max(4, spec.wallHeight());
++
+         HouseVolume main = new HouseVolume(
+                 lot.buildX(),
+                 lot.buildZ(),
+                 lot.footprintWidth(),
+                 lot.footprintDepth(),
+-                spec.wallHeight(),
++                effectiveWallHeight,
+                 spec.roofStyle()
+         );
+ 
+@@ -503,17 +513,32 @@ public final class HouseBuilder {
+                     if (!perimeter(x, z, volume)) {
+                         continue;
+                     }
+-                    boolean corner = corner(x, z, volume);
++                    boolean volumeCorner = corner(x, z, volume);
+                     boolean lowerBand = y == baseY + 1;
+                     boolean beamLine = y == baseY + volume.wallHeight();
+-                    if (corner || lowerBand || beamLine || framePattern(x, z, y, volume, volumeIndex)) {
++                    boolean window = shouldWindow(
++                            x,
++                            y,
++                            z,
++                            volume,
++                            baseY,
++                            facing,
++                            frontVolume,
++                            spec.twoStory()
++                    );
++
++                    /*
++                     * Les baies ont prioritÃ© sur le colombage dÃ©coratif. Dans
++                     * l'ancienne boucle, une poutre calculÃ©e sur les mÃªmes
++                     * coordonnÃ©es remplaÃ§ait alÃ©atoirement un demi-vitrage et
++                     * produisait les formes en L visibles sur les faÃ§ades.
++                     */
++                    if (volumeCorner || lowerBand || beamLine) {
+                         place(tasks, sb, x, y, z, palette.timber());
+-                    } else if (shouldWindow(x, y, z, volume, baseY, facing, frontVolume, spec.twoStory())) {
++                    } else if (window) {
+                         place(tasks, sb, x, y, z, palette.window());
+ 
+-                        // Une jardiniÃ¨re par baie de deux blocs, pas une par
+-                        // bloc de vitrage. Cela supprime les dalles et plantes
+-                        // empilÃ©es qui coupaient les fenÃªtres en deux.
++                        // Une jardiniÃ¨re par baie verticale de deux blocs.
+                         int relativeY = y - baseY;
+                         if (relativeY == 2 || relativeY == 5) {
+                             buildWindowBox(
+@@ -528,6 +553,15 @@ public final class HouseBuilder {
+                                     volumeIndex + x + z
+                             );
+                         }
++                    } else if (framePattern(
++                            x,
++                            z,
++                            y,
++                            baseY,
++                            volume,
++                            volumeIndex
++                    )) {
++                        place(tasks, sb, x, y, z, palette.timber());
+                     } else {
+                         place(tasks, sb, x, y, z, palette.wallFill());
+                     }
+@@ -584,7 +618,7 @@ public final class HouseBuilder {
+                                     HouseVolume main,
+                                     int baseY,
+                                     VillageStyle.Palette palette) {
+-        int beamY = baseY + lot.houseSpec().wallHeight();
++        int beamY = baseY + main.wallHeight();
+         BlockFace left = VillageStyle.leftOf(lot.facing());
+         BlockFace right = VillageStyle.rightOf(lot.facing());
+ 
+@@ -1114,6 +1148,7 @@ public final class HouseBuilder {
+                                     VillageStyle.Palette palette) {
+         int roofBaseY = baseY + main.wallHeight() + 2;
+         BlockFace front = lot.facing();
++        BlockFace back = VillageStyle.opposite(front);
+         BlockFace left = VillageStyle.leftOf(front);
+         BlockFace right = VillageStyle.rightOf(front);
+ 
+@@ -1128,26 +1163,175 @@ public final class HouseBuilder {
+             default -> main.centerZ();
+         };
+ 
+-        // FaÃ§ade de lucarne en trois blocs : montant, vitrage, montant.
+-        place(tasks, sb,
+-                frontX + left.getModX(), roofBaseY,
+-                frontZ + left.getModZ(), palette.timber());
+-        place(tasks, sb, frontX, roofBaseY, frontZ, palette.window());
+-        place(tasks, sb,
+-                frontX + right.getModX(), roofBaseY,
+-                frontZ + right.getModZ(), palette.timber());
+-        slab(tasks, world, sb, frontX, roofBaseY - 1, frontZ,
+-                palette.roofSlab(), Slab.Type.TOP);
++        /*
++         * La lucarne est un vrai petit volume de trois blocs de profondeur :
++         * faÃ§ade vitrÃ©e, joues latÃ©rales, fond et couverture. L'ancienne
++         * version ne contenait qu'une rangÃ©e de trois blocs et deux escaliers ;
++         * depuis le cÃ´tÃ©, on regardait directement Ã  travers.
++         */
++        for (int depth = 0; depth <= 2; depth++) {
++            int centerX = frontX + back.getModX() * depth;
++            int centerZ = frontZ + back.getModZ() * depth;
++            int leftX = centerX + left.getModX();
++            int leftZ = centerZ + left.getModZ();
++            int rightX = centerX + right.getModX();
++            int rightZ = centerZ + right.getModZ();
++
++            // Plancher continu raccordÃ© Ã  la couverture principale.
++            place(
++                    tasks,
++                    sb,
++                    centerX,
++                    roofBaseY - 1,
++                    centerZ,
++                    palette.roofBlock()
++            );
++            place(
++                    tasks,
++                    sb,
++                    leftX,
++                    roofBaseY - 1,
++                    leftZ,
++                    palette.roofBlock()
++            );
++            place(
++                    tasks,
++                    sb,
++                    rightX,
++                    roofBaseY - 1,
++                    rightZ,
++                    palette.roofBlock()
++            );
++
++            // Joues latÃ©rales fermÃ©es.
++            for (int dy = 0; dy <= 1; dy++) {
++                place(
++                        tasks,
++                        sb,
++                        leftX,
++                        roofBaseY + dy,
++                        leftZ,
++                        dy == 0 ? palette.timber() : palette.wallFill()
++                );
++                place(
++                        tasks,
++                        sb,
++                        rightX,
++                        roofBaseY + dy,
++                        rightZ,
++                        dy == 0 ? palette.timber() : palette.wallFill()
++                );
++            }
+ 
+-        // Petit pignon correctement orientÃ© pour les quatre faÃ§ades.
+-        stair(tasks, world, sb,
+-                frontX + left.getModX(), roofBaseY + 1,
+-                frontZ + left.getModZ(), palette.roofStairs(), left);
+-        stair(tasks, world, sb,
+-                frontX + right.getModX(), roofBaseY + 1,
+-                frontZ + right.getModZ(), palette.roofStairs(), right);
+-        slab(tasks, world, sb, frontX, roofBaseY + 2, frontZ,
+-                palette.roofSlab(), Slab.Type.TOP);
++            if (depth == 0) {
++                // Baie verticale en verre plein, encadrÃ©e par les montants.
++                place(
++                        tasks,
++                        sb,
++                        centerX,
++                        roofBaseY,
++                        centerZ,
++                        palette.window()
++                );
++                place(
++                        tasks,
++                        sb,
++                        centerX,
++                        roofBaseY + 1,
++                        centerZ,
++                        palette.window()
++                );
++            } else if (depth == 2) {
++                // Le fond ferme le volume cÃ´tÃ© faÃ®tage.
++                place(
++                        tasks,
++                        sb,
++                        centerX,
++                        roofBaseY,
++                        centerZ,
++                        palette.timber()
++                );
++                place(
++                        tasks,
++                        sb,
++                        centerX,
++                        roofBaseY + 1,
++                        centerZ,
++                        palette.wallFill()
++                );
++            }
++
++            /*
++             * Noyau plein sous les rampants : les escaliers latÃ©raux montent
++             * vers le centre, puis une dalle soutenue termine le faÃ®tage.
++             */
++            place(
++                    tasks,
++                    sb,
++                    leftX,
++                    roofBaseY + 2,
++                    leftZ,
++                    palette.roofBlock()
++            );
++            place(
++                    tasks,
++                    sb,
++                    centerX,
++                    roofBaseY + 2,
++                    centerZ,
++                    palette.roofBlock()
++            );
++            place(
++                    tasks,
++                    sb,
++                    rightX,
++                    roofBaseY + 2,
++                    rightZ,
++                    palette.roofBlock()
++            );
++            stair(
++                    tasks,
++                    world,
++                    sb,
++                    leftX,
++                    roofBaseY + 2,
++                    leftZ,
++                    palette.roofStairs(),
++                    right
++            );
++            stair(
++                    tasks,
++                    world,
++                    sb,
++                    rightX,
++                    roofBaseY + 2,
++                    rightZ,
++                    palette.roofStairs(),
++                    left
++            );
++            slab(
++                    tasks,
++                    world,
++                    sb,
++                    centerX,
++                    roofBaseY + 3,
++                    centerZ,
++                    palette.roofSlab(),
++                    Slab.Type.BOTTOM
++            );
++        }
++
++        // Appui saillant sous la baie, visuellement portÃ© par la toiture.
++        slab(
++                tasks,
++                world,
++                sb,
++                frontX,
++                roofBaseY - 1,
++                frontZ,
++                palette.roofSlab(),
++                Slab.Type.BOTTOM
++        );
+     }
+ 
+     private static void buildRoof(List<Runnable> tasks,
+@@ -1183,6 +1367,7 @@ public final class HouseBuilder {
+                 volume.maxZ(),
+                 roofY,
+                 facing,
++                palette.roofBlock(),
+                 palette.roofStairs(),
+                 palette.roofSlab(),
+                 palette.wallFill(),
+@@ -1206,6 +1391,7 @@ public final class HouseBuilder {
+                 volume.minZ(),
+                 volume.maxZ(),
+                 roofY,
++                palette.roofBlock(),
+                 palette.roofStairs(),
+                 palette.roofSlab()
+         );
+@@ -1218,75 +1404,196 @@ public final class HouseBuilder {
+                                  int roofY,
+                                  BlockFace riseFrom,
+                                  VillageStyle.Palette palette) {
+-        boolean alongZ = riseFrom == BlockFace.NORTH
+-                || riseFrom == BlockFace.SOUTH;
++        BlockFace lowSide = switch ß¾µêÚ$z{-®éÜj×FW&–Âå5DôäUô%$”4µ0¢²¢ÖFW&–Âä4ô$$ÄU5DôäP¢²“°¢°¢ÖFW&–ÂÖFW&–Ã°¢Ò–b„ÖF‚æ'2†G‚’ÓÒtDUô„Äeõt”ED‚’°¢ÒÖFW&–ÂÒÖF‚æfÆö÷$ÖöB‡‚²¢Â"’ÓÒ ¢ÒòÖFW&–Âä4ô$$ÄU5DôäP¢²–b„ÖF‚æ'2†G‚’ÓÒ$ô4…ô„Äeõt”ED‚’°¢²ÖFW&–ÂÒÖF‚æfÆö÷$ÖöB‡‚²¢Â2’ÓÒ ¢²òÖFW&–ÂåôÄ•4„TEôäDU4•DP¢¢ÖFW&–Âå5DôäUô%$”4µ3°¢ÒVÇ6R°¢ÒÖFW&–ÂÒÖF‚æfÆö÷$ÖöB‡‚¢r²¢¢3ÂR’ÓÒ ¢ÒòÖFW&–ÂåôÄ•4„TEôäDU4•DP¢Ò¢ÖFW&–Âäu$dTÃ°¢²–çB6VÆV7F÷"ÒÖF‚æfÆö÷$ÖöB€¢²‚¢r²¢¢3À¢²p¢²“°¢²ÖFW&–ÂÒ7v—F6‚‡6VÆV7F÷"’°¢²66RÓâÖFW&–ÂåôÄ•4„TEôäDU4•DS°¢²66RÓâÖFW&–Âä4ô$$ÄU5DôäS°¢²66R"ÓâÖFW&–ÂääDU4•DS°¢²FVfVÇBÓâÖFW&–Âäu$dTÃ°¢²Ó°¢Ð¢°¢ÖFW&–Âf–æÄÖFW&–ÂÒÖFW&–Ã°¢ÒVWVRæFB‚‚’Óâ6WD&Æö6²ç6WB‡‚Â&6U’Âg¢Âf–æÄÖFW&–Â’“°¢²Æ6R‡VWVRÂ6WD&Æö6²À¢²‚À¢²&6U’À¢²g¢À¢²f–æÄÖFW&–À¢²“°¢Ð¢Ð¢°¢²òò&÷&æW2&76W2V’6G&VçBÂvVçG,:–R6ç2|:¦æW"ÆW2¦÷VWW'2à¢²f÷"†–çBG‚¢æWr–çEµ×°¢²Ô$ô4…ô„Äeõt”ED‚À¢²$ô4…ô„Äeõt”ED€¢²Ò’°¢²–çB‚Ò6VçFW%‚²Gƒ°¢²Æ6R‡VWVRÂ6WD&Æö6²À¢²‚À¢²&6U’²À¢²VæE¢Ò"À¢²ÖFW&–Âå5DôäUô%$”4µõtÄÀ¢²“°¢²Æ6R‡VWVRÂ6WD&Æö6²À¢²‚À¢²&6U’²"À¢²VæE¢Ò"À¢²ÖFW&–ÂäÄåDU$à¢²“°¢²Ð¢Ð¢ ¢Ò&—fFR7FF–2fö–BFEF÷6Æ"…VWVSÅ'Vææ&ÆSâVWVRÀ¢Òv÷&ÆBv÷&ÆBÀ¢ÒFW'&–äÖævW"å6WD&Æö6²6WD&Æö6²À¢Ò–çB‚À¢Ò–çB’À¢Ò–çB¢’°¢ÒVWVRæFB‚‚’Óâ6WD&Æö6²ç6WB‡‚Â’Â¢ÂÖFW&–Âå5DôäUô%$”4µõ4Ä"’“°¢²&—fFR7FF–2fö–BÆ6R…VWVSÅ'Vææ&ÆSâVWVRÀ¢²FW'&–äÖævW"å6WD&Æö6²6WD&Æö6²À¢²–çB‚À¢²–çB’À¢²–çB¢À¢²ÖFW&–ÂÖFW&–Â’°¢²VWVRæFB‚‚’Óâ6WD&Æö6²ç6WB‡‚Â’Â¢ÂÖFW&–Â’“°¢²Ð¢°¢²&—fFR7FF–2fö–B7F—"…VWVSÅ'Vææ&ÆSâVWVRÀ¢²v÷&ÆBv÷&ÆBÀ¢²FW'&–äÖævW"å6WD&Æö6²6WD&Æö6²À¢²–çB‚À¢²–çB’À¢²–çB¢À¢²ÖFW&–ÂÖFW&–ÂÀ¢²&Æö6´f6Rf6–ærÀ¢²7F—'2ä†Æb†ÆbÀ¢²7F—'2å6†R6†R’°¢²Æ6R‡VWVRÂ6WD&Æö6²Â‚Â’Â¢ÂÖFW&–Â“°¢²VWVRæFB‚‚’Óâf–ÆÆvU7G–ÆRç6WE7F—"€¢²v÷&ÆBÀ¢²‚À¢²’À¢²¢À¢²ÖFW&–ÂÀ¢²f6–ærÀ¢²†ÆbÀ¢²6†P¢²’“°¢²Ð¢°¢²&—fFR7FF–2fö–B6Æ"…VWVSÅ'Vææ&ÆSâVWVRÀ¢²v÷&ÆBv÷&ÆBÀ¢²FW'&–äÖævW"å6WD&Æö6²6WD&Æö6²À¢²–çB‚À¢²–çB’À¢²–çB¢À¢²ÖFW&–ÂÖFW&–ÂÀ¢²6Æ"åG—RG—R’°¢²Æ6R‡VWVRÂ6WD&Æö6²Â‚Â’Â¢ÂÖFW&–Â“°¢VWVRæFB‚‚’Óâf–ÆÆvU7G–ÆRç6WE6Æ"€¢Òv÷&ÆBÂ‚Â’Â¢À¢ÒÖFW&–Âå5DôäUô%$”4µõ4Ä"À¢Ò6Æ"åG—RåDõ ¢²v÷&ÆBÀ¢²‚À¢²’À¢²¢À¢²ÖFW&–ÂÀ¢²G—P¢’“°¢Ð¢ ¢²&—fFR7FF–2&ööÆVâÖW&ÆöäB†–çB6ö÷&F–æFR’°¢²&WGW&âÖF‚æfÆö÷$ÖöB†6ö÷&F–æFRÂB’ÃÒ°¢²Ð¢°¢²&—fFR7FF–2&ööÆVâ—56Æ—D6ö÷&F–æFR†–çB‚À¢²–çB¢À¢²–çBÖ–å‚À¢²–çBÖ…‚’°¢²&WGW&âÖF‚æfÆö÷$ÖöB€¢²†—46ö÷&F–æFR‡‚Â¢ÂÖ–å‚ÂÖ…‚’À¢²¢²’ÓÒC°¢²Ð¢°¢²&—fFR7FF–2ÖFW&–ÂvÆ·v•7FöæR†–çB‚Â–çB¢’°¢²&WGW&âÖF‚æfÆö÷$ÖöB‡‚¢2²¢¢rÂ’’ÓÒ ¢²òÖFW&–ÂäÔõ55•õ5DôäUô%$”4µ0¢²¢ÖFW&–ÂåôÄ•4„TEôäDU4•DS°¢²Ð¢°¢²&—fFR7FF–2ÖFW&–Âf÷VæFF–öå7FöæR†–çB‚Â–çB’Â–çB¢’°¢²–çB6VÆV7F÷"ÒÖF‚æfÆö÷$ÖöB€¢²‚¢’²’¢²¢¢#2À¢²p¢²“°¢²&WGW&â6VÆV7F÷"ÃÒ¢²òÖFW&–ÂäDTU4ÄDUô%$”4µ0¢²¢ÖFW&–Âä4ô$$ÄTEôDTU4ÄDS°¢²Ð¢°¢&—fFR7FF–2ÖFW&–ÂGFW&æVE7FöæR„ÖFW&–Â&–Ö'’À¢–çB‚À¢–çB’À¢–çB¢’°¢Ò–çB6VÆV7F÷"ÒÖF‚æfÆö÷$ÖöB‡‚¢3²’¢2²¢¢rÂ#2“°¢Ò–b‡6VÆV7F÷"ÓÒÇÂ6VÆV7F÷"ÓÒr’°¢Ò&WGW&âÖFW&–ÂäÔõ55•õ5DôäUô%$”4µ3°¢ÒÐ¢Ò–b‡6VÆV7F÷"ÓÒ2’°¢Ò&WGW&âÖFW&–Âä5$4´TEõ5DôäUô%$”4µ3°¢ÒÐ¢Ò–b‡6VÆV7F÷"ÓÒ’°¢Ò&WGW&âÖFW&–Âä4ô$$ÄU5DôäS°¢ÒÐ¢Ò&WGW&â&–Ö'’ÓÒçVÆÂòÖFW&–Âå5DôäUô%$”4µ2¢&–Ö'“°¢²–çB6VÆV7F÷"ÒÖF‚æfÆö÷$ÖöB€¢²‚¢3²’¢2²¢¢rÀ¢²#¢²“°¢²&WGW&â7v—F6‚‡6VÆV7F÷"’°¢²66RÂrÓâÖFW&–ÂäÔõ55•õ5DôäUô%$”4µ3°¢²66R2ÓâÖFW&–Âä5$4´TEõ5DôäUô%$”4µ3°¢²66RÓâÖFW&–Âä4ô$$ÄU5DôäS°¢²66RrÓâÖFW&–ÂääDU4•DS°¢²66R#2ÓâÖFW&–ÂäDTU4ÄDUô%$”4µ3°¢²FVfVÇBÓâ&–Ö'’ÓÒçVÆÀ¢²òÖFW&–Âå5DôäUô%$”4µ0¢²¢&–Ö'“°¢²Ó°¢Ð¢ ¢&—fFR7FF–2&ööÆVâ—4÷WFW$f6R†–çB‚À¤ÓCsBÃr³csbÃ3V&Æ–2f–æÂ6Æ72vÆÄ'V–ÆFW"°¢–çBÖ…‚À¢–çBÖ–å¢À¢–çBÖ…¢’°¢Ò&WGW&â‚ÓÒÖ–å‚ÇÂ‚ÓÒÖ…‚ÇÂ¢ÓÒÖ–å¢ÇÂ¢ÓÒÖ…£°¢²&WGW&â‚ÓÒÖ–å€¢²ÇÂ‚ÓÒÖ…€¢²ÇÂ¢ÓÒÖ–å ¢²ÇÂ¢ÓÒÖ…£°¢²Ð¢°¢²&—fFR7FF–2&Æö6´f6R÷WGv&Df6R†–çB‚À¢²–çB¢À¢²–çBÖ–å‚À¢²–çBÖ…‚À¢²–çBÖ–å¢À¢²–çBÖ…¢’°¢²–b‡‚ÓÒÖ–å‚’°¢²&WGW&â&Æö6´f6RåtU5C°¢²Ð¢²–b‡‚ÓÒÖ…‚’°¢²&WGW&â&Æö6´f6RäT5C°¢²Ð¢²–b‡¢ÓÒÖ–å¢’°¢²&WGW&â&Æö6´f6Rääõ%Dƒ°¢²Ð¢²–b‡¢ÓÒÖ…¢’°¢²&WGW&â&Æö6´f6Rå4õUDƒ°¢²Ð¢²&WGW&â&Æö6´f6Rå4TÄc°¢Ð¢ ¢&—fFR7FF–2–çB†—46ö÷&F–æFR†–çB‚À¤ÓCƒ2ÃB³s’ÃV&Æ–2f–æÂ6Æ72vÆÄ'V–ÆFW"°¢–çBÖ…‚’°¢&WGW&â‚ÓÒÖ–å‚ÇÂ‚ÓÒÖ…‚ò¢¢ƒ°¢Ð¢°¢²&—fFR7FF–2&ööÆVâ6&F–æÂ„&Æö6´f6Rf6R’°¢²&WGW&âf6RÓÒ&Æö6´f6Rääõ%D€¢²ÇÂf6RÓÒ&Æö6´f6Rå4õUD€¢²ÇÂf6RÓÒ&Æö6´f6RäT5@¢²ÇÂf6RÓÒ&Æö6´f6RåtU5C°¢²Ð¢Ð¦F–fbÒÖv—B÷7&2÷FW7Bö¦fö÷&röW†×ÆR÷f–ÆÆvRõf–ÆÆvU7G'V7GW&UFW7Bæ¦f"÷7&2÷FW7Bö¦fö÷&röW†×ÆR÷f–ÆÆvRõf–ÆÆvU7G'V7GW&UFW7Bæ¦f¦–æFW‚C##3†C†Fcs66SsSfSsSvff&SSc##“#&3C’âãSF&6S#“c#†C&3&C†Sff3–3CFfV#f#cSsBcC@¢ÒÒÒ÷7&2÷FW7Bö¦fö÷&röW†×ÆR÷f–ÆÆvRõf–ÆÆvU7G'V7GW&UFW7Bæ¦f¢²²²"÷7&2÷FW7Bö¦fö÷&röW†×ÆR÷f–ÆÆvRõf–ÆÆvU7G'V7GW&UFW7Bæ¦f¤Ó3‚Ãb³3‚Ã‚6Æ72f–ÆÆvU7G'V7GW&UFW7B°¢“°¢VWVRæf÷$V6‚…'Vææ&ÆS£§'Vâ“°¢ ¢²–çEµÒ&÷VæG2ÒvÆÄ'V–ÆFW"æ÷WFW$&÷VæG2€¢²æWrÆö6F–öâ†çVÆÂÂÂcBÂ’À¢²À¢² ¢²“°¢²76W'DWVÇ2‚ÓbÂ&÷VæG5³Ò“°¢²76W'DWVÇ2ƒbÂ&÷VæG5³Ò“°¢²76W'DWVÇ2‚ÓbÂ&÷VæG5³%Ò“°¢²76W'DWVÇ2ƒbÂ&÷VæG5³5Ò“°¢²76W'DWVÇ2„ÖFW&–ÂäD$µôôµõ5D•%2À¢²&Æö6·2ævWB†¶W’‚ÓbÂs‚ÂÓb’’“°¢°¢76W'EG'VR†&Æö6·2çfÇVW2‚’æ6öçF–ç2„ÖFW&–ÂäÄåDU$â’“°¢76W'EG'VR†&Æö6·2çfÇVW2‚’æ6öçF–ç2„ÖFW&–Âä4„”â’“°¢76W'EG'VR†&Æö6·2çfÇVW2‚’æ6öçF–ç2„ÖFW&–ÂäD$µôôµôdTä4R’“°¤ÓCbÃB³S‚Ã#B6Æ72f–ÆÆvU7G'V7GW&UFW7B°¢76W'EG'VR†&Æö6·2çfÇVW2‚’æ6öçF–ç2„ÖFW&–Âå5DôäUô%$”4µõ4Ä"’“°¢76W'EG'VR†&Æö6·2çfÇVW2‚’æ6öçF–ç2„ÖFW&–Âä•$ôåô$%2’“°¢ ¢ÒòòÆR76vR&W7FRÆ–'&R7W"F÷WFRÆ†WFWW"WF–ÆRà¢Òf÷"†–çB’ÒcS²’ÃÒcƒ²’²²’°¢Ò76W'DWVÇ2„ÖFW&–Âä•"Â&Æö6·2ævWB†¶W’ƒÂ’Â’’“°¢²ò ¢²¢fV2'£ÓWBVæR:——76WW"FRG&ö—2&Æö72ÂÆR6Œ:'FVÆWBW7B6VçG,:¢²¢7W"£ÓâÆR76vR6öç6W'fR6–ç&Æö72Æ–'&W27W"F÷WFR6¢²¢&öföæFWW"WBÆ†W'6R&W7FRVçFœ:‡&VÖVçB&VÆWl:–Rà¢²¢ð¢²f÷"†–çB’ÒcS²’ÃÒc“²’²²’°¢²76W'DWVÇ2„ÖFW&–Âä•"Â&Æö6·2ævWB†¶W’ƒÂ’Â’’“°¢Ð¢ÒòòÆ†W'6RW7Bf—6–&ÆRFç2ÆvÆW&–RÂÖ—2æR&Æ÷VR2Âv&6†Rà¢Ò76W'DWVÇ2„ÖFW&–Âä•$ôåô$%2Â&Æö6·2ævWB†¶W’ƒÂc’Â"’’“°¢²76W'DWVÇ2„ÖFW&–Âä4„•4TÄTEõ5DôäUô%$”4µ2À¢²&Æö6·2ævWB†¶W’ƒÂsÂR’’“°¢²76W'DWVÇ2„ÖFW&–Âä•$ôåô$%2À¢²&Æö6·2ævWB†¶W’ƒÂsÂB’’“°¢°¢²òòÆW2F÷W'2WBÆWW'2:——2FöÖ–æVçBæWGFVÖVçBÆW26÷W'F–æW2à¢76W'EG'VR†&Æö6·2æ¶W•6WB‚’ç7G&VÒ‚¢Òæç”ÖF6‚‡÷6—F–öâÓâ”öb‡÷6—F–öâ’ãÒs2’“°¢²æç”ÖF6‚‡÷6—F–öâÓâ”öb‡÷6—F–öâ’ãÒƒb’“°¢²76W'EG'VR†&Æö6·2çfÇVW2‚’æ6öçF–ç2„ÖFW&–ÂäDTU4ÄDUô%$”4µ2’“°¢²76W'EG'VR†&Æö6·2çfÇVW2‚’æ6öçF–ç2„ÖFW&–Âäu$•õ5D”äTEôtÄ52’“°¢Ð¢ ¢FW7@¤ÓsRÃb³“rÃ‚6Æ72f–ÆÆvU7G'V7GW&UFW7B°¢76W'DWVÇ2„ÖFW&–Âå5%T4UõE$Dôõ"Â7'V6UÆWGFRç6‡WGFW"‚’“°¢76W'DWVÇ2„ÖFW&–Âå5%T4UôdTä4RÂ7'V6UÆWGFRæfVæ6R‚’“°¢76W'DWVÇ2„ÖFW&–ÂäôµõÄäµ2Â7'V6UÆWGFRæfÆö÷"‚’“°¢²76W'DWVÇ2„ÖFW&–ÂätÄ52Â7'V6UÆWGFRçv–æF÷r‚’“°¢²76W'DWVÇ2„ÖFW&–ÂätÄ52ÂF&´öµÆWGFRçv–æF÷r‚’“°¢Ð¢ ¢FW7@¤Ó“‚ÃB³#"ÃcR6Æ72f–ÆÆvU7G'V7GW&UFW7B°¢ÖFW&–Âå5%T4Uõ4Ä"À¢ÖFW&–Âåt„•DUõDU%$4õEDÀ¢ÖFW&–Âå5E$•TEõ5%T4UôÄôrÀ¢ÒÖFW&–ÂätÄ55õäP¢²ÖFW&–ÂätÄ50¢“°¢F6·2æf÷$V6‚…'Vææ&ÆS£§'Vâ“°¢ ¢Ò76W'DWVÇ2„ÖFW&–Âå5%T4Uõ4Ä"Â&Æö6·2ævWB†¶W’ƒÂs2Â’’“°¢Ò76W'DWVÇ2„ÖFW&–ÂätÄ55õäRÂ&Æö6·2ævWB†¶W’ƒÂsÂÓB’’“°¢Ò76W'DWVÇ2„ÖFW&–ÂätÄ55õäRÂ&Æö6·2ævWB†¶W’ƒÂsÂB’’“°¢Ò76W'DfÇ6R†&Æö6·2æ¶W•6WB‚’ç7G&VÒ‚’æç”ÖF6‚‡÷6—F–öâÓâ”öb‡÷6—F–öâ’âs2’“°¢²76W'DWVÇ2„ÖFW&–Âå5%T4Uõ4Ä"Â&Æö6·2ævWB†¶W’ƒÂsRÂ’’“°¢²76W'DWVÇ2„ÖFW&–Âå5%T4UõÄäµ2Â&Æö6·2ævWB†¶W’ƒÂsBÂ’’“°¢²76W'DWVÇ2„ÖFW&–ÂätÄ52Â&Æö6·2ævWB†¶W’ƒÂsÂÓB’’“°¢²76W'DWVÇ2„ÖFW&–ÂätÄ52Â&Æö6·2ævWB†¶W’ƒÂsÂB’’“°¢²76W'DfÇ6R†&Æö6·2æ¶W•6WB‚’ç7G&VÒ‚¢²æç”ÖF6‚‡÷6—F–öâÓâ”öb‡÷6—F–öâ’âsR’“°¢°¢²ò ¢²¢6†VRæ—fVRGRæ÷–RW7BÆV–âVçG&R6W2FWW‚&×çG2â6W2&Æö70¢²¢V×:¦6†VçBÆR6–VÂBv&:çG&RVçG&RFWW‚&æ|:–W2BvW66Æ–W'2à¢²¢ð¢²f÷"†–çBÆ–W"Ò²Æ–W"ÃÒC²Æ–W"²²’°¢²76W'EG'VR†&Æö6·2æ6öçF–ç4¶W’†¶W’ƒÂs²Æ–W"Â’’“°¢²Ð¢²Ð¢°¢²FW7@¢²fö–B†—&ööeW6W56öÆ–E6‡&–æ¶–æt6÷&TæE7W÷'FVD6‚’°¢²ÖÅ7G&–ærÂÖFW&–Ãâ&Æö6·2ÒæWr†6„ÖÃâ‚“°¢²Æ—7CÅ'Vææ&ÆSâF6·2ÒæWr'&”Æ—7CÃâ‚“°¢²FW'&–äÖævW"å6WD&Æö6²6WD&Æö6²Ð¢²‡‚Â’Â¢ÂÖFW&–Â’Óâ&Æö6·2çWB†¶W’‡‚Â’Â¢’ÂÖFW&–Â“°¢°¢²f–ÆÆvU&ööd'V–ÆFW"æ'V–ÆD†—€¢²F6·2À¢²çVÆÂÀ¢²6WD&Æö6²À¢²Ó"À¢²"À¢²Ó"À¢²"À¢²sÀ¢²ÖFW&–ÂäD$µôôµõÄäµ2À¢²ÖFW&–ÂäD$µôôµõ5D•%2À¢²ÖFW&–ÂäD$µôôµõ4Ä ¢²“°¢²F6·2æf÷$V6‚…'Vææ&ÆS£§'Vâ“°¢°¢²f÷"†–çBÆ–W"Ò²Æ–W"ÃÒ3²Æ–W"²²’°¢²–çBÖ–âÒÓ2²Æ–W#°¢²–çBÖ‚Ò2ÒÆ–W#°¢²f÷"†–çB‚ÒÖ–ã²‚ÃÒÖƒ²‚²²’°¢²f÷"†–çB¢ÒÖ–ã²¢ÃÒÖƒ²¢²²’°¢²76W'EG'VR€¢²&Æö6·2æ6öçF–ç4¶W’†¶W’‡‚Âs²Æ–W"Â¢’’À¢²%G&÷RL:—FV7L:’Fç2ÆRæ÷–RFRFö—GW&RVâ7&÷WR ¢²“°¢²Ð¢²Ð¢²Ð¢°¢²76W'DWVÇ2„ÖFW&–ÂäD$µôôµõÄäµ2À¢²&Æö6·2ævWB†¶W’ƒÂs2Â’’“°¢²76W'DWVÇ2„ÖFW&–ÂäD$µôôµõ4Ä"À¢²&Æö6·2ævWB†¶W’ƒÂsBÂ’’“°¢Ð¢ ¢FW7@¤Ó3bÃr³#Ã’6Æ72f–ÆÆvU7G'V7GW&UFW7B°¢7V6–Ä'V–ÆF–æw2æ'V–ÆD6‡W&6‚†çVÆÂÂÆ÷BÂcBÂ6WD&Æö6²¢æf÷$V6‚…'Vææ&ÆS£§'Vâ“°¢ ¢Ò76W'EG'VR†&Æö6·2çfÇVW2‚’æ6öçF–ç2„ÖFW&–Âä$ÅTUõ5D”äTEôtÄ55õäR’“°¢²76W'EG'VR†&Æö6·2çfÇVW2‚’æ6öçF–ç2„ÖFW&–Âä$ÅTUõ5D”äTEôtÄ52’“°¢²76W'DfÇ6R†&Æö6·2çfÇVW2‚’ç7G&VÒ‚¢²æç”ÖF6‚†ÖFW&–ÂÓâÖFW&–ÂææÖR‚’æVæG5v—F‚‚%ôtÄ55õäR"’’“°¢76W'EG'VR†&Æö6·2çfÇVW2‚’æ6öçF–ç2„ÖFW&–ÂåT%E¥ô$Äô4²’“°¢76W'EG'VR†&Æö6·2çfÇVW2‚’æ6öçF–ç2„ÖFW&–Âå5%T4Uõ5D•%2’“°¢76W'EG'VR†&Æö6·2çfÇVW2‚’æ6öçF–ç2„ÖFW&–ÂäD$µôôµõ5D•%2’“°¤Ó#3Ãr³3rÃ’6Æ72f–ÆÆvU7G'V7GW&UFW7B°¢ ¢76W'EG'VR‡fÇVW2æ6öçF–ç2„ÖFW&–Âå5%T4Uõ5D•%2’“°¢76W'EG'VR‡fÇVW2æ6öçF–ç2„ÖFW&–Âå5%T4Uõ4Ä"’“°¢Ò76W'EG'VR‡fÇVW2æ6öçF–ç2„ÖFW&–ÂätÄ55õäR’“°¢²76W'EG'VR‡fÇVW2æ6öçF–ç2„ÖFW&–ÂätÄ52’“°¢²76W'DfÇ6R‡fÇVW2ç7G&VÒ‚¢²æç”ÖF6‚†ÖFW&–ÂÓâÖFW&–ÂææÖR‚’æVæG5v—F‚‚%ôtÄ55õäR"’’“°¢76W'EG'VR‡fÇVW2æ6öçF–ç2„ÖFW&–Âå5%T4UôDôõ"’“°¢76W'EG'VR‡fÇVW2æ6öçF–ç2„ÖFW&–ÂäÄåDU$â’“°¢76W'EG'VR‡fÇVW2æ6öçF–ç2„ÖFW&–Âå$TEõtÄÅô$ääU"

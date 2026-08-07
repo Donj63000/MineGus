@@ -12,46 +12,101 @@ import java.util.List;
 import java.util.Queue;
 
 /**
- * Enceinte mÃ©diÃ©vale Ã  Ã©chelle de village.
+ * Enceinte fortifiÃ©e mÃ©diÃ©vale du village.
  *
- * <p>La muraille prÃ©cÃ©dente formait un bloc de huit mÃ¨tres sur trois, trÃ¨s
- * massif pour un petit bourg, et le corps de garde rebouchait son propre
- * passage. Cette version privilÃ©gie une enceinte de six blocs, un chemin de
- * ronde lisible, des tours couvertes sur leurs quatre cÃ´tÃ©s et un portail
- * rÃ©ellement traversable.</p>
+ * <p>La muraille est conÃ§ue comme un ouvrage habitable et lisible depuis les
+ * rues : fondations, soubassement talutÃ©, courtines Ã©paisses, chemin de ronde,
+ * parapet intÃ©rieur, crÃ©neaux, contreforts, tours d'angle et chÃ¢telet. Les
+ * ouvertures ne traversent jamais toute l'Ã©paisseur et les toitures emploient
+ * le constructeur fermÃ© de {@link VillageRoofBuilder}.</p>
  */
 public final class WallBuilder {
-    private static final int WALL_HEIGHT = 6;
-    private static final int WALL_THICKNESS = 2;
+
+    private static final int WALL_HEIGHT = 9;
+    private static final int WALL_THICKNESS = 3;
+    private static final int FOUNDATION_DEPTH = 3;
+    private static final int BUTTRESS_SPACING = 8;
+
     private static final int GATE_HALF_WIDTH = 2;
-    private static final int TOWER_RADIUS = 2;
-    private static final int GATEHOUSE_HALF_WIDTH = 7;
-    private static final int GATEHOUSE_HALF_DEPTH = 3;
+    private static final int APPROACH_HALF_WIDTH = 3;
+
+    private static final int TOWER_RADIUS = 3;
+    private static final int TOWER_HEIGHT = 13;
+
+    private static final int GATEHOUSE_HALF_WIDTH = 9;
+    private static final int GATEHOUSE_HALF_DEPTH = 4;
+    private static final int GATE_TOWER_HEIGHT = 15;
 
     private WallBuilder() {}
 
     /**
-     * Renvoie l'emprise extÃ©rieure complÃ¨te, tours d'angle comprises.
+     * Renvoie l'emprise extÃ©rieure complÃ¨te, tours, talus et chÃ¢telet compris.
      * Ordre : minX, maxX, minZ, maxZ.
      */
     public static int[] outerBounds(Location center, int rx, int rz) {
+        if (center == null) {
+            return new int[]{0, 0, 0, 0};
+        }
+
         int cx = center.getBlockX();
         int cz = center.getBlockZ();
-        int outerRx = Math.max(4, rx) + WALL_THICKNESS - 1 + TOWER_RADIUS;
-        int outerRz = Math.max(4, rz) + WALL_THICKNESS - 1 + TOWER_RADIUS;
-        return new int[]{cx - outerRx, cx + outerRx, cz - outerRz, cz + outerRz};
+        int safeRx = Math.max(4, rx);
+        int safeRz = Math.max(4, rz);
+
+        /*
+         * Le +1 final correspond au dÃ©bord de la premiÃ¨re rangÃ©e de toiture.
+         * Sans lui, la prÃ©paration du terrain omettait une couronne de blocs
+         * autour des tours et du chÃ¢telet.
+         */
+        int wallAndTowerX = safeRx
+                + WALL_THICKNESS
+                - 1
+                + TOWER_RADIUS
+                + 1;
+        int wallAndTowerZ = safeRz
+                + WALL_THICKNESS
+                - 1
+                + TOWER_RADIUS
+                + 1;
+        int extentX = Math.max(
+                wallAndTowerX,
+                GATEHOUSE_HALF_WIDTH + 1
+        );
+        int extentZ = Math.max(
+                wallAndTowerZ,
+                safeRz + 1 + GATEHOUSE_HALF_DEPTH + 1
+        );
+
+        return new int[]{
+                cx - extentX,
+                cx + extentX,
+                cz - extentZ,
+                cz + extentZ
+        };
     }
 
     /**
-     * Point sÃ»r oÃ¹ placer les gardes, juste Ã  l'extÃ©rieur du portail.
+     * Point sÃ»r oÃ¹ placer les gardes, devant le chÃ¢telet et hors de la herse.
      */
-    public static Location gateAnchor(Location center, int rx, int rz, int baseY) {
-        int outerSouth = center.getBlockZ() + Math.max(4, rz) + WALL_THICKNESS - 1;
+    public static Location gateAnchor(Location center,
+                                      int rx,
+                                      int rz,
+                                      int baseY) {
+        if (center == null) {
+            return null;
+        }
+
+        int safeRz = Math.max(4, rz);
+        int innerSouthZ = center.getBlockZ() + safeRz;
+        int outerSouthZ = innerSouthZ + WALL_THICKNESS - 1;
+        int gateCenterZ = (innerSouthZ + outerSouthZ) / 2;
+        int gateFrontZ = gateCenterZ + GATEHOUSE_HALF_DEPTH;
+
         return new Location(
                 center.getWorld(),
-                center.getBlockX() + 0.5,
+                center.getBlockX() + 0.5D,
                 baseY,
-                outerSouth + GATEHOUSE_HALF_DEPTH + 2.5
+                gateFrontZ + 3.5D
         );
     }
 
@@ -72,39 +127,122 @@ public final class WallBuilder {
         int safeRx = Math.max(4, rx);
         int safeRz = Math.max(4, rz);
 
-        // rx/rz pointent vers la face intÃ©rieure ; l'Ã©paisseur se dÃ©veloppe
-        // vers l'extÃ©rieur pour ne pas rogner les derniers jardins.
+        /*
+         * rx/rz dÃ©signent la face intÃ©rieure. Toute l'Ã©paisseur se dÃ©veloppe
+         * vers l'extÃ©rieur afin de ne pas rogner les jardins pÃ©riphÃ©riques.
+         */
         int minX = cx - safeRx - WALL_THICKNESS + 1;
         int maxX = cx + safeRx + WALL_THICKNESS - 1;
         int minZ = cz - safeRz - WALL_THICKNESS + 1;
         int maxZ = cz + safeRz + WALL_THICKNESS - 1;
         int innerSouthZ = cz + safeRz;
 
-        buildWallRing(queue, setBlock, cx, cz, minX, maxX, minZ, maxZ,
-                innerSouthZ, baseY, wallMaterial);
-        addWallWalk(queue, world, setBlock, minX, maxX, minZ, maxZ, baseY);
-        addCrenellations(queue, setBlock, minX, maxX, minZ, maxZ, baseY);
+        buildWallRing(
+                queue,
+                world,
+                setBlock,
+                cx,
+                minX,
+                maxX,
+                minZ,
+                maxZ,
+                innerSouthZ,
+                baseY,
+                wallMaterial
+        );
+        buildWallWalk(
+                queue,
+                setBlock,
+                cx,
+                minX,
+                maxX,
+                minZ,
+                maxZ,
+                innerSouthZ,
+                baseY
+        );
+        addCrenellations(
+                queue,
+                world,
+                setBlock,
+                cx,
+                minX,
+                maxX,
+                minZ,
+                maxZ,
+                innerSouthZ,
+                baseY
+        );
 
-        buildTower(queue, world, setBlock, minX, minZ, baseY);
-        buildTower(queue, world, setBlock, minX, maxZ, baseY);
-        buildTower(queue, world, setBlock, maxX, minZ, baseY);
-        buildTower(queue, world, setBlock, maxX, maxZ, baseY);
+        buildTower(
+                queue,
+                world,
+                setBlock,
+                minX,
+                minZ,
+                cx,
+                cz,
+                baseY
+        );
+        buildTower(
+                queue,
+                world,
+                setBlock,
+                minX,
+                maxZ,
+                cx,
+                cz,
+                baseY
+        );
+        buildTower(
+                queue,
+                world,
+                setBlock,
+                maxX,
+                minZ,
+                cx,
+                cz,
+                baseY
+        );
+        buildTower(
+                queue,
+                world,
+                setBlock,
+                maxX,
+                maxZ,
+                cx,
+                cz,
+                baseY
+        );
 
         int gateCenterZ = (innerSouthZ + maxZ) / 2;
-        buildGatehouse(queue, world, setBlock, cx, gateCenterZ, baseY);
+        buildGatehouse(
+                queue,
+                world,
+                setBlock,
+                cx,
+                gateCenterZ,
+                baseY
+        );
 
-        // Le pavage raccorde la rue intÃ©rieure au chemin extÃ©rieur. Il est
-        // ajoutÃ© aprÃ¨s la muraille afin que le passage ne soit jamais rebouchÃ©.
-        buildGateApproach(queue, setBlock, cx,
-                innerSouthZ - 7,
-                maxZ + GATEHOUSE_HALF_DEPTH + 7,
-                baseY);
+        /*
+         * Le pavage est programmÃ© en dernier : la route reste continue mÃªme si
+         * une fondation ou une tour a Ã©tÃ© posÃ©e sur le mÃªme axe auparavant.
+         */
+        buildGateApproach(
+                queue,
+                setBlock,
+                cx,
+                innerSouthZ - 8,
+                gateCenterZ + GATEHOUSE_HALF_DEPTH + 9,
+                baseY
+        );
     }
 
     private static void buildWallRing(Queue<Runnable> queue,
+                                      World world,
                                       TerrainManager.SetBlock setBlock,
-                                      int cx,
-                                      int cz,
+                                      int centerX,
                                       int minX,
                                       int maxX,
                                       int minZ,
@@ -122,365 +260,192 @@ public final class WallBuilder {
                     continue;
                 }
 
-                // RÃ©serve le passage sur toute l'Ã©paisseur sud, et non
-                // seulement sur sa moitiÃ© extÃ©rieure.
                 boolean gatePassage = z >= innerSouthZ
-                        && Math.abs(x - cx) <= GATE_HALF_WIDTH;
+                        && Math.abs(x - centerX) <= GATE_HALF_WIDTH;
                 if (gatePassage) {
                     continue;
                 }
 
                 int fx = x;
                 int fz = z;
-                queue.add(() -> setBlock.set(fx, baseY, fz,
-                        patternedStone(primary, fx, baseY, fz)));
 
-                for (int y = baseY + 1; y <= baseY + WALL_HEIGHT; y++) {
+                // Fondations profondes, visibles mÃªme sur un terrain accidentÃ©.
+                for (int y = baseY - FOUNDATION_DEPTH; y <= baseY; y++) {
                     int fy = y;
-                    Material material = patternedStone(primary, x, y, z);
-
-                    // Une meurtriÃ¨re sur la seule face extÃ©rieure allÃ¨ge les
-                    // longues courtines sans crÃ©er un tunnel d'air traversant.
-                    if (isOuterFace(x, z, minX, maxX, minZ, maxZ)
-                            && y == baseY + 3
-                            && Math.floorMod(axisCoordinate(x, z, minX, maxX), 9) == 4) {
-                        material = Material.IRON_BARS;
-                    }
-                    Material finalMaterial = material;
-                    queue.add(() -> setBlock.set(fx, fy, fz, finalMaterial));
+                    Material foundation = foundationStone(fx, fy, fz);
+                    place(queue, setBlock, fx, fy, fz, foundation);
                 }
 
-                if (isOuterFace(x, z, minX, maxX, minZ, maxZ)
-                        && Math.floorMod(axisCoordinate(x, z, minX, maxX), 8) == 0) {
-                    addButtress(queue, setBlock, x, z, cx, cz, baseY);
+                boolean outerFace = isOuterFace(
+                        x,
+                        z,
+                        minX,
+                        maxX,
+                        minZ,
+                        maxZ
+                );
+                boolean slit = outerFace
+                        && isSlitCoordinate(x, z, minX, maxX)
+                        && !(z == maxZ
+                        && Math.abs(x - centerX)
+                        <= GATEHOUSE_HALF_WIDTH + 1);
+
+                for (int y = baseY + 1;
+                     y <= baseY + WALL_HEIGHT;
+                     y++) {
+                    int fy = y;
+                    Material material;
+
+                    if (slit && y == baseY + 4) {
+                        /*
+                         * Les barreaux occupent uniquement la peau extÃ©rieure ;
+                         * les deux blocs internes restent pleins. On obtient une
+                         * meurtriÃ¨re sombre, pas un tunnel Ã  travers la muraille.
+                         */
+                        material = Material.IRON_BARS;
+                    } else if (y == baseY + 3 || y == baseY + 7) {
+                        material = Material.POLISHED_ANDESITE;
+                    } else if (slit
+                            && (y == baseY + 3 || y == baseY + 5)) {
+                        material = Material.CHISELED_STONE_BRICKS;
+                    } else {
+                        material = patternedStone(primary, x, y, z);
+                    }
+
+                    Material finalMaterial = material;
+                    place(queue, setBlock,
+                            fx,
+                            fy,
+                            fz,
+                            finalMaterial
+                    );
+                }
+
+                if (outerFace) {
+                    BlockFace outward = outwardFace(
+                            x,
+                            z,
+                            minX,
+                            maxX,
+                            minZ,
+                            maxZ
+                    );
+                    addBatteredBase(
+                            queue,
+                            setBlock,
+                            x,
+                            z,
+                            baseY,
+                            outward
+                    );
+
+                    int axis = axisCoordinate(
+                            x,
+                            z,
+                            minX,
+                            maxX
+                    );
+                    boolean gateZone = z == maxZ
+                            && Math.abs(x - centerX)
+                            <= GATEHOUSE_HALF_WIDTH + 2;
+                    if (!gateZone
+                            && Math.floorMod(axis, BUTTRESS_SPACING) == 0) {
+                        addButtress(
+                                queue,
+                                world,
+                                setBlock,
+                                x,
+                                z,
+                                baseY,
+                                outward
+                        );
+                    }
                 }
             }
+        }
+    }
+
+    /**
+     * Talus continu au pied de la courtine : il donne de la masse sans Ã©paissir
+     * tout le mur jusqu'au chemin de ronde.
+     */
+    private static void addBatteredBase(Queue<Runnable> queue,
+                                        TerrainManager.SetBlock setBlock,
+                                        int x,
+                                        int z,
+                                        int baseY,
+                                        BlockFace outward) {
+        if (!cardinal(outward)) {
+            return;
+        }
+
+        int firstX = x + outward.getModX();
+        int firstZ = z + outward.getModZ();
+        for (int y = baseY - 1; y <= baseY + 1; y++) {
+            int fy = y;
+            Material material = y <= baseY
+                    ? Material.COBBLED_DEEPSLATE
+                    : Material.COBBLESTONE;
+            place(queue, setBlock,
+                    firstX,
+                    fy,
+                    firstZ,
+                    material
+            );
+        }
+
+        int secondX = x + outward.getModX() * 2;
+        int secondZ = z + outward.getModZ() * 2;
+        for (int y = baseY - 1; y <= baseY; y++) {
+            int fy = y;
+            place(queue, setBlock,
+                    secondX,
+                    fy,
+                    secondZ,
+                    Material.COBBLED_DEEPSLATE
+            );
         }
     }
 
     private static void addButtress(Queue<Runnable> queue,
+                                    World world,
                                     TerrainManager.SetBlock setBlock,
                                     int x,
                                     int z,
-                                    int cx,
-                                    int cz,
-                                    int baseY) {
-        int dx = x < cx ? -1 : x > cx ? 1 : 0;
-        int dz = z < cz ? -1 : z > cz ? 1 : 0;
-
-        // Une face de courtine n'a qu'une normale. Lorsque les deux
-        // composantes sont prÃ©sentes, nous sommes dans la zone d'une tour.
-        if (dx != 0 && dz != 0) {
+                                    int baseY,
+                                    BlockFace outward) {
+        if (!cardinal(outward)) {
             return;
         }
-        int bx = x + dx;
-        int bz = z + dz;
-        queue.add(() -> setBlock.set(bx, baseY, bz, Material.COBBLESTONE));
-        queue.add(() -> setBlock.set(bx, baseY + 1, bz, Material.STONE_BRICK_WALL));
-        queue.add(() -> setBlock.set(bx, baseY + 2, bz, Material.STONE_BRICK_WALL));
-    }
 
-    private static void addWallWalk(Queue<Runnable> queue,
-                                    World world,
-                                    TerrainManager.SetBlock setBlock,
-                                    int minX,
-                                    int maxX,
-                                    int minZ,
-                                    int maxZ,
-                                    int baseY) {
-        int walkY = baseY + WALL_HEIGHT;
-        for (int x = minX + 1; x <= maxX - 1; x++) {
-            addTopSlab(queue, world, setBlock, x, walkY, minZ + 1);
-            addTopSlab(queue, world, setBlock, x, walkY, maxZ - 1);
-        }
-        for (int z = minZ + 2; z <= maxZ - 2; z++) {
-            addTopSlab(queue, world, setBlock, minX + 1, walkY, z);
-            addTopSlab(queue, world, setBlock, maxX - 1, walkY, z);
-        }
-    }
+        for (int depth = 1; depth <= 2; depth++) {
+            int bx = x + outward.getModX() * depth;
+            int bz = z + outward.getModZ() * depth;
+            int topY = baseY + (depth == 1 ? 6 : 3);
 
-    private static void addCrenellations(Queue<Runnable> queue,
-                                         TerrainManager.SetBlock setBlock,
-                                         int minX,
-                                         int maxX,
-                                         int minZ,
-                                         int maxZ,
-                                         int baseY) {
-        int topY = baseY + WALL_HEIGHT + 1;
-        for (int x = minX; x <= maxX; x++) {
-            if (Math.floorMod(x, 2) == 0) {
-                int fx = x;
-                queue.add(() -> setBlock.set(fx, topY, minZ, Material.STONE_BRICKS));
-                queue.add(() -> setBlock.set(fx, topY, maxZ, Material.STONE_BRICKS));
+            for (int y = baseY - 2; y <= topY; y++) {
+                int fy = y;
+                Material material = y <= baseY
+                        ? Material.COBBLED_DEEPSLATE
+                        : patternedStone(
+                        Material.STONE_BRICKS,
+                        bx,
+                        y,
+                        bz
+                );
+                place(queue, setBlock,
+                        bx,
+                        fy,
+                        bz,
+                        material
+                );
             }
-        }
-        for (int z = minZ + 1; z <= maxZ - 1; z++) {
-            if (Math.floorMod(z, 2) == 0) {
-                int fz = z;
-                queue.add(() -> setBlock.set(minX, topY, fz, Material.STONE_BRICKS));
-                queue.add(() -> setBlock.set(maxX, topY, fz, Material.STONE_BRICKS));
-            }
-        }
-    }
 
-    private static void buildTower(Queue<Runnable> queue,
-                                   World world,
-                                   TerrainManager.SetBlock setBlock,
-                                   int centerX,
-                                   int centerZ,
-                                   int baseY) {
-        int topY = baseY + WALL_HEIGHT + 2;
-        for (int dx = -TOWER_RADIUS; dx <= TOWER_RADIUS; dx++) {
-            for (int dz = -TOWER_RADIUS; dz <= TOWER_RADIUS; dz++) {
-                int x = centerX + dx;
-                int z = centerZ + dz;
-                boolean shell = Math.abs(dx) == TOWER_RADIUS
-                        || Math.abs(dz) == TOWER_RADIUS;
-
-                queue.add(() -> setBlock.set(x, baseY, z,
-                        patternedStone(Material.STONE_BRICKS, x, baseY, z)));
-                if (!shell) {
-                    queue.add(() -> setBlock.set(x, baseY + 1, z, Material.SPRUCE_PLANKS));
-                    continue;
-                }
-
-                for (int y = baseY + 1; y <= topY; y++) {
-                    int fy = y;
-                    Material material = y == baseY + 3
-                            && (dx == 0 || dz == 0)
-                            ? Material.IRON_BARS
-                            : patternedStone(Material.STONE_BRICKS, x, y, z);
-                    queue.add(() -> setBlock.set(x, fy, z, material));
-                }
-            }
-        }
-
-        List<Runnable> roof = new ArrayList<>();
-        VillageRoofBuilder.buildHip(
-                roof,
-                world,
-                setBlock,
-                centerX - TOWER_RADIUS,
-                centerX + TOWER_RADIUS,
-                centerZ - TOWER_RADIUS,
-                centerZ + TOWER_RADIUS,
-                topY + 1,
-                Material.DARK_OAK_STAIRS,
-                Material.DARK_OAK_SLAB
-        );
-        queue.addAll(roof);
-
-        queue.add(() -> setBlock.set(centerX, baseY + 2,
-                centerZ - TOWER_RADIUS, Material.LANTERN));
-    }
-
-    private static void buildGatehouse(Queue<Runnable> queue,
-                                       World world,
-                                       TerrainManager.SetBlock setBlock,
-                                       int centerX,
-                                       int centerZ,
-                                       int baseY) {
-        int minZ = centerZ - GATEHOUSE_HALF_DEPTH;
-        int maxZ = centerZ + GATEHOUSE_HALF_DEPTH;
-        int leftMinX = centerX - GATEHOUSE_HALF_WIDTH;
-        int leftMaxX = centerX - GATE_HALF_WIDTH - 1;
-        int rightMinX = centerX + GATE_HALF_WIDTH + 1;
-        int rightMaxX = centerX + GATEHOUSE_HALF_WIDTH;
-        int towerTop = baseY + WALL_HEIGHT + 3;
-
-        buildGateTower(queue, world, setBlock,
-                leftMinX, leftMaxX, minZ, maxZ, baseY, towerTop);
-        buildGateTower(queue, world, setBlock,
-                rightMinX, rightMaxX, minZ, maxZ, baseY, towerTop);
-
-        // Galerie haute au-dessus de l'arche.
-        for (int x = centerX - GATE_HALF_WIDTH; x <= centerX + GATE_HALF_WIDTH; x++) {
-            for (int z = minZ; z <= maxZ; z++) {
-                int fx = x;
-                int fz = z;
-                for (int y = baseY + 5; y <= baseY + WALL_HEIGHT + 2; y++) {
-                    int fy = y;
-                    boolean shell = y == baseY + 5
-                            || y == baseY + WALL_HEIGHT + 2
-                            || z == minZ
-                            || z == maxZ;
-                    if (shell) {
-                        queue.add(() -> setBlock.set(fx, fy, fz,
-                                patternedStone(Material.STONE_BRICKS, fx, fy, fz)));
-                    }
-                }
-            }
-        }
-
-        // Arche en escalier sur les deux faÃ§ades.
-        for (int z : new int[]{minZ, maxZ}) {
-            for (int x = centerX - GATE_HALF_WIDTH; x <= centerX + GATE_HALF_WIDTH; x++) {
-                int fx = x;
-                queue.add(() -> setBlock.set(fx, baseY + 5, z, Material.STONE_BRICK_STAIRS));
-                queue.add(() -> VillageStyle.setStair(
-                        world, fx, baseY + 5, z,
-                        Material.STONE_BRICK_STAIRS,
-                        z == minZ ? BlockFace.NORTH : BlockFace.SOUTH,
-                        Stairs.Half.BOTTOM,
-                        Stairs.Shape.STRAIGHT
-                ));
-            }
-        }
-
-        // La herse est relevÃ©e dans la galerie : elle reste visible sans
-        // rendre l'entrÃ©e impossible Ã  franchir.
-        for (int x = centerX - GATE_HALF_WIDTH; x <= centerX + GATE_HALF_WIDTH; x++) {
-            int fx = x;
-            queue.add(() -> setBlock.set(fx, baseY + 5, maxZ - 1, Material.IRON_BARS));
-            queue.add(() -> setBlock.set(fx, baseY + 6, maxZ - 1, Material.IRON_BARS));
-        }
-
-        // Nettoyage final du corridor sur toute la profondeur, indispensable
-        // car la courtine et la galerie ont Ã©tÃ© programmÃ©es avant le portail.
-        for (int x = centerX - GATE_HALF_WIDTH; x <= centerX + GATE_HALF_WIDTH; x++) {
-            for (int z = minZ - 1; z <= maxZ + 1; z++) {
-                int fx = x;
-                int fz = z;
-                for (int y = baseY + 1; y <= baseY + 4; y++) {
-                    int fy = y;
-                    queue.add(() -> setBlock.set(fx, fy, fz, Material.AIR));
-                }
-            }
-        }
-
-        // Ã‰clairage et identitÃ© du bourg. Les lanternes sont suspendues Ã 
-        // de vrais bras de potence : aucun bloc ne flotte devant la faÃ§ade.
-        for (int x : new int[]{leftMaxX, rightMinX}) {
-            queue.add(() -> setBlock.set(x, baseY + 6, maxZ + 1, Material.DARK_OAK_FENCE));
-            queue.add(() -> setBlock.set(x, baseY + 5, maxZ + 1, Material.CHAIN));
-            queue.add(() -> setBlock.set(x, baseY + 4, maxZ + 1, Material.LANTERN));
-        }
-        queue.add(() -> setBlock.set(leftMaxX, baseY + 5, maxZ, Material.RED_WALL_BANNER));
-        queue.add(() -> VillageStyle.setDirectional(
-                world, leftMaxX, baseY + 5, maxZ,
-                Material.RED_WALL_BANNER, BlockFace.SOUTH));
-        queue.add(() -> setBlock.set(rightMinX, baseY + 5, maxZ, Material.RED_WALL_BANNER));
-        queue.add(() -> VillageStyle.setDirectional(
-                world, rightMinX, baseY + 5, maxZ,
-                Material.RED_WALL_BANNER, BlockFace.SOUTH));
-    }
-
-    private static void buildGateTower(Queue<Runnable> queue,
-                                       World world,
-                                       TerrainManager.SetBlock setBlock,
-                                       int minX,
-                                       int maxX,
-                                       int minZ,
-                                       int maxZ,
-                                       int baseY,
-                                       int topY) {
-        for (int x = minX; x <= maxX; x++) {
-            for (int z = minZ; z <= maxZ; z++) {
-                boolean shell = x == minX || x == maxX || z == minZ || z == maxZ;
-                int fx = x;
-                int fz = z;
-                queue.add(() -> setBlock.set(fx, baseY, fz, Material.STONE_BRICKS));
-                if (!shell) {
-                    queue.add(() -> setBlock.set(fx, baseY + 1, fz, Material.SPRUCE_PLANKS));
-                    continue;
-                }
-                for (int y = baseY + 1; y <= topY; y++) {
-                    int fy = y;
-                    Material material = y == baseY + 4
-                            && ((x == minX || x == maxX) && z == (minZ + maxZ) / 2)
-                            ? Material.IRON_BARS
-                            : patternedStone(Material.STONE_BRICKS, x, y, z);
-                    queue.add(() -> setBlock.set(fx, fy, fz, material));
-                }
-            }
-        }
-
-        List<Runnable> roof = new ArrayList<>();
-        VillageRoofBuilder.buildHip(
-                roof,
-                world,
-                setBlock,
-                minX,
-                maxX,
-                minZ,
-                maxZ,
-                topY + 1,
-                Material.DARK_OAK_STAIRS,
-                Material.DARK_OAK_SLAB
-        );
-        queue.addAll(roof);
-    }
-
-    private static void buildGateApproach(Queue<Runnable> queue,
-                                          TerrainManager.SetBlock setBlock,
-                                          int centerX,
-                                          int startZ,
-                                          int endZ,
-                                          int baseY) {
-        for (int z = startZ; z <= endZ; z++) {
-            for (int dx = -GATE_HALF_WIDTH; dx <= GATE_HALF_WIDTH; dx++) {
-                int x = centerX + dx;
-                int fz = z;
-                Material material;
-                if (Math.abs(dx) == GATE_HALF_WIDTH) {
-                    material = Math.floorMod(x + z, 2) == 0
-                            ? Material.COBBLESTONE
-                            : Material.STONE_BRICKS;
-                } else {
-                    material = Math.floorMod(x * 17 + z * 31, 5) == 0
-                            ? Material.POLISHED_ANDESITE
-                            : Material.GRAVEL;
-                }
-                Material finalMaterial = material;
-                queue.add(() -> setBlock.set(x, baseY, fz, finalMaterial));
-            }
-        }
-    }
-
-    private static void addTopSlab(Queue<Runnable> queue,
-                                   World world,
-                                   TerrainManager.SetBlock setBlock,
-                                   int x,
-                                   int y,
-                                   int z) {
-        queue.add(() -> setBlock.set(x, y, z, Material.STONE_BRICK_SLAB));
-        queue.add(() -> VillageStyle.setSlab(
-                world, x, y, z,
-                Material.STONE_BRICK_SLAB,
-                Slab.Type.TOP
-        ));
-    }
-
-    private static Material patternedStone(Material primary,
-                                           int x,
-                                           int y,
-                                           int z) {
-        int selector = Math.floorMod(x * 31 + y * 13 + z * 17, 23);
-        if (selector == 0 || selector == 7) {
-            return Material.MOSSY_STONE_BRICKS;
-        }
-        if (selector == 3) {
-            return Material.CRACKED_STONE_BRICKS;
-        }
-        if (selector == 11) {
-            return Material.COBBLESTONE;
-        }
-        return primary == null ? Material.STONE_BRICKS : primary;
-    }
-
-    private static boolean isOuterFace(int x,
-                                       int z,
-                                       int minX,
-                                       int maxX,
-                                       int minZ,
-                                       int maxZ) {
-        return x == minX || x == maxX || z == minZ || z == maxZ;
-    }
-
-    private static int axisCoordinate(int x,
-                                      int z,
-                                      int minX,
-                                      int maxX) {
-        return x == minX || x == maxX ? z : x;
-    }
-}
+            slab(
+                    queue,
+                    world,
+                    setBlock,
+                    bx,
+                    topY + 1,
+                    bz,
+                    Material.STONE_BRICK_SLAB÷½û¶‰Ëkºwµç@€€€€€ô4(€€€€€€€€€€€€€€€ô•±Í”ì4(€€€€€€€€€€€€€€€€€€€™½È€¡¥¹Ğä€ô™±½½Éd€¬€Äìä€ğÉ½½™dìä¬¬¤ì4(€€€€€€€€€€€€€€€€€€€€€€€¥¹Ğ™ä€ôäì4(€€€€€€€€€€€€€€€€€€€€€€€Á±…”¡ÅÕ•Õ”°Í•Ñ	±½¬°4(€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€™à°4(€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€™ä°4(€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€™è°4(€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€5…Ñ•É¥…°¹%H4(€€€€€€€€€€€€€€€€€€€€€€€€¤ì4(€€€€€€€€€€€€€€€€€€€ô4(€€€€€€€€€€€€€€€ô4(€€€€€€€€€€€ô4(€€€€€€€ô4(4(€€€€€€€€¼¼Ë¥¹•…Õà‘ÔÁ½¹ĞÍÕÃ¥É¥•ÕÈ°Á±ÕÌµ…ÍÍ¥™ÌÅÕ”°…¹¥•¹¹”…±•É¥”¸4(€€€€€€€¥¹Ğµ•É±½¹d€ôÉ½½™d€¬€Äì4(€€€€€€€™½È€¡¥¹Ğà€ô•¹Ñ•É`€´Q}!1}]%Q ì4(€€€€€€€€€€€€à€ğô•¹Ñ•É`€¬Q}!1}]%Q ì4(€€€€€€€€€€€€à¬¬¤ì4(€€€€€€€€€€€¥˜€¡µ•É±½¹Ğ¡à¤¤ì4(€€€€€€€€€€€€€€€…‘‘5•É±½¸ 4(€€€€€€€€€€€€€€€€€€€€€€€ÅÕ•Õ”°4(€€€€€€€€€€€€€€€€€€€€€€€İ½É±°4(€€€€€€€€€€€€€€€€€€€€€€€Í•Ñ	±½¬°4(€€€€€€€€€€€€€€€€€€€€€€€à°4(€€€€€€€€€€€€€€€€€€€€€€€µ•É±½¹d°4(€€€€€€€€€€€€€€€€€€€€€€€µ¥¹h4(€€€€€€€€€€€€€€€€¤ì4(€€€€€€€€€€€€€€€…‘‘5•É±½¸ 4(€€€€€€€€€€€€€€€€€€€€€€€ÅÕ•Õ”°4(€€€€€€€€€€€€€€€€€€€€€€€İ½É±°4(€€€€€€€€€€€€€€€€€€€€€€€Í•Ñ	±½¬°4(€€€€€€€€€€€€€€€€€€€€€€€à°4(€€€€€€€€€€€€€€€€€€€€€€€µ•É±½¹d°4(€€€€€€€€€€€€€€€€€€€€€€€µ…áh4(€€€€€€€€€€€€€€€€¤ì4(€€€€€€€€€€€ô4(€€€€€€€ô4(€€€€€€€™½È€¡¥¹Ğè€ôµ¥¹h€¬€Äìè€ğôµ…áh€´€Äìè¬¬¤ì4(€€€€€€€€€€€Á±…”¡ÅÕ•Õ”°Í•Ñ	±½¬°4(€€€€€€€€€€€€€€€€€€€•¹Ñ•É`€´Q}!1}]%Q °4(€€€€€€€€€€€€€€€€€€€µ•É±½¹d°4(€€€€€€€€€€€€€€€€€€€è°4(€€€€€€€€€€€€€€€€€€€5…Ñ•É¥…°¹MQ=9}	I%-}]104(€€€€€€€€€€€€¤ì4(€€€€€€€€€€€Á±…”¡ÅÕ•Õ”°Í•Ñ	±½¬°4(€€€€€€€€€€€€€€€€€€€•¹Ñ•É`€¬Q}!1}]%Q °4(€€€€€€€€€€€€€€€€€€€µ•É±½¹d°4(€€€€€€€€€€€€€€€€€€€è°4(€€€€€€€€€€€€€€€€€€€5…Ñ•É¥…°¹MQ=9}	I%-}]104(€€€€€€€€€€€€¤ì4(€€€€€€€ô4(€€€ô4(4(€€€ÁÉ¥Ù…Ñ”ÍÑ…Ñ¥ŒÙ½¥‰Õ¥±‘…Ñ•É¡•Ì¡EÕ•Õ”ñIÕ¹¹…‰±”øÅÕ•Õ”°4(€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€]½É±İ½É±°4(€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€Q•ÉÉ…¥¹5…¹…•È¹M•Ñ	±½¬Í•Ñ	±½¬°4(€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€¥¹Ğ•¹Ñ•É`°4(€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€¥¹Ğµ¥¹h°4(€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€¥¹Ğµ…áh°4(€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€¥¹Ğ‰…Í•d¤ì4(€€€€€€€™½È€¡¥¹Ğè€è¹•Ü¥¹Ñmuíµ¥¹h°µ…áiô¤ì4(€€€€€€€€€€€€¼¼)…µ‰…•Ìƒ¥Á…¥Ì‘”Á…ÉĞ•Ğ…ÕÑÉ”‘ÔÁ…ÍÍ…”¸4(€€€€€€€€€€€™½È€¡¥¹Ğä€ô‰…Í•d€¬€Äìä€ğô‰…Í•d€¬€Øìä¬¬¤ì4(€€€€€€€€€€€€€€€¥¹Ğ™ä€ôäì4(€€€€€€€€€€€€€€€Á±…”¡ÅÕ•Õ”°Í•Ñ	±½¬°4(€€€€€€€€€€€€€€€€€€€€€€€•¹Ñ•É`€´Q}!1}]%Q €´€Ä°4(€€€€€€€€€€€€€€€€€€€€€€€™ä°4(€€€€€€€€€€€€€€€€€€€€€€€è°4(€€€€€€€€€€€€€€€€€€€€€€€5…Ñ•É¥…°¹A=1%M!}9M%Q4(€€€€€€€€€€€€€€€€¤ì4(€€€€€€€€€€€€€€€Á±…”¡ÅÕ•Õ”°Í•Ñ	±½¬°4(€€€€€€€€€€€€€€€€€€€€€€€•¹Ñ•É`€¬Q}!1}]%Q €¬€Ä°4(€€€€€€€€€€€€€€€€€€€€€€€™ä°4(€€€€€€€€€€€€€€€€€€€€€€€è°4(€€€€€€€€€€€€€€€€€€€€€€€5…Ñ•É¥…°¹A=1%M!}9M%Q4(€€€€€€€€€€€€€€€€¤ì4(€€€€€€€€€€€ô4(4(€€€€€€€€€€€€¼¼ƒ%Á…Õ±•Ì‘”°…É¡”€è±”•¹ÑÉ”É•ÍÑ”±¥‰É”©ÕÍÅÔŸ€¥¹Ä‰±½Ì¸4(€€€€€€€€€€€ÍÑ…¥È 4(€€€€€€€€€€€€€€€€€€€ÅÕ•Õ”°4(€€€€€€€€€€€€€€€€€€€İ½É±°4(€€€€€€€€€€€€€€€€€€€Í•Ñ	±½¬°4(€€€€€€€€€€€€€€€€€€€•¹Ñ•É`€´Q}!1}]%Q °4(€€€€€€€€€€€€€€€€€€€‰…Í•d€¬€Ô°4(€€€€€€€€€€€€€€€€€€€è°4(€€€€€€€€€€€€€€€€€€€5…Ñ•É¥…°¹MQ=9}	I%-}MQ%IL°4(€€€€€€€€€€€€€€€€€€€	±½­…”¹MP°4(€€€€€€€€€€€€€€€€€€€MÑ…¥ÉÌ¹!…±˜¹Q=@°4(€€€€€€€€€€€€€€€€€€€MÑ…¥ÉÌ¹M¡…Á”¹MQI%!P4(€€€€€€€€€€€€¤ì4(€€€€€€€€€€€ÍÑ…¥È 4(€€€€€€€€€€€€€€€€€€€ÅÕ•Õ”°4(€€€€€€€€€€€€€€€€€€€İ½É±°4(€€€€€€€€€€€€€€€€€€€Í•Ñ	±½¬°4(€€€€€€€€€€€€€€€€€€€•¹Ñ•É`€¬Q}!1}]%Q °4(€€€€€€€€€€€€€€€€€€€‰…Í•d€¬€Ô°4(€€€€€€€€€€€€€€€€€€€è°4(€€€€€€€€€€€€€€€€€€€5…Ñ•É¥…°¹MQ=9}	I%-}MQ%IL°4(€€€€€€€€€€€€€€€€€€€	±½­…”¹]MP°4(€€€€€€€€€€€€€€€€€€€MÑ…¥ÉÌ¹!…±˜¹Q=@°4(€€€€€€€€€€€€€€€€€€€MÑ…¥ÉÌ¹M¡…Á”¹MQI%!P4(€€€€€€€€€€€€¤ì4(4(€€€€€€€€€€€™½È€¡¥¹Ğà€ô•¹Ñ•É`€´Q}!1}]%Q ì4(€€€€€€€€€€€€€€€€à€ğô•¹Ñ•É`€¬Q}!1}]%Q ì4(€€€€€€€€€€€€€€€€à¬¬¤ì4(€€€€€€€€€€€€€€€¥¹Ğ™à€ôàì4(€€€€€€€€€€€€€€€Á±…”¡ÅÕ•Õ”°Í•Ñ	±½¬°4(€€€€€€€€€€€€€€€€€€€€€€€™à°4(€€€€€€€€€€€€€€€€€€€€€€€‰…Í•d€¬€Ø°4(€€€€€€€€€€€€€€€€€€€€€€€è°4(€€€€€€€€€€€€€€€€€€€€€€€5…Ñ•É¥…°¹!%M1}MQ=9}	I%-L4(€€€€€€€€€€€€€€€€¤ì4(€€€€€€€€€€€ô4(€€€€€€€ô4(€€€ô4(4(€€€ÁÉ¥Ù…Ñ”ÍÑ…Ñ¥ŒÙ½¥…‘‘I…¥Í•‘A½ÉÑÕ±±¥Ì¡EÕ•Õ”ñIÕ¹¹…‰±”øÅÕ•Õ”°4(€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€Q•ÉÉ…¥¹5…¹…•È¹M•Ñ	±½¬Í•Ñ	±½¬°4(€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€¥¹Ğ•¹Ñ•É`°4(€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€¥¹Ğè°4(€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€¥¹Ğ‰…Í•d¤ì4(€€€€€€€€¼¨4(€€€€€€€€€¨1„¡•ÉÍ”•ÍĞÍÑ½¯¥”…Ôµ‘•ÍÍÕÌ‘”°…É¡”¸±±”É•ÍÑ”Ù¥Í¥‰±”‘•ÁÕ¥Ì4(€€€€€€€€€¨±„ÉÕ”µ…¥Ì…ÕÕ¸‰…ÉÉ•…Ô¹”‘•Í•¹‘…¹Ì±•Ì¥¹Ä‰±½Ì‘”Á…ÍÍ…”¸4(€€€€€€€€€¨¼4(€€€€€€€™½È€¡¥¹Ğà€ô•¹Ñ•É`€´Q}!1}]%Q ì4(€€€€€€€€€€€€à€ğô•¹Ñ•É`€¬Q}!1}]%Q ì4(€€€€€€€€€€€€à¬¬¤ì4(€€€€€€€€€€€¥¹Ğ™à€ôàì4(€€€€€€€€€€€™½È€¡¥¹Ğä€ô‰…Í•d€¬€Üìä€ğô‰…Í•d€¬€äìä¬¬¤ì4(€€€€€€€€€€€€€€€¥¹Ğ™ä€ôäì4(€€€€€€€€€€€€€€€Á±…”¡ÅÕ•Õ”°Í•Ñ	±½¬°4(€€€€€€€€€€€€€€€€€€€€€€€™à°4(€€€€€€€€€€€€€€€€€€€€€€€™ä°4(€€€€€€€€€€€€€€€€€€€€€€€è°4(€€€€€€€€€€€€€€€€€€€€€€€5…Ñ•É¥…°¹%I=9}	IL4(€€€€€€€€€€€€€€€€¤ì4(€€€€€€€€€€€ô4(€€€€€€€ô4(4(€€€€€€€€¼¼±¥ÍÍ§¡É•Ì±…Ó¥É…±•Ì‘”±„¡•ÉÍ”¸4(€€€€€€€™½È€¡¥¹Ğä€ô‰…Í•d€¬€Äìä€ğô‰…Í•d€¬€Øìä¬¬¤ì4(€€€€€€€€€€€¥¹Ğ™ä€ôäì4(€€€€€€€€€€€Á±…”¡ÅÕ•Õ”°Í•Ñ	±½¬°4(€€€€€€€€€€€€€€€€€€€•¹Ñ•É`€´Q}!1}]%Q €´€Ä°4(€€€€€€€€€€€€€€€€€€€™ä°4(€€€€€€€€€€€€€€€€€€€è°4(€€€€€€€€€€€€€€€€€€€5…Ñ•É¥…°¹%I=9}	IL4(€€€€€€€€€€€€¤ì4(€€€€€€€€€€€Á±…”¡ÅÕ•Õ”°Í•Ñ	±½¬°4(€€€€€€€€€€€€€€€€€€€•¹Ñ•É`€¬Q}!1}]%Q €¬€Ä°4(€€€€€€€€€€€€€€€€€€€™ä°4(€€€€€€€€€€€€€€€€€€€è°4(€€€€€€€€€€€€€€€€€€€5…Ñ•É¥…°¹%I=9}	IL4(€€€€€€€€€€€€¤ì4(€€€€€€€ô4(€€€ô4(4(€€€ÁÉ¥Ù…Ñ”ÍÑ…Ñ¥ŒÙ½¥…‘‘…Ñ•¡½ÕÍ•%‘•¹Ñ¥Ñä 4(€€€€€€€€€€€EÕ•Õ”ñIÕ¹¹…‰±”øÅÕ•Õ”°4(€€€€€€€€€€€]½É±İ½É±°4(€€€€€€€€€€€Q•ÉÉ…¥¹5…¹…•È¹M•Ñ	±½¬Í•Ñ	±½¬°4(€€€€€€€€€€€¥¹Ğ•¹Ñ•É`°4(€€€€€€€€€€€¥¹Ğ±•™Ñ%¹¹•É`°4(€€€€€€€€€€€¥¹ĞÉ¥¡Ñ%¹¹•É`°4(€€€€€€€€€€€¥¹Ğ™É½¹Ñh°4(€€€€€€€€€€€¥¹Ğ‰…Í•d¤ì4(€€€€€€€™½È€¡¥¹Ğà€è¹•Ü¥¹Ñmuí±•™Ñ%¹¹•É`°É¥¡Ñ%¹¹•Éaô¤ì4(€€€€€€€€€€€Á±…”¡ÅÕ•Õ”°Í•Ñ	±½¬°4(€€€€€€€€€€€€€€€€€€€à°4(€€€€€€€€€€€€€€€€€€€‰…Í•d€¬€à°4(€€€€€€€€€€€€€€€€€€€™É½¹Ñh€¬€Ä°4(€€€€€€€€€€€€€€€€€€€5…Ñ•É¥…°¹I-}=-}94(€€€€€€€€€€€€¤ì4(€€€€€€€€€€€Á±…”¡ÅÕ•Õ”°Í•Ñ	±½¬°4(€€€€€€€€€€€€€€€€€€€à°4(€€€€€€€€€€€€€€€€€€€‰…Í•d€¬€Ü°4(€€€€€€€€€€€€€€€€€€€™É½¹Ñh€¬€Ä°4(€€€€€€€€€€€€€€€€€€€5…Ñ•É¥…°¹!%84(€€€€€€€€€€€€¤ì4(€€€€€€€€€€€Á±…”¡ÅÕ•Õ”°Í•Ñ	±½¬°4(€€€€€€€€€€€€€€€€€€€à°4(€€€€€€€€€€€€€€€€€€€‰…Í•d€¬€Ø°4(€€€€€€€€€€€€€€€€€€€™É½¹Ñh€¬€Ä°4(€€€€€€€€€€€€€€€€€€€5…Ñ•É¥…°¹19QI84(€€€€€€€€€€€€¤ì4(4(€€€€€€€€€€€Á±…”¡ÅÕ•Õ”°Í•Ñ	±½¬°4(€€€€€€€€€€€€€€€€€€€à°4(€€€€€€€€€€€€€€€€€€€‰…Í•d€¬€ä°4(€€€€€€€€€€€€€€€€€€€™É½¹Ñh€¬€Ä°4(€€€€€€€€€€€€€€€€€€€5…Ñ•É¥…°¹I}]11}	99H4(€€€€€€€€€€€€¤ì4(€€€€€€€€€€€ÅÕ•Õ”¹…‘  ¤€´øY¥±±…•MÑå±”¹Í•Ñ¥É•Ñ¥½¹…° 4(€€€€€€€€€€€€€€€€€€€İ½É±°4(€€€€€€€€€€€€€€€€€€€à°4(€€€€€€€€€€€€€€€€€€€‰…Í•d€¬€ä°4(€€€€€€€€€€€€€€€€€€€™É½¹Ñh€¬€Ä°4(€€€€€€€€€€€€€€€€€€€5…Ñ•É¥…°¹I}]11}	99H°4(€€€€€€€€€€€€€€€€€€€	±½­…”¹M=UQ 4(€€€€€€€€€€€€¤¤ì4(€€€€€€€ô4(4(€€€€€€€€¼¼	±…Í½¸•¹ÑÉ…°…Ôµ‘•ÍÍÕÌ‘”°…É¡”¸4(€€€€€€€Á±…”¡ÅÕ•Õ”°Í•Ñ	±½¬°4(€€€€€€€€€€€€€€€•¹Ñ•É`°4(€€€€€€€€€€€€€€€‰…Í•d€¬€ÄÄ°4(€€€€€€€€€€€€€€€™É½¹Ñh€¬€Ä°4(€€€€€€€€€€€€€€€5…Ñ•É¥…°¹e11=]}]11}	99H4(€€€€€€€€¤ì4(€€€€€€€ÅÕ•Õ”¹…‘  ¤€´øY¥±±…•MÑå±”¹Í•Ñ¥É•Ñ¥½¹…° 4(€€€€€€€€€€€€€€€İ½É±°4(€€€€€€€€€€€€€€€•¹Ñ•É`°4(€€€€€€€€€€€€€€€‰…Í•d€¬€ÄÄ°4(€€€€€€€€€€€€€€€™É½¹Ñh€¬€Ä°4(€€€€€€€€€€€€€€€5…Ñ•É¥…°¹e11=]}]11}	99H°4(€€€€€€€€€€€€€€€	±½­…”¹M=UQ 4(€€€€€€€€¤¤ì4(€€€ô4(4(€€€ÁÉ¥Ù…Ñ”ÍÑ…Ñ¥ŒÙ½¥‰Õ¥±‘…Ñ•ÁÁÉ½… ¡EÕ•Õ”ñIÕ¹¹…‰±”øÅÕ•Õ”°4(€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€Q•ÉÉ…¥¹5…¹…•È¹M•Ñ	±½¬Í•Ñ	±½¬°4(€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€¥¹Ğ•¹Ñ•É`°4(€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€¥¹ĞÍÑ…ÉÑh°4(€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€¥¹Ğ•¹‘h°4(€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€¥¹Ğ‰…Í•d¤ì4(€€€€€€€™½È€¡¥¹Ğè€ôÍÑ…ÉÑhìè€ğô•¹‘hìè¬¬¤ì4(€€€€€€€€€€€™½È€¡¥¹Ğ‘à€ô€µAAI=!}!1}]%Q ì4(€€€€€€€€€€€€€€€€‘à€ğôAAI=!}!1}]%Q ì4(€€€€€€€€€€€€€€€€‘à¬¬¤ì4(€€€€€€€€€€€€€€€¥¹Ğà€ô•¹Ñ•É`€¬‘àì4(€€€€€€€€€€€€€€€¥¹Ğ™è€ôèì4(4(€€€€€€€€€€€€€€€Á±…”¡ÅÕ•Õ”°Í•Ñ	±½¬°4(€€€€€€€€€€€€€€€€€€€€€€€à°4(€€€€€€€€€€€€€€€€€€€€€€€‰…Í•d€´€Ä°4(€€€€€€€€€€€€€€€€€€€€€€€™è°4(€€€€€€€€€€€€€€€€€€€€€€€5…Ñ ¹…‰Ì¡‘à¤€ôôAAI=!}!1}]%Q 4(€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€ü5…Ñ•É¥…°¹MQ=9}	I%-L4(€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€è5…Ñ•É¥…°¹=		1MQ=94(€€€€€€€€€€€€€€€€¤ì4(4(€€€€€€€€€€€€€€€5…Ñ•É¥…°µ…Ñ•É¥…°ì4(€€€€€€€€€€€€€€€¥˜€¡5…Ñ ¹…‰Ì¡‘à¤€ôôAAI=!}!1}]%Q ¤ì4(€€€€€€€€€€€€€€€€€€€µ…Ñ•É¥…°€ô5…Ñ ¹™±½½É5½¡à€¬è°€Ì¤€ôô€À4(€€€€€€€€€€€€€€€€€€€€€€€€€€€€ü5…Ñ•É¥…°¹A=1%M!}9M%Q4(€€€€€€€€€€€€€€€€€€€€€€€€€€€€è5…Ñ•É¥…°¹MQ=9}	I%-Lì4(€€€€€€€€€€€€€€€ô•±Í”ì4(€€€€€€€€€€€€€€€€€€€¥¹ĞÍ•±•Ñ½È€ô5…Ñ ¹™±½½É5½ 4(€€€€€€€€€€€€€€€€€€€€€€€€€€€à€¨€ÄÜ€¬è€¨€ÌÄ°4(€€€€€€€€€€€€€€€€€€€€€€€€€€€€Ü4(€€€€€€€€€€€€€€€€€€€€¤ì4(€€€€€€€€€€€€€€€€€€€µ…Ñ•É¥…°€ôÍİ¥Ñ €¡Í•±•Ñ½È¤ì4(€€€€€€€€€€€€€€€€€€€€€€€…Í”€À€´ø5…Ñ•É¥…°¹A=1%M!}9M%Qì4(€€€€€€€€€€€€€€€€€€€€€€€…Í”€Ä€´ø5…Ñ•É¥…°¹=		1MQ=9ì4(€€€€€€€€€€€€€€€€€€€€€€€…Í”€È€´ø5…Ñ•É¥…°¹9M%Qì4(€€€€€€€€€€€€€€€€€€€€€€€‘•™…Õ±Ğ€´ø5…Ñ•É¥…°¹IY0ì4(€€€€€€€€€€€€€€€€€€€ôì4(€€€€€€€€€€€€€€€ô4(4(€€€€€€€€€€€€€€€5…Ñ•É¥…°™¥¹…±5…Ñ•É¥…°€ôµ…Ñ•É¥…°ì4(€€€€€€€€€€€€€€€Á±…”¡ÅÕ•Õ”°Í•Ñ	±½¬°4(€€€€€€€€€€€€€€€€€€€€€€€à°4(€€€€€€€€€€€€€€€€€€€€€€€‰…Í•d°4(€€€€€€€€€€€€€€€€€€€€€€€™è°4(€€€€€€€€€€€€€€€€€€€€€€€™¥¹…±5…Ñ•É¥…°4(€€€€€€€€€€€€€€€€¤ì4(€€€€€€€€€€€ô4(€€€€€€€ô4(4(€€€€€€€€¼¼	½É¹•Ì‰…ÍÍ•ÌÅÕ¤…‘É•¹Ğ°•¹ÑË¥”Í…¹ÌŸ©¹•È±•Ì©½Õ•ÕÉÌ¸4(€€€€€€€™½È€¡¥¹Ğ‘à€è¹•Ü¥¹Ñmuì4(€€€€€€€€€€€€€€€€µAAI=!}!1}]%Q °4(€€€€€€€€€€€€€€€AAI=!}!1}]%Q 4(€€€€€€€ô¤ì4(€€€€€€€€€€€¥¹Ğà€ô•¹Ñ•É`€¬‘àì4(€€€€€€€€€€€Á±…”¡ÅÕ•Õ”°Í•Ñ	±½¬°4(€€€€€€€€€€€€€€€€€€€à°4(€€€€€€€€€€€€€€€€€€€‰…Í•d€¬€Ä°4(€€€€€€€€€€€€€€€€€€€•¹‘h€´€È°4(€€€€€€€€€€€€€€€€€€€5…Ñ•É¥…°¹MQ=9}	I%-}]104(€€€€€€€€€€€€¤ì4(€€€€€€€€€€€Á±…”¡ÅÕ•Õ”°Í•Ñ	±½¬°4(€€€€€€€€€€€€€€€€€€€à°4(€€€€€€€€€€€€€€€€€€€‰…Í•d€¬€È°4(€€€€€€€€€€€€€€€€€€€•¹‘h€´€È°4(€€€€€€€€€€€€€€€€€€€5…Ñ•É¥…°¹19QI84(€€€€€€€€€€€€¤ì4(€€€€€€€ô4(€€€ô4(4(€€€ÁÉ¥Ù…Ñ”ÍÑ…Ñ¥ŒÙ½¥Á±…”¡EÕ•Õ”ñIÕ¹¹…‰±”øÅÕ•Õ”°4(€€€€€€€€€€€€€€€€€€€€€€€€€€€€€Q•ÉÉ…¥¹5…¹…•È¹M•Ñ	±½¬Í•Ñ	±½¬°4(€€€€€€€€€€€€€€€€€€€€€€€€€€€€€¥¹Ğà°4(€€€€€€€€€€€€€€€€€€€€€€€€€€€€€¥¹Ğä°4(€€€€€€€€€€€€€€€€€€€€€€€€€€€€€¥¹Ğè°4(€€€€€€€€€€€€€€€€€€€€€€€€€€€€€5…Ñ•É¥…°µ…Ñ•É¥…°¤ì4(€€€€€€€ÅÕ•Õ”¹…‘  ¤€´øÍ•Ñ	±½¬¹Í•Ğ¡à°ä°è°µ…Ñ•É¥…°¤¤ì4(€€€ô4(4(€€€ÁÉ¥Ù…Ñ”ÍÑ…Ñ¥ŒÙ½¥ÍÑ…¥È¡EÕ•Õ”ñIÕ¹¹…‰±”øÅÕ•Õ”°4(€€€€€€€€€€€€€€€€€€€€€€€€€€€€€]½É±İ½É±°4(€€€€€€€€€€€€€€€€€€€€€€€€€€€€€Q•ÉÉ…¥¹5…¹…•È¹M•Ñ	±½¬Í•Ñ	±½¬°4(€€€€€€€€€€€€€€€€€€€€€€€€€€€€€¥¹Ğà°4(€€€€€€€€€€€€€€€€€€€€€€€€€€€€€¥¹Ğä°4(€€€€€€€€€€€€€€€€€€€€€€€€€€€€€¥¹Ğè°4(€€€€€€€€€€€€€€€€€€€€€€€€€€€€€5…Ñ•É¥…°µ…Ñ•É¥…°°4(€€€€€€€€€€€€€€€€€€€€€€€€€€€€€	±½­…”™…¥¹œ°4(€€€€€€€€€€€€€€€€€€€€€€€€€€€€€MÑ…¥ÉÌ¹!…±˜¡…±˜°4(€€€€€€€€€€€€€€€€€€€€€€€€€€€€€MÑ…¥ÉÌ¹M¡…Á”Í¡…Á”¤ì4(€€€€€€€Á±…”¡ÅÕ•Õ”°Í•Ñ	±½¬°à°ä°è°µ…Ñ•É¥…°¤ì4(€€€€€€€ÅÕ•Õ”¹…‘  ¤€´øY¥±±…•MÑå±”¹Í•ÑMÑ…¥È 4(€€€€€€€€€€€€€€€İ½É±°4(€€€€€€€€€€€€€€€à°4(€€€€€€€€€€€€€€€ä°4(€€€€€€€€€€€€€€€è°4(€€€€€€€€€€€€€€€µ…Ñ•É¥…°°4(€€€€€€€€€€€€€€€™…¥¹œ°4(€€€€€€€€€€€€€€€¡…±˜°4(€€€€€€€€€€€€€€€Í¡…Á”4(€€€€€€€€¤¤ì4(€€€ô4(4(€€€ÁÉ¥Ù…Ñ”ÍÑ…Ñ¥ŒÙ½¥Í±…ˆ¡EÕ•Õ”ñIÕ¹¹…‰±”øÅÕ•Õ”°4(€€€€€€€€€€€€€€€€€€€€€€€€€€€€]½É±İ½É±°4(€€€€€€€€€€€€€€€€€€€€€€€€€€€€Q•ÉÉ…¥¹5…¹…•È¹M•Ñ	±½¬Í•Ñ	±½¬°4(€€€€€€€€€€€€€€€€€€€€€€€€€€€€¥¹Ğà°4(€€€€€€€€€€€€€€€€€€€€€€€€€€€€¥¹Ğä°4(€€€€€€€€€€€€€€€€€€€€€€€€€€€€¥¹Ğè°4(€€€€€€€€€€€€€€€€€€€€€€€€€€€€5…Ñ•É¥…°µ…Ñ•É¥…°°4(€€€€€€€€€€€€€€€€€€€€€€€€€€€€M±…ˆ¹QåÁ”ÑåÁ”¤ì4(€€€€€€€Á±…”¡ÅÕ•Õ”°Í•Ñ	±½¬°à°ä°è°µ…Ñ•É¥…°¤ì4(€€€€€€€ÅÕ•Õ”¹…‘  ¤€´øY¥±±…•MÑå±”¹Í•ÑM±…ˆ 4(€€€€€€€€€€€€€€€İ½É±°4(€€€€€€€€€€€€€€€à°4(€€€€€€€€€€€€€€€ä°4(€€€€€€€€€€€€€€€è°4(€€€€€€€€€€€€€€€µ…Ñ•É¥…°°4(€€€€€€€€€€€€€€€ÑåÁ”4(€€€€€€€€¤¤ì4(€€€ô4(4(€€€ÁÉ¥Ù…Ñ”ÍÑ…Ñ¥Œ‰½½±•…¸µ•É±½¹Ğ¡¥¹Ğ½½É‘¥¹…Ñ”¤ì4(€€€€€€€É•ÑÕÉ¸5…Ñ ¹™±½½É5½¡½½É‘¥¹…Ñ”°€Ğ¤€ğô€Äì4(€€€ô4(4(€€€ÁÉ¥Ù…Ñ”ÍÑ…Ñ¥Œ‰½½±•…¸¥ÍM±¥Ñ½½É‘¥¹…Ñ”¡¥¹Ğà°4(€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€¥¹Ğè°4(€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€¥¹Ğµ¥¹`°4(€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€¥¹Ğµ…á`¤ì4(€€€€€€€É•ÑÕÉ¸5…Ñ ¹™±½½É5½ 4(€€€€€€€€€€€€€€€…á¥Í½½É‘¥¹…Ñ”¡à°è°µ¥¹`°µ…á`¤°4(€€€€€€€€€€€€€€€€ä4(€€€€€€€€¤€ôô€Ğì4(€€€ô4(4(€€€ÁÉ¥Ù…Ñ”ÍÑ…Ñ¥Œ5…Ñ•É¥…°İ…±­İ…åMÑ½¹”¡¥¹Ğà°¥¹Ğè¤ì4(€€€€€€€É•ÑÕÉ¸5…Ñ ¹™±½½É5½¡à€¨€ÄÌ€¬è€¨€Ü°€ä¤€ôô€À4(€€€€€€€€€€€€€€€€ü5…Ñ•É¥…°¹5=MMe}MQ=9}	I%-L4(€€€€€€€€€€€€€€€€è5…Ñ•É¥…°¹A=1%M!}9M%Qì4(€€€ô4(4(€€€ÁÉ¥Ù…Ñ”ÍÑ…Ñ¥Œ5…Ñ•É¥…°™½Õ¹‘…Ñ¥½¹MÑ½¹”¡¥¹Ğà°¥¹Ğä°¥¹Ğè¤ì4(€€€€€€€¥¹ĞÍ•±•Ñ½È€ô5…Ñ ¹™±½½É5½ 4(€€€€€€€€€€€€€€€à€¨€Ää€¬ä€¨€ÄÄ€¬è€¨€ÈÌ°4(€€€€€€€€€€€€€€€€Ü4(€€€€€€€€¤ì4(€€€€€€€É•ÑÕÉ¸Í•±•Ñ½È€ğô€Ä4(€€€€€€€€€€€€€€€€ü5…Ñ•É¥…°¹AM1Q}	I%-L4(€€€€€€€€€€€€€€€€è5…Ñ•É¥…°¹=		1}AM1Qì4(€€€ô4(4(€€€ÁÉ¥Ù…Ñ”ÍÑ…Ñ¥Œ5…Ñ•É¥…°Á…ÑÑ•É¹•‘MÑ½¹”¡5…Ñ•É¥…°ÁÉ¥µ…Éä°4(€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€¥¹Ğà°4(€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€¥¹Ğä°4(€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€¥¹Ğè¤ì4(€€€€€€€¥¹ĞÍ•±•Ñ½È€ô5…Ñ ¹™±½½É5½ 4(€€€€€€€€€€€€€€€à€¨€ÌÄ€¬ä€¨€ÄÌ€¬è€¨€ÄÜ°4(€€€€€€€€€€€€€€€€Èä4(€€€€€€€€¤ì4(€€€€€€€É•ÑÕÉ¸Íİ¥Ñ €¡Í•±•Ñ½È¤ì4(€€€€€€€€€€€…Í”€À°€Ü€´ø5…Ñ•É¥…°¹5=MMe}MQ=9}	I%-Lì4(€€€€€€€€€€€…Í”€Ì€´ø5…Ñ•É¥…°¹I-}MQ=9}	I%-Lì4(€€€€€€€€€€€…Í”€ÄÄ€´ø5…Ñ•É¥…°¹=		1MQ=9ì4(€€€€€€€€€€€…Í”€ÄÜ€´ø5…Ñ•É¥…°¹9M%Qì4(€€€€€€€€€€€…Í”€ÈÌ€´ø5…Ñ•É¥…°¹AM1Q}	I%-Lì4(€€€€€€€€€€€‘•™…Õ±Ğ€´øÁÉ¥µ…Éä€ôô¹Õ±°4(€€€€€€€€€€€€€€€€€€€€ü5…Ñ•É¥…°¹MQ=9}	I%-L4(€€€€€€€€€€€€€€€€€€€€èÁÉ¥µ…Éäì4(€€€€€€€ôì4(€€€ô4(4(€€€ÁÉ¥Ù…Ñ”ÍÑ…Ñ¥Œ‰½½±•…¸¥Í=ÕÑ•É…”¡¥¹Ğà°4(€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€¥¹Ğè°4(€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€¥¹Ğµ¥¹`°4(€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€¥¹Ğµ…á`°4(€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€¥¹Ğµ¥¹h°4(€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€¥¹Ğµ…áh¤ì4(€€€€€€€É•ÑÕÉ¸à€ôôµ¥¹`4(€€€€€€€€€€€€€€€ñğà€ôôµ…á`4(€€€€€€€€€€€€€€€ñğè€ôôµ¥¹h4(€€€€€€€€€€€€€€€ñğè€ôôµ…áhì4(€€€ô4(4(€€€ÁÉ¥Ù…Ñ”ÍÑ…Ñ¥Œ	±½­…”½ÕÑİ…É‘…”¡¥¹Ğà°4(€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€¥¹Ğè°4(€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€¥¹Ğµ¥¹`°4(€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€¥¹Ğµ…á`°4(€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€¥¹Ğµ¥¹h°4(€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€¥¹Ğµ…áh¤ì4(€€€€€€€¥˜€¡à€ôôµ¥¹`¤ì4(€€€€€€€€€€€É•ÑÕÉ¸	±½­…”¹]MPì4(€€€€€€€ô4(€€€€€€€¥˜€¡à€ôôµ…á`¤ì4(€€€€€€€€€€€É•ÑÕÉ¸	±½­…”¹MPì4(€€€€€€€ô4(€€€€€€€¥˜€¡è€ôôµ¥¹h¤ì4(€€€€€€€€€€€É•ÑÕÉ¸	±½­…”¹9=IQ ì4(€€€€€€€ô4(€€€€€€€¥˜€¡è€ôôµ…áh¤ì4(€€€€€€€€€€€É•ÑÕÉ¸	±½­…”¹M=UQ ì4(€€€€€€€ô4(€€€€€€€É•ÑÕÉ¸	±½­…”¹M1ì4(€€€ô4(4(€€€ÁÉ¥Ù…Ñ”ÍÑ…Ñ¥Œ¥¹Ğ…á¥Í½½É‘¥¹…Ñ”¡¥¹Ğà°4(€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€¥¹Ğè°4(€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€¥¹Ğµ¥¹`°4(€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€¥¹Ğµ…á`¤ì4(€€€€€€€É•ÑÕÉ¸à€ôôµ¥¹`ñğà€ôôµ…á`€üè€èàì4(€€€ô4(4(€€€ÁÉ¥Ù…Ñ”ÍÑ…Ñ¥Œ‰½½±•…¸…É‘¥¹…°¡	±½­…”™…”¤ì4(€€€€€€€É•ÑÕÉ¸™…”€ôô	±½­…”¹9=IQ 4(€€€€€€€€€€€€€€€ñğ™…”€ôô	±½­…”¹M=UQ 4(€€€€€€€€€€€€€€€ñğ™…”€ôô	±½­…”¹MP4(€€€€€€€€€€€€€€€ñğ™…”€ôô	±½­…”¹]MPì4(€€€ô4)ô4(
