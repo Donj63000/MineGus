@@ -180,6 +180,7 @@ class VillageLayoutPlannerTest {
         assertEquals(10, legacy.houseCountMax());
         assertEquals(3, legacy.terrainMaxStep());
         assertEquals("high", legacy.decorDensity());
-        assertEquals(34, legacy.decorationBudget());
+        assertEquals(42, legacy.decorationBudget());
+        assertEquals(10, legacy.treeBudget());
     }
 }

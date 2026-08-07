@@ -360,7 +360,9 @@ public final class Disposition {
                 continue;
             }
 
-            int interval = street.type() == StreetType.MAIN ? 10 : 14;
+            // Un rythme plus serré éclaire les façades sans transformer les
+            // rues en alignement uniforme : les côtés restent alternés.
+            int interval = street.type() == StreetType.MAIN ? 8 : 11;
             if (street.horizontal()) {
                 int start = street.minX();
                 int end = street.maxX();

@@ -60,6 +60,7 @@ import org.example.mineur.MiningSpeed;
 import org.example.mineur.QuarryIterator;
 import org.example.mineur.TunnelIterator;
 import org.example.mineur.VeinFirstIterator;
+import org.example.mineur.builders.MineCabinBuilder;
 import org.example.mineur.builders.StairBuilder;
 import org.example.mineur.builders.SupportBuilder;
 import org.example.mineur.builders.TorchPlacer;
@@ -89,6 +90,7 @@ public class Mineur implements CommandExecutor, Listener {
     private final NamespacedKey containerSessionKey;
     private final NamespacedKey selectorKey;
     private final NamespacedKey entitySessionKey;
+    private final MineCabinBuilder cabinBuilder;
 
     private final List<MiningSessionState> sessions = new ArrayList<>();
     private final Map<UUID, Selection> selections = new HashMap<>();
@@ -103,6 +105,7 @@ public class Mineur implements CommandExecutor, Listener {
         this.containerSessionKey = new NamespacedKey(plugin, "mineur-session");
         this.selectorKey = new NamespacedKey(plugin, "mineur-selector");
         this.entitySessionKey = new NamespacedKey(plugin, "mineur-entity-session");
+        this.cabinBuilder = new MineCabinBuilder(plugin);
 
         plugin.saveDefaultConfig();
 
@@ -202,7 +205,8 @@ public class Mineur implements CommandExecutor, Listener {
 
         lines.add(ChatColor.GOLD + "/mineur stop" + ChatColor.GRAY + " | " + ChatColor.GOLD + "/mineur arreter"
                 + ChatColor.GRAY + " | " + ChatColor.GOLD + "/mineur off"
-                + ChatColor.GRAY + " : arrete et nettoie completement la session.");
+                + ChatColor.GRAY
+                + " : arrête le mineur ; le stockage et les constructions restent dans le monde.");
 
         lines.add(ChatColor.GOLD + "/mineur info" + ChatColor.GRAY + " | " + ChatColor.GOLD + "/mineur status"
                 + ChatColor.GRAY + " : affiche zone, monde, pattern, vitesse, bonus et etat du mineur selectionne.");
@@ -297,12 +301,6 @@ public class Mineur implements CommandExecutor, Listener {
             return;
         }
 
-        if (findOverlappingSession(world, minX, maxX, minZ, maxZ, 3) != null) {
-            player.sendMessage(CMD_PREFIX + ChatColor.RED
-                    + "Cette zone chevauche une mine existante ou son stockage.");
-            return;
-        }
-
         int activeMines = getSessionsForOwner(ownerId).size();
         int maxMines = getMaxMinesForOwner(ownerId);
         if (activeMines >= maxMines) {
@@ -343,11 +341,61 @@ public class Mineur implements CommandExecutor, Listener {
         state.maxTunnelSections = Math.max(0,
                 plugin.getConfig().getInt("mineur.tunnel.max-sections", 0));
 
-        if (!state.useBarrelMaster && !canCreateAutomaticStorage(state)) {
+        MineCabinBuilder.Plan preparedCabinPlan = null;
+        if (!state.useBarrelMaster && isAutomaticMineStructureEnabled()) {
+            try {
+                preparedCabinPlan = createCabinPlan(state);
+            } catch (IllegalArgumentException exception) {
+                player.sendMessage(CMD_PREFIX + ChatColor.RED
+                        + "Impossible de dimensionner le chevalement : " + exception.getMessage());
+                return;
+            }
+
+            MineCabinBuilder.ValidationResult envelope = cabinBuilder.validateEnvelope(
+                    world,
+                    preparedCabinPlan,
+                    getMaximumLoadedChunks()
+            );
+            if (!envelope.valid()) {
+                player.sendMessage(CMD_PREFIX + ChatColor.RED + envelope.message());
+                return;
+            }
+            applyStructureMetadata(state, preparedCabinPlan);
+        } else if (!state.useBarrelMaster && !canCreateAutomaticStorage(state)) {
+            /*
+             * Repli de compatibilité lorsque l'administrateur désactive
+             * explicitement la cabane automatique.
+             */
             player.sendMessage(CMD_PREFIX + ChatColor.RED
                     + "Impossible de placer les coffres sans remplacer des blocs existants.");
             player.sendMessage(CMD_PREFIX + ChatColor.YELLOW
                     + "Libère les emplacements autour de la zone, un bloc au-dessus du niveau sélectionné.");
+            return;
+        }
+
+        int footprintMinX = preparedCabinPlan != null
+                ? preparedCabinPlan.bounds().minX()
+                : minX;
+        int footprintMaxX = preparedCabinPlan != null
+                ? preparedCabinPlan.bounds().maxX()
+                : maxX;
+        int footprintMinZ = preparedCabinPlan != null
+                ? preparedCabinPlan.bounds().minZ()
+                : minZ;
+        int footprintMaxZ = preparedCabinPlan != null
+                ? preparedCabinPlan.bounds().maxZ()
+                : maxZ;
+        int overlapMargin = preparedCabinPlan != null ? 1 : 3;
+        if (findOverlappingSession(
+                world,
+                footprintMinX,
+                footprintMaxX,
+                footprintMinZ,
+                footprintMaxZ,
+                overlapMargin
+        ) != null) {
+            player.sendMessage(CMD_PREFIX + ChatColor.RED
+                    + "Cette zone chevauche une mine, une cabane ou un stockage existant.");
             return;
         }
 
@@ -358,7 +406,7 @@ public class Mineur implements CommandExecutor, Listener {
         sessions.add(state);
         registerOwnerSession(state, true);
         try {
-            startRuntime(state, true);
+            startRuntime(state, true, preparedCabinPlan);
         } catch (RuntimeException exception) {
             RuntimeSession failed = runtimes.remove(state.id);
             if (failed != null) {
@@ -381,6 +429,12 @@ public class Mineur implements CommandExecutor, Listener {
 
         player.sendMessage(CMD_PREFIX + ChatColor.GREEN
                 + "Mineur lancé pour une zone de " + width + "x" + length + ".");
+        if (preparedCabinPlan != null) {
+            player.sendMessage(CMD_PREFIX + ChatColor.GOLD
+                    + "Chevalement construit : plateforme à Y " + preparedCabinPlan.deckY()
+                    + ", cabane luxueuse et "
+                    + preparedCabinPlan.chestPairs().size() + " coffres doubles.");
+        }
         player.sendMessage(CMD_PREFIX + ChatColor.GRAY + "Mineurs actifs : " + ChatColor.GREEN
                 + getSessionsForOwner(ownerId).size() + ChatColor.GRAY + "/"
                 + ChatColor.GREEN + maxMines + ChatColor.GRAY + ".");
@@ -712,7 +766,14 @@ public class Mineur implements CommandExecutor, Listener {
             player.sendMessage(ChatColor.GRAY + " • Tunnel : direction " + ChatColor.AQUA + formatDirection(state.tunnelDirection)
                     + ChatColor.GRAY + ", hauteur " + ChatColor.AQUA + Math.max(1, state.tunnelHeight));
         }
-        player.sendMessage(ChatColor.GRAY + " • Conteneurs : " + state.containers.size());
+        if (state.structureVersion >= MineCabinBuilder.STRUCTURE_VERSION) {
+            player.sendMessage(ChatColor.GRAY + " • Stockage de la cabane : "
+                    + ChatColor.GOLD + (state.containers.size() / 2)
+                    + ChatColor.GRAY + " coffres doubles ("
+                    + state.containers.size() + " blocs de coffre).");
+        } else {
+            player.sendMessage(ChatColor.GRAY + " • Conteneurs : " + state.containers.size());
+        }
         player.sendMessage(ChatColor.GRAY + " • Joueurs autorisés : " + ChatColor.GREEN + state.trusted.size());
         player.sendMessage(ChatColor.GRAY + " • Statut : " + formatSessionStatus(state));
     }
@@ -1244,13 +1305,22 @@ public class Mineur implements CommandExecutor, Listener {
                     continue;
                 }
 
+                MiningSessionState.StructureBounds persistedStructure = state.structureBounds;
                 MiningSessionState overlap = findOverlappingSession(
                         state.base.getWorld(),
-                        state.base.getBlockX(),
-                        safeRectangleMaximum(state.base.getBlockX(), state.width),
-                        state.base.getBlockZ(),
-                        safeRectangleMaximum(state.base.getBlockZ(), state.length),
-                        3
+                        persistedStructure != null
+                                ? persistedStructure.minX()
+                                : state.base.getBlockX(),
+                        persistedStructure != null
+                                ? persistedStructure.maxX()
+                                : safeRectangleMaximum(state.base.getBlockX(), state.width),
+                        persistedStructure != null
+                                ? persistedStructure.minZ()
+                                : state.base.getBlockZ(),
+                        persistedStructure != null
+                                ? persistedStructure.maxZ()
+                                : safeRectangleMaximum(state.base.getBlockZ(), state.length),
+                        persistedStructure != null ? 1 : 3
                 );
                 if (overlap == null && state.cursor != null) {
                     overlap = findOverlappingSession(
@@ -1308,6 +1378,12 @@ public class Mineur implements CommandExecutor, Listener {
     }
 
     private void startRuntime(MiningSessionState state, boolean freshlyCreated) {
+        startRuntime(state, freshlyCreated, null);
+    }
+
+    private void startRuntime(MiningSessionState state,
+                              boolean freshlyCreated,
+                              MineCabinBuilder.Plan preparedCabinPlan) {
         normalizeLoadedState(state);
 
         RuntimeSession previous = runtimes.remove(state.id);
@@ -1318,30 +1394,45 @@ public class Mineur implements CommandExecutor, Listener {
         RuntimeSession runtime = new RuntimeSession(state);
         runtimes.put(state.id, runtime);
 
-        refreshChunkTickets(state, runtime);
-        clearZoneForState(state);
+        try {
+            /*
+             * Les tickets couvrent aussi l'emprise persistée du chevalement.
+             * Tous les blocs sont donc lus et écrits dans des chunks déjà
+             * chargés, sans coût synchrone caché au milieu de la transaction.
+             */
+            refreshChunkTickets(state, runtime);
+            clearZoneForState(state);
 
-        boolean allowBlockPlacement = allowMinerBlockPlacement();
+            boolean allowBlockPlacement = allowMinerBlockPlacement();
 
-        ensureContainers(state, runtime, freshlyCreated);
-        runtime.router = createInventoryRouter(runtime);
-        runtime.decoration = allowBlockPlacement && state.pattern == MiningPattern.QUARRY
-                ? new DecorationDelegate(state)
-                : null;
+            ensureContainers(state, runtime, freshlyCreated, preparedCabinPlan);
+            runtime.router = createInventoryRouter(runtime);
+            runtime.decoration = allowBlockPlacement && state.pattern == MiningPattern.QUARRY
+                    ? new DecorationDelegate(state)
+                    : null;
 
-        if (state.paused) {
-            runtime.suspend();
-            return;
-        }
-        activateRuntime(runtime);
+            if (state.paused) {
+                runtime.commitFreshConstruction();
+                runtime.suspend();
+                return;
+            }
+            activateRuntime(runtime);
 
-        /*
-         * Le cadre est posé en dernier. Si la création du stockage, du PNJ, des
-         * gardes ou de la boucle échoue, aucun bloc décoratif ne reste dans la
-         * zone malgré l'annulation de la session.
-         */
-        if (freshlyCreated && allowBlockPlacement && state.pattern == MiningPattern.QUARRY) {
-            ensureFrame(state);
+            /*
+             * L'ancien cadre de pierre reste disponible comme repli lorsque la
+             * nouvelle structure est explicitement désactivée. Une cabane ne
+             * reçoit jamais ce cadre supplémentaire.
+             */
+            if (freshlyCreated
+                    && state.structureVersion < MineCabinBuilder.STRUCTURE_VERSION
+                    && allowBlockPlacement
+                    && state.pattern == MiningPattern.QUARRY) {
+                ensureFrame(state);
+            }
+            runtime.commitFreshConstruction();
+        } catch (RuntimeException exception) {
+            runtime.rollbackFreshConstruction();
+            throw exception;
         }
     }
 
@@ -1810,6 +1901,17 @@ public class Mineur implements CommandExecutor, Listener {
             throw new IllegalStateException("Coordonnées de session hors limites.");
         }
         addChunkRectangle(desired, minX, (int) maxX, minZ, (int) maxZ);
+
+        MiningSessionState.StructureBounds structureBounds = state.structureBounds;
+        if (structureBounds != null) {
+            addChunkRectangle(
+                    desired,
+                    structureBounds.minX(),
+                    structureBounds.maxX(),
+                    structureBounds.minZ(),
+                    structureBounds.maxZ()
+            );
+        }
         desired.add(chunkKey(state.base.getBlockX() >> 4, state.base.getBlockZ() >> 4));
 
         for (Vector vector : state.containers) {
@@ -1933,7 +2035,8 @@ public class Mineur implements CommandExecutor, Listener {
 
     private void ensureContainers(MiningSessionState state,
                                   RuntimeSession runtime,
-                                  boolean freshlyCreated) {
+                                  boolean freshlyCreated,
+                                  MineCabinBuilder.Plan preparedCabinPlan) {
         runtime.containerLocations.clear();
         World world = state.base != null ? state.base.getWorld() : null;
         if (world == null) {
@@ -1946,6 +2049,56 @@ public class Mineur implements CommandExecutor, Listener {
         }
 
         state.containers.clear();
+        if (!state.useBarrelMaster && isAutomaticMineStructureEnabled()) {
+            MineCabinBuilder.Plan plan = preparedCabinPlan != null
+                    ? preparedCabinPlan
+                    : createCabinPlan(state);
+            MineCabinBuilder.ValidationResult envelope = cabinBuilder.validateEnvelope(
+                    world,
+                    plan,
+                    getMaximumLoadedChunks()
+            );
+            if (!envelope.valid()) {
+                throw new IllegalStateException(envelope.message());
+            }
+            applyStructureMetadata(state, plan);
+
+            Player constructionActor = state.owner != null
+                    ? Bukkit.getPlayer(state.owner)
+                    : null;
+            MineCabinBuilder.BuildResult construction = cabinBuilder.build(
+                    world,
+                    plan,
+                    constructionActor,
+                    fireStructureProtectionEvents()
+            );
+            runtime.freshConstruction = construction;
+
+            try {
+                if (construction.chestLocations().size() != plan.chestBlockCount()
+                        || construction.chestLocations().size() > getMaximumStorageContainers()) {
+                    throw new IllegalStateException(
+                            "Nombre de coffres de la cabane incohérent."
+                    );
+                }
+                for (Location location : construction.chestLocations()) {
+                    registerContainer(state, runtime, location.getBlock());
+                }
+            } catch (RuntimeException exception) {
+                runtime.rollbackFreshConstruction();
+                throw exception;
+            }
+
+            state.waitingStorage = runtime.containerLocations.isEmpty();
+            if (state.waitingStorage) {
+                runtime.rollbackFreshConstruction();
+                throw new IllegalStateException(
+                        "La salle de stockage n'a enregistré aucun coffre."
+                );
+            }
+            return;
+        }
+
         if (!state.useBarrelMaster) {
             List<Location> storage = computeStorageLocations(state);
             for (Location location : storage) {
@@ -2065,7 +2218,17 @@ public class Mineur implements CommandExecutor, Listener {
         List<Vector> persisted = new ArrayList<>(state.containers);
         state.containers.clear();
         Set<String> seen = new HashSet<>();
+
+        /*
+         * Une baisse ultérieure de max-containers ne doit pas abandonner des
+         * moitiés d'un coffre double déjà construit et signé. Les nouvelles
+         * cabanes respectent toujours la limite courante ; une cabane persistée
+         * restaure, elle, ses cibles historiques bornées à 256 blocs.
+         */
         int maximum = getMaximumStorageContainers();
+        if (state.structureVersion >= MineCabinBuilder.STRUCTURE_VERSION) {
+            maximum = Math.max(maximum, Math.min(256, persisted.size()));
+        }
 
         for (Vector vector : persisted) {
             if (state.containers.size() >= maximum) {
@@ -2093,7 +2256,7 @@ public class Mineur implements CommandExecutor, Listener {
                     || !canRestorePersistedContainer(block, state)) {
                 continue;
             }
-            registerContainer(state, runtime, block);
+            registerContainer(state, runtime, block, maximum);
         }
 
         if (runtime.containerLocations.isEmpty()) {
@@ -2111,11 +2274,25 @@ public class Mineur implements CommandExecutor, Listener {
     private void registerContainer(MiningSessionState state,
                                    RuntimeSession runtime,
                                    Block block) {
+        registerContainer(
+                state,
+                runtime,
+                block,
+                getMaximumStorageContainers()
+        );
+    }
+
+    private void registerContainer(MiningSessionState state,
+                                   RuntimeSession runtime,
+                                   Block block,
+                                   int maximumContainers) {
         if (state == null || runtime == null || block == null
                 || !(block.getState() instanceof Container)) {
             throw new IllegalArgumentException("Conteneur de mine invalide.");
         }
-        if (runtime.containerLocations.size() >= getMaximumStorageContainers()) {
+
+        int safeMaximum = Math.max(1, Math.min(256, maximumContainers));
+        if (runtime.containerLocations.size() >= safeMaximum) {
             throw new IllegalStateException("Limite de conteneurs atteinte.");
         }
 
@@ -2221,6 +2398,23 @@ public class Mineur implements CommandExecutor, Listener {
             return false;
         }
 
+        /*
+         * L'emprise du chevalement est déjà validée, bornée et proche de la
+         * mine lors de la désérialisation. Elle constitue donc l'autorité la
+         * plus précise pour les coffres de la salle, y compris si un
+         * administrateur réduit ensuite storage.maximum-distance.
+         */
+        MiningSessionState.StructureBounds structure = state.structureBounds;
+        if (structure != null
+                && vector.getBlockY() >= structure.minY()
+                && vector.getBlockY() <= structure.maxY()
+                && structure.containsHorizontal(
+                        vector.getBlockX(),
+                        vector.getBlockZ()
+                )) {
+            return true;
+        }
+
         int maximumDistance = Math.max(8, Math.min(64,
                 plugin.getConfig().getInt("mineur.storage.maximum-distance", 24)));
 
@@ -2252,7 +2446,7 @@ public class Mineur implements CommandExecutor, Listener {
         PersistentDataContainer data = container.getPersistentDataContainer();
         data.set(containerOwnerKey, PersistentDataType.STRING, state.owner.toString());
         data.set(containerSessionKey, PersistentDataType.STRING, state.id.toString());
-        container.update(true);
+        container.update(true, false);
     }
 
     /**
@@ -2325,7 +2519,7 @@ public class Mineur implements CommandExecutor, Listener {
         }
         data.remove(containerOwnerKey);
         data.remove(containerSessionKey);
-        container.update(true);
+        container.update(true, false);
     }
 
     private void cleanupContainerMetadata(MiningSessionState state) {
@@ -3020,7 +3214,8 @@ public class Mineur implements CommandExecutor, Listener {
 
         saveAllSessions();
         if (issuer != null) {
-            issuer.sendMessage(CMD_PREFIX + ChatColor.YELLOW + "Session arrêtée et nettoyée.");
+            issuer.sendMessage(CMD_PREFIX + ChatColor.YELLOW
+                    + "Session arrêtée. Le stockage et les constructions restent en place.");
         }
     }
 
@@ -3135,6 +3330,30 @@ public class Mineur implements CommandExecutor, Listener {
             throw new IllegalStateException(
                     "La carrière persistée dépasse la bordure du monde."
             );
+        }
+
+        MiningSessionState.StructureBounds persistedStructure = state.structureBounds;
+        if (persistedStructure != null) {
+            if (persistedStructure.minY() < effectiveWorldMinHeight(world)
+                    || persistedStructure.maxY() >= effectiveWorldMaxHeight(world)
+                    || !isRectangleInsideWorldBorder(
+                    world,
+                    persistedStructure.minX(),
+                    persistedStructure.maxX(),
+                    persistedStructure.minZ(),
+                    persistedStructure.maxZ(),
+                    state.base.getBlockY()
+            )) {
+                throw new IllegalStateException(
+                        "Le chevalement persisté dépasse les limites du monde."
+                );
+            }
+            state.structureVersion = Math.max(
+                    MineCabinBuilder.STRUCTURE_VERSION,
+                    state.structureVersion
+            );
+        } else {
+            state.structureVersion = 0;
         }
 
         state.tunnelSectionSize = Math.max(1, Math.min(
@@ -3400,12 +3619,72 @@ public class Mineur implements CommandExecutor, Listener {
 
     private int getMaximumStorageContainers() {
         /*
-         * Le stockage automatique utilise jusqu'à huit coffres. La borne basse
-         * garantit donc qu'une configuration trop petite ne crée pas une
-         * initialisation partielle.
+         * La limite compte les blocs de coffre, donc deux entrées par coffre
+         * double. La borne basse garantit au moins quatre coffres doubles dans
+         * une configuration personnalisée très restrictive.
          */
         return Math.max(8, Math.min(256,
                 plugin.getConfig().getInt("mineur.storage.max-containers", 32)));
+    }
+
+    private boolean isAutomaticMineStructureEnabled() {
+        return plugin.getConfig().getBoolean("mineur.structure.enabled", true);
+    }
+
+    private boolean fireStructureProtectionEvents() {
+        return plugin.getConfig().getBoolean(
+                "mineur.structure.fire-protection-events",
+                true
+        );
+    }
+
+    private MineCabinBuilder.Settings getCabinSettings() {
+        int maximumContainerPairs = Math.max(4, getMaximumStorageContainers() / 2);
+        int requestedPairs = Math.max(4, Math.min(
+                maximumContainerPairs,
+                plugin.getConfig().getInt("mineur.structure.double-chests", 16)
+        ));
+
+        return new MineCabinBuilder.Settings(
+                plugin.getConfig().getInt("mineur.structure.platform-height", 5),
+                plugin.getConfig().getInt("mineur.structure.cabin-min-size", 15),
+                plugin.getConfig().getInt("mineur.structure.cabin-max-size", 17),
+                plugin.getConfig().getInt("mineur.structure.wall-height", 5),
+                requestedPairs,
+                plugin.getConfig().getInt("mineur.structure.foundation-depth", 6),
+                plugin.getConfig().getInt("mineur.structure.max-planned-blocks", 12_000)
+        );
+    }
+
+    private MineCabinBuilder.Plan createCabinPlan(MiningSessionState state) {
+        if (state == null || state.base == null) {
+            throw new IllegalArgumentException("Base de mine absente.");
+        }
+        return MineCabinBuilder.createPlan(
+                state.base.getBlockX(),
+                state.base.getBlockY(),
+                state.base.getBlockZ(),
+                Math.max(1, state.width),
+                Math.max(1, state.length),
+                getCabinSettings()
+        );
+    }
+
+    private void applyStructureMetadata(MiningSessionState state,
+                                        MineCabinBuilder.Plan plan) {
+        if (state == null || plan == null) {
+            throw new IllegalArgumentException("État ou plan de chevalement absent.");
+        }
+        MineCabinBuilder.Bounds bounds = plan.bounds();
+        state.structureVersion = MineCabinBuilder.STRUCTURE_VERSION;
+        state.structureBounds = new MiningSessionState.StructureBounds(
+                bounds.minX(),
+                bounds.maxX(),
+                bounds.minY(),
+                bounds.maxY(),
+                bounds.minZ(),
+                bounds.maxZ()
+        );
     }
 
     private int getMaximumTunnelHeight() {
@@ -3451,6 +3730,18 @@ public class Mineur implements CommandExecutor, Listener {
                 continue;
             }
 
+            MiningSessionState.StructureBounds existingStructure = existing.structureBounds;
+            if (existingStructure != null && rectanglesOverlap(
+                    minX, maxX, minZ, maxZ,
+                    existingStructure.minX(),
+                    existingStructure.maxX(),
+                    existingStructure.minZ(),
+                    existingStructure.maxZ(),
+                    margin
+            )) {
+                return existing;
+            }
+
             if (rectanglesOverlap(
                     minX, maxX, minZ, maxZ,
                     existing.base.getBlockX(),
@@ -3460,6 +3751,19 @@ public class Mineur implements CommandExecutor, Listener {
                     margin
             )) {
                 return existing;
+            }
+
+            for (Vector container : existing.containers) {
+                if (container != null && rectanglesOverlap(
+                        minX, maxX, minZ, maxZ,
+                        container.getBlockX(),
+                        container.getBlockX(),
+                        container.getBlockZ(),
+                        container.getBlockZ(),
+                        margin
+                )) {
+                    return existing;
+                }
             }
 
             MiningCursor active = existing.cursor;
@@ -4020,6 +4324,7 @@ public class Mineur implements CommandExecutor, Listener {
         private InventoryRouter router;
         private DecorationDelegate decoration;
         private Hologram storageHologram;
+        private MineCabinBuilder.BuildResult freshConstruction;
 
         RuntimeSession(MiningSessionState state) {
             this.state = state;
@@ -4061,7 +4366,35 @@ public class Mineur implements CommandExecutor, Listener {
             ticketChunks.clear();
         }
 
+        void commitFreshConstruction() {
+            if (freshConstruction == null) {
+                return;
+            }
+            freshConstruction.commit();
+            freshConstruction = null;
+        }
+
+        void rollbackFreshConstruction() {
+            if (freshConstruction == null) {
+                return;
+            }
+
+            /*
+             * Les PDC sont retirés avant de remettre les snapshots à leur état
+             * initial. Cela évite de conserver une moitié de coffre signée si
+             * une restauration de bloc venait elle-même à échouer.
+             */
+            cleanupContainerMetadata(state);
+            freshConstruction.rollback();
+            freshConstruction = null;
+            state.containers.clear();
+            containerLocations.clear();
+            state.structureVersion = 0;
+            state.structureBounds = null;
+        }
+
         void stop(boolean cleanupContainers) {
+            rollbackFreshConstruction();
             suspend();
             if (cleanupContainers) {
                 cleanupContainerMetadata(state);

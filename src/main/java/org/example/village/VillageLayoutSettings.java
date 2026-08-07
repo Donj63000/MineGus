@@ -65,12 +65,33 @@ public record VillageLayoutSettings(
         return plazaSize;
     }
 
+    /**
+     * Nombre total d'éléments interstitiels, arbres garantis compris.
+     *
+     * <p>Les valeurs restent bornées par la carte d'occupation : augmenter ce
+     * budget densifie le village sans autoriser de collision avec une rue ou
+     * une parcelle bâtie.</p>
+     */
     public int decorationBudget() {
         return switch (decorDensity) {
             case "none", "off" -> 0;
-            case "low", "light" -> 12;
-            case "high", "dense" -> 34;
-            default -> 22;
+            case "low", "light" -> 16;
+            case "high", "dense" -> 42;
+            default -> 28;
+        };
+    }
+
+    /**
+     * Réserve une part du budget aux arbres avant le tirage des petits décors.
+     * Sans cette passe, un village pouvait ne recevoir presque aucun arbre
+     * malgré une densité élevée à cause du hasard du sélecteur décoratif.
+     */
+    public int treeBudget() {
+        return switch (decorDensity) {
+            case "none", "off" -> 0;
+            case "low", "light" -> 4;
+            case "high", "dense" -> 10;
+            default -> 7;
         };
     }
 

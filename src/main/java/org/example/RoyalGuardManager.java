@@ -2,6 +2,7 @@ package org.example;
 
 import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
+import org.bukkit.Difficulty;
 import org.bukkit.GameMode;
 import org.bukkit.Location;
 import org.bukkit.Material;
@@ -9,6 +10,7 @@ import org.bukkit.World;
 import org.bukkit.WorldBorder;
 import org.bukkit.attribute.Attribute;
 import org.bukkit.attribute.AttributeInstance;
+import org.bukkit.attribute.AttributeModifier;
 import org.bukkit.block.Block;
 import org.bukkit.command.Command;
 import org.bukkit.command.TabExecutor;
@@ -18,6 +20,7 @@ import org.bukkit.enchantments.Enchantment;
 import org.bukkit.entity.AnimalTamer;
 import org.bukkit.entity.ArmorStand;
 import org.bukkit.entity.ComplexEntityPart;
+import org.bukkit.entity.Enemy;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.Husk;
 import org.bukkit.entity.IronGolem;
@@ -25,17 +28,22 @@ import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Mob;
 import org.bukkit.entity.Player;
 import org.bukkit.entity.Projectile;
+import org.bukkit.entity.Snowman;
 import org.bukkit.entity.Tameable;
+import org.bukkit.event.Event;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.HandlerList;
 import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
+import org.bukkit.event.entity.EntityChangeBlockEvent;
 import org.bukkit.event.entity.EntityDamageByEntityEvent;
 import org.bukkit.event.entity.EntityDamageEvent;
 import org.bukkit.event.entity.EntityDeathEvent;
+import org.bukkit.event.entity.EntityInteractEvent;
 import org.bukkit.event.entity.EntityTargetEvent;
 import org.bukkit.event.entity.EntityTargetLivingEntityEvent;
 import org.bukkit.event.entity.EntityTransformEvent;
+import org.bukkit.event.player.PlayerBedEnterEvent;
 import org.bukkit.event.player.PlayerChangedWorldEvent;
 import org.bukkit.event.player.PlayerQuitEvent;
 import org.bukkit.event.world.EntitiesLoadEvent;
@@ -49,6 +57,7 @@ import org.bukkit.scheduler.BukkitTask;
 import org.bukkit.util.Vector;
 
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
@@ -103,6 +112,9 @@ public final class RoyalGuardManager implements TabExecutor, Listener {
     private static final boolean DEFAULT_FINISH_ENGAGED_TARGETS = true;
     private static final boolean DEFAULT_IRON_GOLEM_NEUTRALITY = true;
     private static final boolean DEFAULT_IRON_GOLEM_RETALIATION = true;
+    private static final boolean DEFAULT_SNOW_GOLEM_NEUTRALITY = true;
+    private static final boolean DEFAULT_ALLOW_SLEEP_NEAR_GUARDS = true;
+    private static final boolean DEFAULT_PREVENT_BLOCK_DAMAGE = true;
     private static final boolean DEFAULT_NOTIFICATIONS = true;
     private static final double DEFAULT_IRON_GOLEM_NEUTRALITY_RADIUS = 32.0D;
     private static final double DEFAULT_MAX_HEALTH = 100.0D;
@@ -111,6 +123,14 @@ public final class RoyalGuardManager implements TabExecutor, Listener {
     private static final double DEFAULT_FOLLOW_RANGE = 48.0D;
     private static final double DEFAULT_KNOCKBACK_RESISTANCE = 0.6D;
     private static final double FOLLOW_SPEED = 1.15D;
+    private static final double NO_REINFORCEMENT_CHANCE = 0.0D;
+    /*
+     * La vérification vanilla part du volume complet du bloc-lit puis l’agrandit. Comme
+     * getNearbyEntities travaille autour d’un point central, le demi-bloc supplémentaire
+     * évite de manquer un ennemi exactement sur la bordure du volume de sécurité.
+     */
+    private static final double SLEEP_SAFETY_HORIZONTAL_RADIUS = 8.5D;
+    private static final double SLEEP_SAFETY_VERTICAL_RADIUS = 5.5D;
     private static final double VIEW_CLEARANCE_COSINE = Math.cos(Math.toRadians(55.0D));
     private static final double MIN_DIRECTION_LENGTH_SQUARED = 1.0E-6D;
     private static final double EMERGENCY_OVERLAP_RADIUS = 0.65D;
@@ -151,7 +171,7 @@ public final class RoyalGuardManager implements TabExecutor, Listener {
     private final Map<UUID, GuardSquad> squads = new HashMap<>();
     private final Map<UUID, Husk> guardsById = new HashMap<>();
     private final Map<UUID, Long> lastNavigationErrorLogAt = new HashMap<>();
-    private final Map<UUID, BukkitTask> pendingIronGolemDeaggroTasks = new HashMap<>();
+    private final Map<UUID, BukkitTask> pendingGolemDeaggroTasks = new HashMap<>();
     private BukkitTask followTask;
     private BukkitTask combatTask;
     private boolean shuttingDown;
@@ -310,6 +330,15 @@ public final class RoyalGuardManager implements TabExecutor, Listener {
         }
         if (!player.isOnline() || player.isDead()) {
             player.sendMessage(ChatColor.RED + "Impossible d'invoquer tes gardes dans ton état actuel.");
+            return;
+        }
+        if (isPeacefulWorld(player.getWorld())) {
+            /*
+             * Un Husk est supprimé par le moteur en difficulté Paisible, même lorsqu'il est
+             * persistant. Refuser explicitement évite un duo qui disparaît puis respawn en boucle.
+             */
+            player.sendMessage(ChatColor.RED
+                    + "Les gardes royaux ne peuvent pas rester dans un monde en difficulté Paisible.");
             return;
         }
 
@@ -495,12 +524,12 @@ public final class RoyalGuardManager implements TabExecutor, Listener {
         // L'annulation protège aussi contre les implémentations qui ignoreraient la substitution.
         event.setTarget(null);
         event.setCancelled(true);
-        neutralizeIronGolemAggression(golem);
+        neutralizeGolemAggression(golem);
     }
 
     /**
      * Second filet de sécurité : même si une cible a été injectée directement par un autre plugin
-     * ou conservée par l'IA vanilla, aucun coup de golem ne peut atteindre un garde suivi.
+     * ou conservée par l'IA vanilla, aucun coup de golem de fer ne peut atteindre un garde suivi.
      */
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = false)
     public void onIronGolemDamagesGuard(EntityDamageByEntityEvent event) {
@@ -515,7 +544,7 @@ public final class RoyalGuardManager implements TabExecutor, Listener {
 
         // Le coup reste sans dégâts même si le golem avait obtenu sa cible par NMS ou par un autre plugin.
         event.setCancelled(true);
-        neutralizeIronGolemAggression(golem);
+        neutralizeGolemAggression(golem);
 
         if (!isIronGolemRetaliationEnabled() || !isTrackedGuard(event.getEntity())) {
             return;
@@ -528,6 +557,43 @@ public final class RoyalGuardManager implements TabExecutor, Listener {
             // néanmoins une agression réelle, donc le duo contre-attaque sans exposer le garde aux dégâts.
             engageThreat(squad, golem, ThreatReason.GUARD_DAMAGED, false);
         }
+    }
+
+    /**
+     * Les golems de neige choisissent eux aussi les Husks comme ennemis et peuvent provoquer une
+     * guerre inutile dans une base. Ils restent donc neutres envers les gardes, tout en conservant
+     * leurs cibles légitimes contre les véritables monstres.
+     */
+    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = false)
+    public void onSnowGolemTargetsGuard(EntityTargetLivingEntityEvent event) {
+        if (!(event.getEntity() instanceof Snowman golem)
+                || !isRoyalGuard(event.getTarget())
+                || !isSnowGolemNeutralityEnabled()) {
+            return;
+        }
+
+        event.setTarget(null);
+        event.setCancelled(true);
+        neutralizeGolemAggression(golem);
+    }
+
+    /**
+     * Ferme également la voie des projectiles déjà lancés ou des cibles injectées sans événement.
+     * Une boule de neige n'est jamais considérée comme une agression justifiant de tuer le golem.
+     */
+    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = false)
+    public void onSnowGolemDamagesGuard(EntityDamageByEntityEvent event) {
+        if (!isRoyalGuard(event.getEntity()) || !isSnowGolemNeutralityEnabled()) {
+            return;
+        }
+
+        LivingEntity attacker = resolveLivingAttacker(event);
+        if (!(attacker instanceof Snowman golem)) {
+            return;
+        }
+
+        event.setCancelled(true);
+        neutralizeGolemAggression(golem);
     }
 
     /**
@@ -666,10 +732,74 @@ public final class RoyalGuardManager implements TabExecutor, Listener {
         }
     }
 
-    @EventHandler
-    public void onGuardTransform(EntityTransformEvent event) {
-        if (isRoyalGuard(event.getEntity())) {
+    /**
+     * Interdit toute modification réelle de bloc provoquée par un garde. Cette protection couvre
+     * notamment les œufs de tortue, la terre labourée et une éventuelle destruction de porte,
+     * sans empêcher le pathfinder d'ouvrir normalement une porte franchissable.
+     */
+    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = false)
+    public void onGuardChangesBlock(EntityChangeBlockEvent event) {
+        if (isGuardBlockDamagePreventionEnabled() && hasRoyalGuardMarker(event.getEntity())) {
             event.setCancelled(true);
+        }
+    }
+
+    /**
+     * Certains blocs fragiles déclenchent d'abord EntityInteractEvent avant leur changement
+     * effectif. On ferme cette seconde voie sans neutraliser les plaques de pression ni les portes.
+     */
+    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = false)
+    public void onGuardInteractsWithFragileBlock(EntityInteractEvent event) {
+        if (!isGuardBlockDamagePreventionEnabled()
+                || !hasRoyalGuardMarker(event.getEntity())) {
+            return;
+        }
+
+        Material material = event.getBlock().getType();
+        if (material == Material.TURTLE_EGG || material == Material.FARMLAND) {
+            event.setCancelled(true);
+        }
+    }
+
+    /**
+     * Les Husks commencent naturellement une conversion lorsqu'ils restent immergés. Annuler
+     * seulement l'événement final laisse le compteur repartir ; on arrête aussi explicitement
+     * l'état de noyade afin de conserver une identité de garde stable.
+     */
+    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = false)
+    public void onGuardTransform(EntityTransformEvent event) {
+        if (!hasRoyalGuardMarker(event.getEntity())) {
+            return;
+        }
+
+        event.setCancelled(true);
+        if (event.getEntity() instanceof Husk guard) {
+            stopGuardDrowningConversion(guard);
+        }
+    }
+
+    /**
+     * Un Husk est classé comme ennemi par Minecraft et peut donc être l'unique raison du résultat
+     * NOT_SAFE. Le sommeil n'est forcé que si tous les ennemis proches sont des gardes suivis et
+     * inoffensifs pour ce joueur ; un vrai monstre ou un DENY explicite d'un autre plugin gagne.
+     */
+    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = false)
+    public void onPlayerBedEnter(PlayerBedEnterEvent event) {
+        /*
+         * Ne pas utiliser event.isCancelled() ici : pour compatibilité historique, Paper le
+         * renvoie aussi à true quand useBed() vaut DEFAULT et que le résultat vanilla est NOT_SAFE.
+         * useBed() permet au contraire de distinguer ce refus vanilla d'un DENY explicite posé
+         * par un plugin de protection, qui doit toujours rester prioritaire.
+         */
+        if (!isSleepNearGuardsAllowed()
+                || event.getBedEnterResult() != PlayerBedEnterEvent.BedEnterResult.NOT_SAFE
+                || event.useBed() != Event.Result.DEFAULT
+                || squads.isEmpty()) {
+            return;
+        }
+
+        if (areHarmlessRoyalGuardsTheOnlyNearbyEnemies(event.getPlayer(), event.getBed())) {
+            event.setUseBed(Event.Result.ALLOW);
         }
     }
 
@@ -677,6 +807,12 @@ public final class RoyalGuardManager implements TabExecutor, Listener {
     public void onPlayerChangedWorld(PlayerChangedWorldEvent event) {
         GuardSquad squad = squads.get(event.getPlayer().getUniqueId());
         if (squad == null || !squad.active) {
+            return;
+        }
+        if (isPeacefulWorld(event.getPlayer().getWorld())) {
+            event.getPlayer().sendMessage(ChatColor.RED
+                    + "Tes gardes royaux ont été renvoyés : les Husks ne persistent pas en difficulté Paisible.");
+            dismissSquad(event.getPlayer().getUniqueId());
             return;
         }
 
@@ -714,6 +850,7 @@ public final class RoyalGuardManager implements TabExecutor, Listener {
             }
             if (!isRoyalGuard(entity) || !isTrackedGuard(entity)) {
                 // Un marqueur incomplet ou un UUID non suivi indique un résidu/duplicata.
+                guardsById.remove(entity.getUniqueId());
                 removeEntityQuietly(entity);
                 continue;
             }
@@ -735,10 +872,10 @@ public final class RoyalGuardManager implements TabExecutor, Listener {
         cancelTaskQuietly(combatTask);
         followTask = null;
         combatTask = null;
-        for (BukkitTask task : new ArrayList<>(pendingIronGolemDeaggroTasks.values())) {
+        for (BukkitTask task : new ArrayList<>(pendingGolemDeaggroTasks.values())) {
             cancelTaskQuietly(task);
         }
-        pendingIronGolemDeaggroTasks.clear();
+        pendingGolemDeaggroTasks.clear();
 
         List<UUID> ownerIds = new ArrayList<>(squads.keySet());
         ownerIds.forEach(this::dismissSquad);
@@ -772,6 +909,12 @@ public final class RoyalGuardManager implements TabExecutor, Listener {
                 continue;
             }
             if (!squad.active || owner == null) {
+                dismissSquad(squad.ownerId);
+                continue;
+            }
+            if (isPeacefulWorld(owner.getWorld())) {
+                owner.sendMessage(ChatColor.RED
+                        + "Tes gardes royaux ont été renvoyés : les Husks ne persistent pas en difficulté Paisible.");
                 dismissSquad(squad.ownerId);
                 continue;
             }
@@ -862,11 +1005,19 @@ public final class RoyalGuardManager implements TabExecutor, Listener {
     }
 
     boolean isRoyalGuard(Entity entity) {
-        return hasRoyalGuardMarker(entity) && ownerOf(entity) != null && isGuardSlot(slotOf(entity));
+        return entity instanceof Husk
+                && hasRoyalGuardMarker(entity)
+                && ownerOf(entity) != null
+                && isGuardSlot(slotOf(entity));
     }
 
+    /**
+     * Vérifie le marqueur brut sans supposer que l'entité est encore un Husk. Une transformation
+     * partiellement appliquée par le moteur ou un plugin tiers doit rester nettoyable et ne jamais
+     * pouvoir conserver l'équipement ou les protections d'un garde.
+     */
     private boolean hasRoyalGuardMarker(Entity entity) {
-        if (!(entity instanceof Husk)) {
+        if (entity == null) {
             return false;
         }
         String type = entity.getPersistentDataContainer().get(Keys.royalGuardType(), PersistentDataType.STRING);
@@ -985,7 +1136,7 @@ public final class RoyalGuardManager implements TabExecutor, Listener {
 
     private boolean spawnGuard(GuardSquad squad, Player owner, int slot) {
         if (shuttingDown || !squad.active || !isGuardSlot(slot)
-                || !owner.isOnline() || owner.isDead()) {
+                || !owner.isOnline() || owner.isDead() || isPeacefulWorld(owner.getWorld())) {
             return false;
         }
         if (getLiveGuard(squad, slot) != null) {
@@ -1062,6 +1213,8 @@ public final class RoyalGuardManager implements TabExecutor, Listener {
         guard.setAdult();
         guard.setAgeLock(true);
         guard.setCanBreakDoors(false);
+        // Empêche le compte à rebours de conversion aquatique de démarrer sur un nouveau garde.
+        guard.stopDrowning();
         guard.setAI(true);
         guard.setAware(true);
         // Les gardes restent visibles mais ne poussent plus le maître et ne peuvent plus
@@ -1087,6 +1240,7 @@ public final class RoyalGuardManager implements TabExecutor, Listener {
         setRequiredAttribute(guard, Attribute.MOVEMENT_SPEED, settings.movementSpeed());
         setRequiredAttribute(guard, Attribute.FOLLOW_RANGE, settings.followRange());
         setRequiredAttribute(guard, Attribute.KNOCKBACK_RESISTANCE, settings.knockbackResistance());
+        suppressGuardReinforcements(guard);
         guard.setHealth(maxHealth.getBaseValue());
 
         EntityEquipment equipment = guard.getEquipment();
@@ -1114,6 +1268,8 @@ public final class RoyalGuardManager implements TabExecutor, Listener {
             meta.addEnchant(Enchantment.PROTECTION, ARMOR_PROTECTION_LEVEL, true);
             meta.addEnchant(Enchantment.UNBREAKING, ARMOR_UNBREAKING_LEVEL, true);
             meta.addEnchant(Enchantment.MENDING, ARMOR_MENDING_LEVEL, true);
+            // L'équipement appartient au rôle du garde : il ne doit pas casser après un long combat.
+            meta.setUnbreakable(true);
             item.setItemMeta(meta);
         }
         return item;
@@ -1126,6 +1282,8 @@ public final class RoyalGuardManager implements TabExecutor, Listener {
             meta.addEnchant(Enchantment.SHARPNESS, SWORD_SHARPNESS_LEVEL, true);
             meta.addEnchant(Enchantment.UNBREAKING, SWORD_UNBREAKING_LEVEL, true);
             meta.addEnchant(Enchantment.MENDING, SWORD_MENDING_LEVEL, true);
+            // Même invariant que l'armure : aucune usure ne doit désarmer silencieusement un garde.
+            meta.setUnbreakable(true);
             sword.setItemMeta(meta);
         }
         return sword;
@@ -1138,6 +1296,26 @@ public final class RoyalGuardManager implements TabExecutor, Listener {
         }
         instance.setBaseValue(value);
         return instance;
+    }
+
+    /**
+     * Un Zombie/Husk peut posséder une valeur de base et des modificateurs de renfort générés
+     * lors du spawn. Mettre seulement la base à zéro ne suffit donc pas toujours : l'attribut
+     * dédié est intégralement neutralisé pour qu'un garde blessé ne crée jamais de zombies.
+     */
+    private void suppressGuardReinforcements(Husk guard) {
+        AttributeInstance reinforcementChance = guard.getAttribute(Attribute.SPAWN_REINFORCEMENTS);
+        if (reinforcementChance == null) {
+            // Une implémentation sans cet attribut ne dispose pas du mécanisme à neutraliser.
+            return;
+        }
+
+        if (Double.compare(reinforcementChance.getBaseValue(), NO_REINFORCEMENT_CHANCE) != 0) {
+            reinforcementChance.setBaseValue(NO_REINFORCEMENT_CHANCE);
+        }
+        for (AttributeModifier modifier : new ArrayList<>(reinforcementChance.getModifiers())) {
+            reinforcementChance.removeModifier(modifier);
+        }
     }
 
     private void scheduleRespawn(GuardSquad squad, int slot) {
@@ -1473,16 +1651,16 @@ public final class RoyalGuardManager implements TabExecutor, Listener {
         event.setCancelled(true);
     }
 
-    private void neutralizeIronGolemAggression(IronGolem golem) {
-        clearIronGolemRoyalGuardTarget(golem);
-        scheduleIronGolemDeaggroVerification(golem);
+    private void neutralizeGolemAggression(Mob golem) {
+        clearGolemRoyalGuardTarget(golem);
+        scheduleGolemDeaggroVerification(golem);
     }
 
     /**
      * Efface uniquement une cible royale : une cible légitime différente (raider, zombie, etc.)
      * n'est jamais supprimée par erreur.
      */
-    private void clearIronGolemRoyalGuardTarget(IronGolem golem) {
+    private void clearGolemRoyalGuardTarget(Mob golem) {
         if (golem == null || !golem.isValid() || golem.isDead()) {
             return;
         }
@@ -1500,35 +1678,45 @@ public final class RoyalGuardManager implements TabExecutor, Listener {
 
     /**
      * Au moment de EntityTargetLivingEntityEvent, la nouvelle cible n'est pas toujours encore
-     * visible via golem.getTarget(). La vérification au tick suivant ferme précisément cette fenêtre.
+     * visible via getTarget(). La vérification au tick suivant ferme précisément cette fenêtre.
      */
-    private void scheduleIronGolemDeaggroVerification(IronGolem golem) {
+    private void scheduleGolemDeaggroVerification(Mob golem) {
         if (shuttingDown || !plugin.isEnabled() || golem == null) {
             return;
         }
 
         UUID golemId = golem.getUniqueId();
-        if (pendingIronGolemDeaggroTasks.containsKey(golemId)) {
+        if (pendingGolemDeaggroTasks.containsKey(golemId)) {
             return;
         }
 
         try {
             BukkitTask task = Bukkit.getScheduler().runTask(plugin, () -> {
                 try {
-                    if (!shuttingDown && isIronGolemNeutralityEnabled()) {
-                        clearIronGolemRoyalGuardTarget(golem);
+                    if (!shuttingDown && isNeutralityEnabledForGolem(golem)) {
+                        clearGolemRoyalGuardTarget(golem);
                     }
                 } finally {
-                    pendingIronGolemDeaggroTasks.remove(golemId);
+                    pendingGolemDeaggroTasks.remove(golemId);
                 }
             });
-            pendingIronGolemDeaggroTasks.put(golemId, task);
+            pendingGolemDeaggroTasks.put(golemId, task);
         } catch (RuntimeException exception) {
-            pendingIronGolemDeaggroTasks.remove(golemId);
+            pendingGolemDeaggroTasks.remove(golemId);
             plugin.getLogger().log(Level.WARNING,
-                    "Impossible de confirmer la neutralisation du golem de fer " + golemId + ".",
+                    "Impossible de confirmer la neutralisation du golem " + golemId + ".",
                     exception);
         }
+    }
+
+    private boolean isNeutralityEnabledForGolem(Mob golem) {
+        if (golem instanceof IronGolem) {
+            return isIronGolemNeutralityEnabled();
+        }
+        if (golem instanceof Snowman) {
+            return isSnowGolemNeutralityEnabled();
+        }
+        return false;
     }
 
     private boolean shouldRunAwarenessScan(GuardSquad squad) {
@@ -1547,7 +1735,9 @@ public final class RoyalGuardManager implements TabExecutor, Listener {
      * coûteux du voisinage pour chaque propriétaire.
      */
     private void scanNearbySafetyAndThreats(GuardSquad squad, Player owner) {
-        boolean protectFromGolems = isIronGolemNeutralityEnabled();
+        boolean protectFromIronGolems = isIronGolemNeutralityEnabled();
+        boolean protectFromSnowGolems = isSnowGolemNeutralityEnabled();
+        boolean protectFromGolems = protectFromIronGolems || protectFromSnowGolems;
         boolean detectThreats = isProactiveDefenseEnabled();
         if (!protectFromGolems && !detectThreats) {
             return;
@@ -1584,10 +1774,11 @@ public final class RoyalGuardManager implements TabExecutor, Listener {
                 boolean neutralizedGolemGuardTarget = false;
                 if (protectFromGolems
                         && distanceSquared <= golemRadius * golemRadius
-                        && nearbyEntity instanceof IronGolem golem) {
+                        && nearbyEntity instanceof Mob golem
+                        && isNeutralityEnabledForGolem(golem)) {
                     LivingEntity target = golem.getTarget();
                     if (target != null && isRoyalGuard(target)) {
-                        neutralizeIronGolemAggression(golem);
+                        neutralizeGolemAggression(golem);
                         neutralizedGolemGuardTarget = true;
                     }
                 }
@@ -1777,6 +1968,87 @@ public final class RoyalGuardManager implements TabExecutor, Listener {
         };
     }
 
+    /**
+     * Reproduit de manière conservatrice la zone de sécurité du lit : le résultat NOT_SAFE
+     * n'est remplacé que lorsqu'au moins un garde valide est présent et qu'aucun autre Enemy
+     * vivant ne se trouve dans la même boîte de détection.
+     */
+    private boolean areHarmlessRoyalGuardsTheOnlyNearbyEnemies(Player sleeper, Block bed) {
+        if (sleeper == null || bed == null) {
+            return false;
+        }
+
+        Collection<Entity> nearbyEntities;
+        try {
+            Location bedCenter = bed.getLocation().add(0.5D, 0.5D, 0.5D);
+            nearbyEntities = bed.getWorld().getNearbyEntities(
+                    bedCenter,
+                    SLEEP_SAFETY_HORIZONTAL_RADIUS,
+                    SLEEP_SAFETY_VERTICAL_RADIUS,
+                    SLEEP_SAFETY_HORIZONTAL_RADIUS);
+        } catch (RuntimeException ignored) {
+            // En cas d'état de chunk incohérent, conserver le refus vanilla est le choix sûr.
+            return false;
+        }
+
+        if (nearbyEntities == null || nearbyEntities.isEmpty()) {
+            return false;
+        }
+
+        boolean foundHarmlessGuard = false;
+        for (Entity entity : nearbyEntities) {
+            try {
+                if (!(entity instanceof Enemy) || entity.isDead() || !entity.isValid()) {
+                    continue;
+                }
+                if (!isHarmlessTrackedGuardForSleeper(entity, sleeper)) {
+                    return false;
+                }
+                foundHarmlessGuard = true;
+            } catch (RuntimeException ignored) {
+                // Une entité impossible à vérifier ne doit jamais contourner la sécurité du lit.
+                return false;
+            }
+        }
+        return foundHarmlessGuard;
+    }
+
+    private boolean isHarmlessTrackedGuardForSleeper(Entity entity, Player sleeper) {
+        if (!isTrackedGuard(entity)) {
+            return false;
+        }
+
+        UUID guardOwnerId = ownerOf(entity);
+        UUID sleeperId = sleeper.getUniqueId();
+        if (guardOwnerId == null) {
+            return false;
+        }
+        if (guardOwnerId.equals(sleeperId)) {
+            // Le propriétaire est toujours exclu des menaces de son propre duo.
+            return true;
+        }
+
+        if (entity instanceof Mob guardMob) {
+            LivingEntity currentTarget = guardMob.getTarget();
+            if (currentTarget != null && sleeperId.equals(currentTarget.getUniqueId())) {
+                return false;
+            }
+        }
+
+        GuardSquad squad = squads.get(guardOwnerId);
+        if (squad == null || !squad.active) {
+            return false;
+        }
+
+        ThreatCandidate queuedThreat = squad.threatCandidates.get(sleeperId);
+        if (queuedThreat == null) {
+            return true;
+        }
+
+        Player guardOwner = getOnlineOwner(squad);
+        return guardOwner != null && !isThreatCandidateRelevant(guardOwner, queuedThreat);
+    }
+
     private boolean isFriendlyToOwner(Entity entity, UUID ownerId) {
         if (entity == null || ownerId == null) {
             return false;
@@ -1861,6 +2133,10 @@ public final class RoyalGuardManager implements TabExecutor, Listener {
         return null;
     }
 
+    /**
+     * Répare les invariants indispensables au rôle de garde. Cette vérification légère protège
+     * contre les états vanilla transitoires et contre un plugin tiers qui aurait modifié le mob.
+     */
     private void repairGuardMobState(Husk guard) {
         if (!guard.hasAI()) {
             guard.setAI(true);
@@ -1871,6 +2147,43 @@ public final class RoyalGuardManager implements TabExecutor, Listener {
         if (guard.isCollidable()) {
             guard.setCollidable(false);
         }
+        if (!guard.isAdult()) {
+            guard.setAdult();
+        }
+        if (!guard.getAgeLock()) {
+            guard.setAgeLock(true);
+        }
+        if (guard.canBreakDoors()) {
+            guard.setCanBreakDoors(false);
+        }
+        if (!guard.isPersistent()) {
+            guard.setPersistent(true);
+        }
+        if (guard.getRemoveWhenFarAway()) {
+            guard.setRemoveWhenFarAway(false);
+        }
+        if (guard.getCanPickupItems()) {
+            guard.setCanPickupItems(false);
+        }
+        if (guard.isInsideVehicle()) {
+            /*
+             * Un bateau ou un wagonnet immobilise le pathfinder et peut faire croire au système
+             * de suivi que le garde avance. Il quitte donc tout véhicule avant de reprendre sa place.
+             */
+            guard.leaveVehicle();
+        }
+
+        stopGuardDrowningConversion(guard);
+        suppressGuardReinforcements(guard);
+    }
+
+    private void stopGuardDrowningConversion(Husk guard) {
+        if (guard.isConverting()) {
+            // Une durée négative arrête la conversion en cours sans remplacer l'entité.
+            guard.setConversionTime(-1);
+        }
+        // Réinitialise aussi la phase préalable de noyade pour empêcher un nouveau compte à rebours.
+        guard.stopDrowning();
     }
 
     private void stopGuardNavigation(Mob guard) {
@@ -2283,12 +2596,39 @@ public final class RoyalGuardManager implements TabExecutor, Listener {
         };
     }
 
+    private boolean isPeacefulWorld(World world) {
+        return world != null && world.getDifficulty() == Difficulty.PEACEFUL;
+    }
+
     private void removeOrphanedGuards() {
         for (World world : Bukkit.getWorlds()) {
-            for (Husk guard : world.getEntitiesByClass(Husk.class)) {
-                if (hasRoyalGuardMarker(guard) && !isTrackedGuard(guard)) {
-                    guardsById.remove(guard.getUniqueId());
-                    removeEntityQuietly(guard);
+            /*
+             * Le parcours porte uniquement sur les entités vivantes déjà chargées et ne charge
+             * aucun chunk. Il inclut volontairement les non-Husks afin de supprimer un résidu
+             * transformé qui aurait conservé le marqueur persistant malgré une interaction tierce.
+             * La copie protège aussi l'itération pendant le retrait effectif des entités.
+             */
+            List<LivingEntity> loadedEntities;
+            try {
+                loadedEntities = new ArrayList<>(world.getLivingEntities());
+            } catch (RuntimeException exception) {
+                // Un monde tiers défectueux ne doit pas empêcher l'activation ou l'arrêt du plugin.
+                plugin.getLogger().log(Level.WARNING,
+                        "Impossible d'analyser les anciens gardes dans " + world.getName() + ".",
+                        exception);
+                continue;
+            }
+
+            for (LivingEntity entity : loadedEntities) {
+                try {
+                    if (hasRoyalGuardMarker(entity) && !isTrackedGuard(entity)) {
+                        guardsById.remove(entity.getUniqueId());
+                        removeEntityQuietly(entity);
+                    }
+                } catch (RuntimeException exception) {
+                    plugin.getLogger().log(Level.FINE,
+                            "Impossible de vérifier une ancienne entité de garde dans " + world.getName() + ".",
+                            exception);
                 }
             }
         }
@@ -2338,6 +2678,16 @@ public final class RoyalGuardManager implements TabExecutor, Listener {
                 "garde.finish-engaged-targets", DEFAULT_FINISH_ENGAGED_TARGETS);
     }
 
+    private boolean isSleepNearGuardsAllowed() {
+        return plugin.getConfig().getBoolean(
+                "garde.allow-sleep-near-guards", DEFAULT_ALLOW_SLEEP_NEAR_GUARDS);
+    }
+
+    private boolean isGuardBlockDamagePreventionEnabled() {
+        return plugin.getConfig().getBoolean(
+                "garde.prevent-block-damage", DEFAULT_PREVENT_BLOCK_DAMAGE);
+    }
+
     private boolean isIronGolemNeutralityEnabled() {
         return plugin.getConfig().getBoolean(
                 "garde.iron-golem-neutrality", DEFAULT_IRON_GOLEM_NEUTRALITY);
@@ -2346,6 +2696,11 @@ public final class RoyalGuardManager implements TabExecutor, Listener {
     private boolean isIronGolemRetaliationEnabled() {
         return plugin.getConfig().getBoolean(
                 "garde.iron-golem-retaliation", DEFAULT_IRON_GOLEM_RETALIATION);
+    }
+
+    private boolean isSnowGolemNeutralityEnabled() {
+        return plugin.getConfig().getBoolean(
+                "garde.snow-golem-neutrality", DEFAULT_SNOW_GOLEM_NEUTRALITY);
     }
 
     /**

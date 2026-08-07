@@ -26,6 +26,7 @@ import org.example.village.VillageGenerationSession;
 import org.example.village.VillageLayoutPlan;
 import org.example.village.VillageLayoutPlanner;
 import org.example.village.VillageLayoutSettings;
+import org.example.village.VillageLightingBuilder;
 import org.example.village.WallBuilder;
 
 import java.util.ArrayList;
@@ -355,6 +356,23 @@ public final class Village implements CommandExecutor {
                         setBlockTracked(session, world, x, y, z, material)
         );
 
+        /*
+         * Cette passe est volontairement planifiÃ©e aprÃ¨s la muraille et tous
+         * les bÃ¢timents. Elle peut ainsi mesurer les zones rÃ©ellement sombres,
+         * y compris les intÃ©rieurs, les toitures et les chemins de ronde.
+         */
+        VillageLightingBuilder.enqueue(
+                plugin,
+                villageCenter,
+                layout,
+                rx,
+                rz,
+                baseY,
+                todo,
+                (x, y, z, material) ->
+                        setBlockTracked(session, world, x, y, z, material)
+        );
+
         final int resolvedVillageId = villageId;
         if (villageEntitiesEnabled) {
             todo.add(() -> GateGuardManager.ensureGuards(
@@ -419,4 +437,702 @@ public final class Village implements CommandExecutor {
     /**
      * Ã‰crit des donnÃ©es de bloc orientÃ©es en conservant l'Ã©tat initial.
      */
-    public voidß]ú¶‰žËkºwµçq±…•ÉMÁ…Ý¹•É¥ÍÑÉ¥‰ÕÑ¥½¸¡¡½ÕÍ•Ì¹Í¥é” ¤¤ì4(4(€€€€€€€1¥ÍÐñIÕ¹¹…‰±”ø…Ñ¥½¹Ì€ô¹•ÜÉÉ…å1¥ÍÐðø ¤ì4(€€€€€€€™½È€¡¥¹Ð¥¹‘•à€ô€Àì¥¹‘•à€ð¡½ÕÍ•Ì¹Í¥é” ¤ì¥¹‘•à¬¬¤ì4(€€€€€€€€€€€¥˜€ …Ù¥±±…•ÉMÁ…Ý¹•É%‘à¹½¹Ñ…¥¹Ì¡¥¹‘•à¤¤ì4(€€€€€€€€€€€€€€€½¹Ñ¥¹Õ”ì4(€€€€€€€€€€€ô4(4(€€€€€€€€€€€Y¥±±…•1…å½ÕÑA±…¸¹1½ÑA±…¸±½Ð€ô¡½ÕÍ•Ì¹•Ð¡¥¹‘•à¤ì4(€€€€€€€€€€€¥¹ÐÍÁ…Ý¹•Éd€ô‰…Í•d€¬±½Ð¹Ñ•ÉÉ…•d ¤€´€Äì4(€€€€€€€€€€€…Ñ¥½¹Ì¹…‘¡É•…Ñ•MÁ…Ý¹•ÉÑ¥½¸ 4(€€€€€€€€€€€€€€€€€€€Í•ÍÍ¥½¸°4(€€€€€€€€€€€€€€€€€€€Ý½É±°4(€€€€€€€€€€€€€€€€€€€±½Ð¹•¹Ñ•É` ¤°4(€€€€€€€€€€€€€€€€€€€ÍÁ…Ý¹•Éd°4(€€€€€€€€€€€€€€€€€€€±½Ð¹•¹Ñ•Éh ¤°4(€€€€€€€€€€€€€€€€€€€¹Ñ¥ÑåQåÁ”¹Y%11H4(€€€€€€€€€€€€¤¤ì4(€€€€€€€ô4(€€€€€€€É•ÑÕÉ¸…Ñ¥½¹Ìì4(€€€ô4(4(€€€ÁÉ¥Ù…Ñ”1¥ÍÐñIÕ¹¹…‰±”ø‰Õ¥±‘½±•µMÁ…Ý¹•ÉÌ 4(€€€€€€€€€€€Y¥±±…••¹•É…Ñ¥½¹M•ÍÍ¥½¸Í•ÍÍ¥½¸°4(€€€€€€€€€€€]½É±Ý½É±°4(€€€€€€€€€€€Y¥±±…•1…å½ÕÑA±…¸±…å½ÕÐ°4(€€€€€€€€€€€¥¹Ð‰…Í•d¤ì4(€€€€€€€1¥ÍÐñIÕ¹¹…‰±”ø…Ñ¥½¹Ì€ô¹•ÜÉÉ…å1¥ÍÐðø ¤ì4(€€€€€€€1½…Ñ¥½¸Á±…é„€ô±…å½ÕÐ¹…¹¡½ÉÌ ¤¹•Ð ‰Á±…é„ˆ¤ì4(€€€€€€€¥˜€¡Á±…é„€ôô¹Õ±°¤ì4(€€€€€€€€€€€É•ÑÕÉ¸…Ñ¥½¹Ìì4(€€€€€€€ô4(4(€€€€€€€¥¹Ð½™™Í•Ð€ô5…Ñ ¹µ…à 4(€€€€€€€€€€€€€€€€Ì°4(€€€€€€€€€€€€€€€±…å½ÕÑM•ÑÑ¥¹Ì¹•™™•Ñ¥Ù•A±…é…M¥é” ¤€¼€È€´€È4(€€€€€€€€¤ì4(€€€€€€€™½È€¡¥¹Ð¤€ô€Àì¤€ð=15}MA]9ILì¤¬¬¤ì4(€€€€€€€€€€€¥¹ÐÍ¥¸€ô¤€ôô€À€ü€´Ä€è€Äì4(€€€€€€€€€€€…Ñ¥½¹Ì¹…‘¡É•…Ñ•MÁ…Ý¹•ÉÑ¥½¸ 4(€€€€€€€€€€€€€€€€€€€Í•ÍÍ¥½¸°4(€€€€€€€€€€€€€€€€€€€Ý½É±°4(€€€€€€€€€€€€€€€€€€€Á±…é„¹•Ñ	±½­` ¤€¬Í¥¸€¨½™™Í•Ð°4(€€€€€€€€€€€€€€€€€€€‰…Í•d€´€È°4(€€€€€€€€€€€€€€€€€€€Á±…é„¹•Ñ	±½­h ¤°4(€€€€€€€€€€€€€€€€€€€¹Ñ¥ÑåQåÁ”¹%I=9}=144(€€€€€€€€€€€€¤¤ì4(€€€€€€€ô4(€€€€€€€É•ÑÕÉ¸…Ñ¥½¹Ìì4(€€€ô4(4(€€€ÁÉ¥Ù…Ñ”Ù½¥±½1…å½ÕÑMÕµµ…Éä¡Y¥±±…•1…å½ÕÑA±…¸±…å½ÕÐ¤ì4(€€€€€€€¹Õµ5…ÀñY¥±±…•1…å½ÕÑA±…¸¹1½ÑI½±”°%¹Ñ••Èø½Õ¹ÑÌ€ô4(€€€€€€€€€€€€€€€¹•Ü¹Õµ5…Àðø¡Y¥±±…•1…å½ÕÑA±…¸¹1½ÑI½±”¹±…ÍÌ¤ì4(€€€€€€€¥¹ÐÑ•ÉÉ…•‘1½ÑÌ€ô€Àì4(€€€€€€€™½È€¡Y¥±±…•1…å½ÕÑA±…¸¹1½ÑA±…¸±½Ð€è±…å½ÕÐ¹±½ÑÌ ¤¤ì4(€€€€€€€€€€€½Õ¹ÑÌ¹µ•É”¡±½Ð¹É½±” ¤°€Ä°%¹Ñ••ÈèéÍÕ´¤ì4(€€€€€€€€€€€¥˜€¡±½Ð¹Ñ•ÉÉ…•d ¤€ø€À¤ì4(€€€€€€€€€€€€€€€Ñ•ÉÉ…•‘1½ÑÌ¬¬ì4(€€€€€€€€€€€ô4(€€€€€€€ô4(4(€€€€€€€Á±Õ¥¸¹•Ñ1½•È ¤¹¥¹™¼ 4(€€€€€€€€€€€€€€€€‰A±…¸‘ÔÙ¥±±…”€èµ…¥Í½¹Ìôˆ€¬±…å½ÕÐ¹¡½ÕÍ•½Õ¹Ð ¤4(€€€€€€€€€€€€€€€€€€€€€€€€¬€ˆ°ÉÕ•Ìôˆ€¬±…å½ÕÐ¹ÍÑÉ••ÑÌ ¤¹Í¥é” ¤4(€€€€€€€€€€€€€€€€€€€€€€€€¬€ˆ°Ñ•ÉÉ…ÍÍ•Ìôˆ€¬Ñ•ÉÉ…•‘1½ÑÌ4(€€€€€€€€€€€€€€€€€€€€€€€€¬€ˆ°‘¥µ•¹Í¥½¹Ìôˆ€¬±…å½ÕÐ¹‰½Õ¹‘Ì ¤¹Ý¥‘Ñ  ¤4(€€€€€€€€€€€€€€€€€€€€€€€€¬€‰àˆ€¬±…å½ÕÐ¹‰½Õ¹‘Ì ¤¹‘•ÁÑ  ¤4(€€€€€€€€¤ì4(€€€€€€€Á±Õ¥¸¹•Ñ1½•È ¤¹¥¹™¼ ‰K¥Á…ÉÑ¥Ñ¥½¸‘•Ì±½ÑÌ€è€ˆ€¬½Õ¹ÑÌ¤ì4(€€€ô4(4(€€€€¼¨¨4(€€€€€¨ã¥ÕÑ”±„™¥±”…Ù•ŒÕ¹”‘½Õ‰±”±¥µ¥Ñ”€¡¹½µ‰É”…Ñ¥½¹Ì•ÐÑ•µÁÌAT¤4(€€€€€¨…™¥¸ÅÕ”±•Ì½±½¹¹•Ì‘”Ñ•ÉÉ…ÍÍ•µ•¹Ð¹”™¥•¹ÐÁ…Ì±”Í•ÉÙ•ÕÈ¸4(€€€€€¨¼4(€€€ÁÉ¥Ù…Ñ”Ù½¥‰Õ¥±‘Ñ¥½¹Í%¹	…Ñ¡•Ì 4(€€€€€€€€€€€EÕ•Õ”ñIÕ¹¹…‰±”øÅÕ•Õ”°4(€€€€€€€€€€€Y¥±±…••¹•É…Ñ¥½¹M•ÍÍ¥½¸Í•ÍÍ¥½¸¤ì4(€€€€€€€	Õ­­¥ÑIÕ¹¹…‰±”ÉÕ¹¹•È€ô¹•Ü	Õ­­¥ÑIÕ¹¹…‰±” ¤ì4(€€€€€€€€€€€=Ù•ÉÉ¥‘”4(€€€€€€€€€€€ÁÕ‰±¥ŒÙ½¥ÉÕ¸ ¤ì4(€€€€€€€€€€€€€€€¥˜€¡ÕÉÉ•¹ÑM•ÍÍ¥½¸€„ôÍ•ÍÍ¥½¸¤ì4(€€€€€€€€€€€€€€€€€€€±•…ÉÑ¥Ù•Q…Í¬ ¤ì4(€€€€€€€€€€€€€€€€€€€…¹•° ¤ì4(€€€€€€€€€€€€€€€€€€€É•ÑÕÉ¸ì4(€€€€€€€€€€€€€€€ô4(4(€€€€€€€€€€€€€€€±½¹œÍÑ…ÉÑ•‘Ð€ôMåÍÑ•´¹¹…¹½Q¥µ” ¤ì4(€€€€€€€€€€€€€€€¥¹ÐÁÉ½•ÍÍ•€ô€Àì4(€€€€€€€€€€€€€€€ÑÉäì4(€€€€€€€€€€€€€€€€€€€Ý¡¥±”€¡ÁÉ½•ÍÍ•€ð5a}Q%=9M}AI}Q%,4(€€€€€€€€€€€€€€€€€€€€€€€€€€€€˜˜€…ÅÕ•Õ”¹¥ÍµÁÑä ¤4(€€€€€€€€€€€€€€€€€€€€€€€€€€€€˜˜MåÍÑ•´¹¹…¹½Q¥µ” ¤€´ÍÑ…ÉÑ•‘Ð4(€€€€€€€€€€€€€€€€€€€€€€€€€€€€ð5a}	Q!}99=L¤ì4(€€€€€€€€€€€€€€€€€€€€€€€IÕ¹¹…‰±”…Ñ¥½¸€ôÅÕ•Õ”¹Á½±° ¤ì4(€€€€€€€€€€€€€€€€€€€€€€€¥˜€¡…Ñ¥½¸€„ô¹Õ±°¤ì4(€€€€€€€€€€€€€€€€€€€€€€€€€€€…Ñ¥½¸¹ÉÕ¸ ¤ì4(€€€€€€€€€€€€€€€€€€€€€€€€€€€ÁÉ½•ÍÍ•¬¬ì4(€€€€€€€€€€€€€€€€€€€€€€€ô4(€€€€€€€€€€€€€€€€€€€ô4(€€€€€€€€€€€€€€€ô…Ñ €¡Q¡É½Ý…‰±”Ñ¡É½Ý…‰±”¤ì4(€€€€€€€€€€€€€€€€€€€Á±Õ¥¸¹•Ñ1½•È ¤¹±½œ 4(€€€€€€€€€€€€€€€€€€€€€€€€€€€1•Ù•°¹MYI°4(€€€€€€€€€€€€€€€€€€€€€€€€€€€€‰1„Ÿ¥»¥É…Ñ¥½¸‘ÔÙ¥±±…”„ƒ¥¡½×¤€ì€ˆ4(€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€¬€‰±•Ìµ½‘¥™¥…Ñ¥½¹ÌÙ½¹Ðƒ©ÑÉ”É•ÍÑ…ÕË¥•Ì¸ˆ°4(€€€€€€€€€€€€€€€€€€€€€€€€€€€Ñ¡É½Ý…‰±”4(€€€€€€€€€€€€€€€€€€€€¤ì4(€€€€€€€€€€€€€€€€€€€±•…ÉÑ¥Ù•Q…Í¬ ¤ì4(€€€€€€€€€€€€€€€€€€€…¹•° ¤ì4(€€€€€€€€€€€€€€€€€€€É½±±‰…­M•ÍÍ¥½¸¡Í•ÍÍ¥½¸¤ì4(€€€€€€€€€€€€€€€€€€€É•ÑÕÉ¸ì4(€€€€€€€€€€€€€€€ô4(4(€€€€€€€€€€€€€€€¥˜€¡ÅÕ•Õ”¹¥ÍµÁÑä ¤¤ì4(€€€€€€€€€€€€€€€€€€€Á±Õ¥¸¹•Ñ1½•È ¤¹¥¹™¼ 4(€€€€€€€€€€€€€€€€€€€€€€€€€€€€‰Y¥±±…”€ˆ€¬Í•ÍÍ¥½¸¹•ÑY¥±±…•% ¤4(€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€¬€ˆ½¹ÍÑÉÕ¥Ð…Ù•ŒÍÕ¡Ì¸ˆ4(€€€€€€€€€€€€€€€€€€€€¤ì4(€€€€€€€€€€€€€€€€€€€±•…ÉÑ¥Ù•Q…Í¬ ¤ì4(€€€€€€€€€€€€€€€€€€€…¹•° ¤ì4(€€€€€€€€€€€€€€€ô4(€€€€€€€€€€€ô4(€€€€€€€ôì4(4(€€€€€€€…Ñ¥Ù•	Õ¥±‘Q…Í¬€ôÉÕ¹¹•È¹ÉÕ¹Q…Í­Q¥µ•È¡Á±Õ¥¸°€Å0°€Å0¤ì4(€€€ô4(4(€€€ÁÉ¥Ù…Ñ”Ù½¥±•…ÉÑ¥Ù•Q…Í¬ ¤ì4(€€€€€€€…Ñ¥Ù•	Õ¥±‘Q…Í¬€ô¹Õ±°ì4(€€€ô4(4(€€€€¼¨¨4(€€€€€¨AË¥Á…É”Õ¹”Ñ•ÉÉ…ÍÍ”ÁÉ¥¹¥Á…±”•ÐÕ¹”ÑÉ…¹Í¥Ñ¥½¸É…‘Õ•±±”Ù•ÉÌ±”4(€€€€€¨É•±¥•˜¹…ÑÕÉ•°¸¡…ÅÕ”½±½¹¹”•ÍÐÕ¹”Í•Õ±”Ó‰¡”Á½ÕÈµ‡¹ÑÉ¥Í•È±„4(€€€€€¨Ñ…¥±±”‘”±„™¥±”°µ…¥Ì¡…ÅÕ”‰±½Œµ½‘¥™§¤É•ÍÑ”¥¹‘¥Ù¥‘Õ•±±•µ•¹ÐÍÕ¥Ù¤¸4(€€€€€¨¼4(€€€ÁÉ¥Ù…Ñ”1¥ÍÐñIÕ¹¹…‰±”øÁÉ•Á…É•É½Õ¹‘Ñ¥½¹Ì 4(€€€€€€€€€€€Y¥±±…••¹•É…Ñ¥½¹M•ÍÍ¥½¸Í•ÍÍ¥½¸°4(€€€€€€€€€€€]½É±Ý½É±°4(€€€€€€€€€€€¥¹Ð™±…Ñ5¥¹`°4(€€€€€€€€€€€¥¹Ð™±…Ñ5…á`°4(€€€€€€€€€€€¥¹Ð™±…Ñ5¥¹h°4(€€€€€€€€€€€¥¹Ð™±…Ñ5…áh°4(€€€€€€€€€€€¥¹Ð‰…Í•d°4(€€€€€€€€€€€¥¹Ð™•…Ñ¡•È¤ì4(€€€€€€€1¥ÍÐñIÕ¹¹…‰±”ø…Ñ¥½¹Ì€ô¹•ÜÉÉ…å1¥ÍÐðø ¤ì4(€€€€€€€¥¹ÐÍ…™••…Ñ¡•È€ô5…Ñ ¹µ…à À°™•…Ñ¡•È¤ì4(€€€€€€€¥¹Ðµ¥¹`€ô™±…Ñ5¥¹`€´Í…™••…Ñ¡•Èì4(€€€€€€€¥¹Ðµ…á`€ô™±…Ñ5…á`€¬Í…™••…Ñ¡•Èì4(€€€€€€€¥¹Ðµ¥¹h€ô™±…Ñ5¥¹h€´Í…™••…Ñ¡•Èì4(€€€€€€€¥¹Ðµ…áh€ô™±…Ñ5…áh€¬Í…™••…Ñ¡•Èì4(4(€€€€€€€™½È€¡¥¹Ðà€ôµ¥¹`ìà€ðôµ…á`ìà¬¬¤ì4(€€€€€€€€€€€™½È€¡¥¹Ðè€ôµ¥¹hìè€ðôµ…áhìè¬¬¤ì4(€€€€€€€€€€€€€€€™¥¹…°¥¹Ð½±Õµ¹`€ôàì4(€€€€€€€€€€€€€€€™¥¹…°¥¹Ð½±Õµ¹h€ôèì4(€€€€€€€€€€€€€€€…Ñ¥½¹Ì¹…‘  ¤€´øÁÉ•Á…É•É½Õ¹‘½±Õµ¸ 4(€€€€€€€€€€€€€€€€€€€€€€€Í•ÍÍ¥½¸°4(€€€€€€€€€€€€€€€€€€€€€€€Ý½É±°4(€€€€€€€€€€€€€€€€€€€€€€€½±Õµ¹`°4(€€€€€€€€€€€€€€€€€€€€€€€½±Õµ¹h°4(€€€€€€€€€€€€€€€€€€€€€€€™±…Ñ5¥¹`°4(€€€€€€€€€€€€€€€€€€€€€€€™±…Ñ5…á`°4(€€€€€€€€€€€€€€€€€€€€€€€™±…Ñ5¥¹h°4(€€€€€€€€€€€€€€€€€€€€€€€™±…Ñ5…áh°4(€€€€€€€€€€€€€€€€€€€€€€€‰…Í•d°4(€€€€€€€€€€€€€€€€€€€€€€€Í…™••…Ñ¡•È4(€€€€€€€€€€€€€€€€¤¤ì4(€€€€€€€€€€€ô4(€€€€€€€ô4(€€€€€€€É•ÑÕÉ¸…Ñ¥½¹Ìì4(€€€ô4(4(€€€ÁÉ¥Ù…Ñ”Ù½¥ÁÉ•Á…É•É½Õ¹‘½±Õµ¸ 4(€€€€€€€€€€€Y¥±±…••¹•É…Ñ¥½¹M•ÍÍ¥½¸Í•ÍÍ¥½¸°4(€€€€€€€€€€€]½É±Ý½É±°4(€€€€€€€€€€€¥¹Ðà°4(€€€€€€€€€€€¥¹Ðè°4(€€€€€€€€€€€¥¹Ð™±…Ñ5¥¹`°4(€€€€€€€€€€€¥¹Ð™±…Ñ5…á`°4(€€€€€€€€€€€¥¹Ð™±…Ñ5¥¹h°4(€€€€€€€€€€€¥¹Ð™±…Ñ5…áh°4(€€€€€€€€€€€¥¹Ð‰…Í•d°4(€€€€€€€€€€€¥¹Ð™•…Ñ¡•È¤ì4(€€€€€€€¥¹Ð¡¥¡•ÍÑd€ôÝ½É±¹•Ñ!¥¡•ÍÑ	±½­eÐ¡à°è¤ì4(€€€€€€€¥¹Ð¹…ÑÕÉ…±d€ô™¥¹‘9…ÑÕÉ…±É½Õ¹‘d¡Ý½É±°à°è°‰…Í•d¤ì4(€€€€€€€¥¹Ð‘¥ÍÑ…¹”€ô‘¥ÍÑ…¹•=ÕÑÍ¥‘” 4(€€€€€€€€€€€€€€€à°4(€€€€€€€€€€€€€€€è°4(€€€€€€€€€€€€€€€™±…Ñ5¥¹`°4(€€€€€€€€€€€€€€€™±…Ñ5…á`°4(€€€€€€€€€€€€€€€™±…Ñ5¥¹h°4(€€€€€€€€€€€€€€€™±…Ñ5…áh4(€€€€€€€€¤ì4(4(€€€€€€€¥¹ÐÑ…É•Ñdì4(€€€€€€€¥˜€¡‘¥ÍÑ…¹”€ðô€Àñð™•…Ñ¡•È€ôô€À¤ì4(€€€€€€€€€€€Ñ…É•Ñd€ô‰…Í•dì4(€€€€€€€ô•±Í”ì4(€€€€€€€€€€€€¼¨4(€€€€€€€€€€€€€¨1„‘•É¹§¡É”½ÕÉ½¹¹”ÁË¥Á…Ë¥”É•©½¥¹Ð•á…Ñ•µ•¹Ð±”É•±¥•˜4(€€€€€€€€€€€€€¨¹…ÑÕÉ•°¸Ù•Œí½‘”™•…Ñ¡•È€¬€Åô°¥°É•ÍÑ…¥Ð•¹½É”€ÈÀ€”‘”4(€€€€€€€€€€€€€¨Ñ•ÉÉ…ÍÍ•µ•¹Ð…Ô‰½É°ÁÕ¥ÌÕ¹”µ…É¡”‰ÉÕÑ…±”¡½ÉÌ‘”±„é½¹”¸4(€€€€€€€€€€€€€¨¼4(€€€€€€€€€€€‘½Õ‰±”É…Ñ¥¼€ô5…Ñ ¹µ¥¸ 4(€€€€€€€€€€€€€€€€€€€€Ä¸Á°4(€€€€€€€€€€€€€€€€€€€‘¥ÍÑ…¹”€¼€¡‘½Õ‰±”¤5…Ñ ¹µ…à Ä°™•…Ñ¡•È¤4(€€€€€€€€€€€€¤ì4(€€€€€€€€€€€Ñ…É•Ñd€ô€¡¥¹Ð¤5…Ñ ¹É½Õ¹ 4(€€€€€€€€€€€€€€€€€€€‰…Í•d€¬€¡¹…ÑÕÉ…±d€´‰…Í•d¤€¨É…Ñ¥¼4(€€€€€€€€€€€€¤ì4(€€€€€€€ô4(€€€€€€€Ñ…É•Ñd€ô5…Ñ ¹µ…à 4(€€€€€€€€€€€€€€€Ý½É±¹•Ñ5¥¹!•¥¡Ð ¤€¬€È°4(€€€€€€€€€€€€€€€5…Ñ ¹µ¥¸¡Ý½É±¹•Ñ5…á!•¥¡Ð ¤€´€È°Ñ…É•Ñd¤4(€€€€€€€€¤ì4(4(€€€€€€€€¼¨4(€€€€€€€€€¨=¸É•Ñ¥É”…ÕÍÍ¤±•ÌÑÉ½¹Ì•Ð™•Õ¥±±…•Ì…Ôµ‘•ÍÍÕÌ‘ÔÍ½°¥‰±”¸4(€€€€€€€€€¨½¹ÑÉ…¥É•µ•¹Ðƒ€°…¹¥•¹¹”Ù•ÉÍ¥½¸°¡…ÅÕ”‰±½Œ…¥È•ÍÐ·¥µ½É¥Ï¤4(€€€€€€€€€¨•ÐÁ½ÕÉÉ„‘½¹Œƒ©ÑÉ”É•ÍÑ…ÕË¤Á…È€½Ù¥±±…”Õ¹‘¼¸4(€€€€€€€€€¨¼4(€€€€€€€¥¹Ð±•…ÉQ½À€ô5…Ñ ¹µ¥¸ 4(€€€€€€€€€€€€€€€Ý½É±¹•Ñ5…á!•¥¡Ð ¤€´€Ä°4(€€€€€€€€€€€€€€€€¼¨4(€€€€€€€€€€€€€€€€€¨1•Ì¹½ÕÙ•±±•ÌÑ½ÕÉÌ•Ð±”£‰Ñ•±•ÐÕ±µ¥¹•¹Ðƒ€•¹Ù¥É½¸4(€€€€€€€€€€€€€€€€€¨Ù¥¹Ðµ‘•Õà‰±½Ì…Ôµ‘•ÍÍÕÌ‘ÔÍ½°¸1„µ…É”‘”Ù¥¹ÐµÅÕ…ÑÉ”4(€€€€€€€€€€€€€€€€€¨‰±½Ìƒ¥Ù¥Ñ”ÅÔÕ¸ÑÉ½¹Œ½ÔÕ¹”…¹½Ã¥”ÑÉ…Ù•ÉÍ”±•ÕÈÑ½¥ÑÕÉ”¸4(€€€€€€€€€€€€€€€€€¨¼4(€€€€€€€€€€€€€€€5…Ñ ¹µ…à¡¡¥¡•ÍÑd°Ñ…É•Ñd€¬€ÈÐ¤4(€€€€€€€€¤ì4(€€€€€€€™½È€¡¥¹Ðä€ôÑ…É•Ñd€¬€Äìä€ðô±•…ÉQ½Àìä¬¬¤ì4(€€€€€€€€€€€	±½¬‰±½¬€ôÝ½É±¹•Ñ	±½­Ð¡à°ä°è¤ì4(€€€€€€€€€€€¥˜€ …‰±½¬¹•ÑQåÁ” ¤¹¥Í¥È ¤¤ì4(€€€€€€€€€€€€€€€Í•Ñ	±½­QÉ…­• 4(€€€€€€€€€€€€€€€€€€€€€€€Í•ÍÍ¥½¸°4(€€€€€€€€€€€€€€€€€€€€€€€Ý½É±°4(€€€€€€€€€€€€€€€€€€€€€€€à°4(€€€€€€€€€€€€€€€€€€€€€€€ä°4(€€€€€€€€€€€€€€€€€€€€€€€è°4(€€€€€€€€€€€€€€€€€€€€€€€5…Ñ•É¥…°¹%H4(€€€€€€€€€€€€€€€€¤ì4(€€€€€€€€€€€ô4(€€€€€€€ô4(4(€€€€€€€¥˜€¡¹…ÑÕÉ…±d€ðÑ…É•Ñd¤ì4(€€€€€€€€€€€™½È€¡¥¹Ðä€ô¹…ÑÕÉ…±d€¬€Äìä€ðÑ…É•Ñdìä¬¬¤ì4(€€€€€€€€€€€€€€€5…Ñ•É¥…°™¥±°€ôä€ðÑ…É•Ñd€´€Ì4(€€€€€€€€€€€€€€€€€€€€€€€€ü5…Ñ•É¥…°¹MQ=94(€€€€€€€€€€€€€€€€€€€€€€€€è5…Ñ•É¥…°¹%IPì4(€€€€€€€€€€€€€€€Í•Ñ	±½­QÉ…­•¡Í•ÍÍ¥½¸°Ý½É±°à°ä°è°™¥±°¤ì4(€€€€€€€€€€€ô4(€€€€€€€ô4(4(€€€€€€€Í•Ñ	±½­QÉ…­• 4(€€€€€€€€€€€€€€€Í•ÍÍ¥½¸°4(€€€€€€€€€€€€€€€Ý½É±°4(€€€€€€€€€€€€€€€à°4(€€€€€€€€€€€€€€€Ñ…É•Ñd€´€Ä°4(€€€€€€€€€€€€€€€è°4(€€€€€€€€€€€€€€€5…Ñ ¹™±½½É5½¡à€¨€ÄÜ€¬è€¨€ÌÄ°€Ü¤€ôô€À4(€€€€€€€€€€€€€€€€€€€€€€€€ü5…Ñ•É¥…°¹=IM}%IP4(€€€€€€€€€€€€€€€€€€€€€€€€è5…Ñ•É¥…°¹%IP4(€€€€€€€€¤ì4(€€€€€€€Í•Ñ	±½­QÉ…­• 4(€€€€€€€€€€€€€€€Í•ÍÍ¥½¸°4(€€€€€€€€€€€€€€€Ý½É±°4(€€€€€€€€€€€€€€€à°4(€€€€€€€€€€€€€€€Ñ…É•Ñd°4(€€€€€€€€€€€€€€€è°4(€€€€€€€€€€€€€€€Ñ•ÉÉ…¥¹Q½Á5…Ñ•É¥…°¡à°è°‘¥ÍÑ…¹”°™•…Ñ¡•È¤4(€€€€€€€€¤ì4(€€€ô4(4(€€€ÁÉ¥Ù…Ñ”¥¹ÐÉ•Í½±Ù•	…Í•d 4(€€€€€€€€€€€]½É±Ý½É±°4(€€€€€€€€€€€¥¹Ð•¹Ñ•É`°4(€€€€€€€€€€€¥¹Ð•¹Ñ•Éh°4(€€€€€€€€€€€¥¹Ð™…±±‰…­d¤ì4(€€€€€€€1¥ÍÐñ%¹Ñ••ÈøÍ…µÁ±•Ì€ô¹•ÜÉÉ…å1¥ÍÐðø ¤ì4(€€€€€€€¥¹Ñmt½™™Í•ÑÌ€ôì´Ð°€À°€Ñôì4(€€€€€€€™½È€¡¥¹Ð‘à€è½™™Í•ÑÌ¤ì4(€€€€€€€€€€€™½È€¡¥¹Ð‘è€è½™™Í•ÑÌ¤ì4(€€€€€€€€€€€€€€€Í…µÁ±•Ì¹…‘¡™¥¹‘9…ÑÕÉ…±É½Õ¹‘d 4(€€€€€€€€€€€€€€€€€€€€€€€Ý½É±°4(€€€€€€€€€€€€€€€€€€€€€€€•¹Ñ•É`€¬‘à°4(€€€€€€€€€€€€€€€€€€€€€€€•¹Ñ•Éh€¬‘è°4(€€€€€€€€€€€€€€€€€€€€€€€™…±±‰…­d4(€€€€€€€€€€€€€€€€¤¤ì4(€€€€€€€€€€€ô4(€€€€€€€ô4(€€€€€€€½±±•Ñ¥½¹Ì¹Í½ÉÐ¡Í…µÁ±•Ì¤ì4(€€€€€€€¥¹Ðµ•‘¥…¸€ôÍ…µÁ±•Ì¹•Ð¡Í…µÁ±•Ì¹Í¥é” ¤€¼€È¤ì4(4(€€€€€€€€¼¨4(€€€€€€€€€¨…¹ÌÕ¹”É½ÑÑ”½ÔÍÕÈÕ¹”ÑË¡Ì¡…ÕÑ”½¹ÍÑÉÕÑ¥½¸°±”¹¥Ù•…Ô±”4(€€€€€€€€€¨Á±ÕÌÁÉ½¡”‘Ô©½Õ•ÕÈ•ÍÐÁ±ÕÌÁË¥Ù¥Í¥‰±”ÅÕ”±„ÍÕÉ™…”‘¥ÍÑ…¹Ñ”¸4(€€€€€€€€€¨¼4(€€€€€€€¥˜€¡5…Ñ ¹…‰Ì¡µ•‘¥…¸€´™…±±‰…­d¤€ø€Äà¤ì4(€€€€€€€€€€€É•ÑÕÉ¸™…±±‰…­dì4(€€€€€€€ô4(€€€€€€€É•ÑÕÉ¸µ•‘¥…¸ì4(€€€ô4(4(€€€ÁÉ¥Ù…Ñ”¥¹Ð™¥¹‘9…ÑÕÉ…±É½Õ¹‘d 4(€€€€€€€€€€€]½É±Ý½É±°4(€€€€€€€€€€€¥¹Ðà°4(€€€€€€€€€€€¥¹Ðè°4(€€€€€€€€€€€¥¹Ð™…±±‰…­d¤ì4(€€€€€€€¥¹Ð¡¥¡•ÍÐ€ô5…Ñ ¹µ¥¸ 4(€€€€€€€€€€€€€€€Ý½É±¹•Ñ5…á!•¥¡Ð ¤€´€Ä°4(€€€€€€€€€€€€€€€Ý½É±¹•Ñ!¥¡•ÍÑ	±½­eÐ¡à°è¤4(€€€€€€€€¤ì4(€€€€€€€¥¹Ð±½Ý•É	½Õ¹€ô5…Ñ ¹µ…à 4(€€€€€€€€€€€€€€€Ý½É±¹•Ñ5¥¹!•¥¡Ð ¤°4(€€€€€€€€€€€€€€€¡¥¡•ÍÐ€´€äØ4(€€€€€€€€¤ì4(4(€€€€€€€™½È€¡¥¹Ðä€ô¡¥¡•ÍÐìä€øô±½Ý•É	½Õ¹ìä´´¤ì4(€€€€€€€€€€€5…Ñ•É¥…°µ…Ñ•É¥…°€ôÝ½É±¹•Ñ	±½­Ð¡à°ä°è¤¹•ÑQåÁ” ¤ì4(€€€€€€€€€€€¥˜€¡¥Í9…ÑÕÉ…±É½Õ¹¡µ…Ñ•É¥…°¤¤ì4(€€€€€€€€€€€€€€€É•ÑÕÉ¸äì4(€€€€€€€€€€€ô4(€€€€€€€ô4(€€€€€€€É•ÑÕÉ¸5…Ñ ¹µ…à 4(€€€€€€€€€€€€€€€Ý½É±¹•Ñ5¥¹!•¥¡Ð ¤€¬€È°4(€€€€€€€€€€€€€€€5…Ñ ¹µ¥¸¡Ý½É±¹•Ñ5…á!•¥¡Ð ¤€´€È°™…±±‰…­d¤4(€€€€€€€€¤ì4(€€€ô4(4(€€€ÁÉ¥Ù…Ñ”‰½½±•…¸¥Í9…ÑÕÉ…±É½Õ¹¡5…Ñ•É¥…°µ…Ñ•É¥…°¤ì4(€€€€€€€¥˜€¡µ…Ñ•É¥…°€ôô¹Õ±°ñðµ…Ñ•É¥…°¹¥Í¥È ¤ñð€…µ…Ñ•É¥…°¹¥ÍM½±¥ ¤¤ì4(€€€€€€€€€€€É•ÑÕÉ¸™…±Í”ì4(€€€€€€€ô4(4(€€€€€€€MÑÉ¥¹œ¹…µ”€ôµ…Ñ•É¥…°¹¹…µ” ¤ì4(€€€€€€€É•ÑÕÉ¸€…¹…µ”¹•¹‘Í]¥Ñ  ‰}1YLˆ¤4(€€€€€€€€€€€€€€€€˜˜€…¹…µ”¹•¹‘Í]¥Ñ  ‰}1=ˆ¤4(€€€€€€€€€€€€€€€€˜˜€…¹…µ”¹•¹‘Í]¥Ñ  ‰}]==ˆ¤4(€€€€€€€€€€€€€€€€˜˜€…¹…µ”¹•¹‘Í]¥Ñ  ‰}MQ4ˆ¤4(€€€€€€€€€€€€€€€€˜˜€…¹…µ”¹•¹‘Í]¥Ñ  ‰}!eA!ˆ¤4(€€€€€€€€€€€€€€€€˜˜µ…Ñ•É¥…°€„ô5…Ñ•É¥…°¹	5	==}	1=,4(€€€€€€€€€€€€€€€€˜˜µ…Ñ•É¥…°€„ô5…Ñ•É¥…°¹QUL4(€€€€€€€€€€€€€€€€˜˜µ…Ñ•É¥…°€„ô5…Ñ•É¥…°¹5UM!I==5}MQ4ì4(€€€ô4(4(€€€ÁÉ¥Ù…Ñ”¥¹Ð‘¥ÍÑ…¹•=ÕÑÍ¥‘” 4(€€€€€€€€€€€¥¹Ðà°4(€€€€€€€€€€€¥¹Ðè°4(€€€€€€€€€€€¥¹Ðµ¥¹`°4(€€€€€€€€€€€¥¹Ðµ…á`°4(€€€€€€€€€€€¥¹Ðµ¥¹h°4(€€€€€€€€€€€¥¹Ðµ…áh¤ì4(€€€€€€€¥¹Ð‘à€ôà€ðµ¥¹`4(€€€€€€€€€€€€€€€€üµ¥¹`€´à4(€€€€€€€€€€€€€€€€è5…Ñ ¹µ…à À°à€´µ…á`¤ì4(€€€€€€€¥¹Ð‘è€ôè€ðµ¥¹h4(€€€€€€€€€€€€€€€€üµ¥¹h€´è4(€€€€€€€€€€€€€€€€è5…Ñ ¹µ…à À°è€´µ…áh¤ì4(€€€€€€€É•ÑÕÉ¸5…Ñ ¹µ…à¡‘à°‘è¤ì4(€€€ô4(4(€€€ÁÉ¥Ù…Ñ”5…Ñ•É¥…°Ñ•ÉÉ…¥¹Q½Á5…Ñ•É¥…° 4(€€€€€€€€€€€¥¹Ðà°4(€€€€€€€€€€€¥¹Ðè°4(€€€€€€€€€€€¥¹Ð‘¥ÍÑ…¹”°4(€€€€€€€€€€€¥¹Ð™•…Ñ¡•È¤ì4(€€€€€€€¥¹ÐÍ•±•Ñ½È€ô5…Ñ ¹™±½½É5½¡à€¨€ÌÄ€¬è€¨€ÄÜ°€ÄÄ¤ì4(€€€€€€€¥˜€¡‘¥ÍÑ…¹”€ø€À€˜˜‘¥ÍÑ…¹”€øô5…Ñ ¹µ…à Ä°™•…Ñ¡•È€´€Ä¤¤ì4(€€€€€€€€€€€É•ÑÕÉ¸Í•±•Ñ½È€”€Ì€ôô€À4(€€€€€€€€€€€€€€€€€€€€ü5…Ñ•É¥…°¹5=MM}	1=,4(€€€€€€€€€€€€€€€€€€€€è5…Ñ•É¥…°¹IMM}	1=,ì4(€€€€€€€ô4(€€€€€€€¥˜€¡Í•±•Ñ½È€ôô€À¤ì4(€€€€€€€€€€€É•ÑÕÉ¸5…Ñ•É¥…°¹=IM}%IPì4(€€€€€€€ô4(€€€€€€€¥˜€¡Í•±•Ñ½È€ôô€Ä¤ì4(€€€€€€€€€€€É•ÑÕÉ¸5…Ñ•É¥…°¹5=MM}	1=,ì4(€€€€€€€ô4(€€€€€€€É•ÑÕÉ¸5…Ñ•É¥…°¹IMM}	1=,ì4(€€€ô4(4(€€€€¼¨¨4(€€€€€¨¹¹Õ±”±„Ÿ¥»¥É…Ñ¥½¸…Ñ¥Ù”½ÔÑ•Éµ¥»¥”•ÐÉ•ÍÑ…ÕÉ”±•Ì‰±½Ì‘…¹Ì4(€€€€€¨°½É‘É”¥¹Ù•ÉÍ”‘”±•ÕÈÁÉ•µ§¡É”µ½‘¥™¥…Ñ¥½¸¸4(€€€€€¨¼4(€€€ÁÉ¥Ù…Ñ”‰½½±•…¸Õ¹‘½Y¥±±…” ¤ì4(€€€€€€€Y¥±±…••¹•É…Ñ¥½¹M•ÍÍ¥½¸Í•ÍÍ¥½¸€ôÕÉÉ•¹ÑM•ÍÍ¥½¸ì4(€€€€€€€¥˜€¡Í•ÍÍ¥½¸€ôô¹Õ±°¤ì4(€€€€€€€€€€€É•ÑÕÉ¸™…±Í”ì4(€€€€€€€ô4(4(€€€€€€€…¹•±Ñ¥Ù•	Õ¥± ¤ì4(€€€€€€€É½±±‰…­M•ÍÍ¥½¸¡Í•ÍÍ¥½¸¤ì4(€€€€€€€É•ÑÕÉ¸ÑÉÕ”ì4(€€€ô4(4(€€€ÁÉ¥Ù…Ñ”Ù½¥…¹•±Ñ¥Ù•	Õ¥± ¤ì4(€€€€€€€¥˜€¡…Ñ¥Ù•	Õ¥±‘Q…Í¬€„ô¹Õ±°¤ì4(€€€€€€€€€€€…Ñ¥Ù•	Õ¥±‘Q…Í¬¹…¹•° ¤ì4(€€€€€€€€€€€…Ñ¥Ù•	Õ¥±‘Q…Í¬€ô¹Õ±°ì4(€€€€€€€ô4(€€€ô4(4(€€€ÁÉ¥Ù…Ñ”Ù½¥É½±±‰…­M•ÍÍ¥½¸¡Y¥±±…••¹•É…Ñ¥½¹M•ÍÍ¥½¸Í•ÍÍ¥½¸¤ì4(€€€€€€€¥˜€¡Í•ÍÍ¥½¸€ôô¹Õ±°¤ì4(€€€€€€€€€€€É•ÑÕÉ¸ì4(€€€€€€€ô4(4(€€€€€€€€¼¨4(€€€€€€€€€¨=¸“¥Ñ…¡”±„Í•ÍÍ¥½¸…Ù…¹Ð±„É•ÍÑ…ÕÉ…Ñ¥½¸€è…ÕÕ¹”½µµ…¹‘”½Ô4(€€€€€€€€€¨Ó‰¡”Ë¥Í¥‘Õ•±±”¹”Á•ÕÐ…±½ÉÌ•¹É•¥ÍÑÉ•È±•Ì‰±½ÌÉ•ÍÑ…ÕË¥Ì¸4(€€€€€€€€€¨¼4(€€€€€€€¥˜€¡ÕÉÉ•¹ÑM•ÍÍ¥½¸€ôôÍ•ÍÍ¥½¸¤ì4(€€€€€€€€€€€ÕÉÉ•¹ÑM•ÍÍ¥½¸€ô¹Õ±°ì4(€€€€€€€ô4(4(€€€€€€€™½È€¡UU%¥€èÍ•ÍÍ¥½¸¹•Ñ•¹•É…Ñ•‘¹Ñ¥Ñ¥•Ì ¤¤ì4(€€€€€€€€€€€¹Ñ¥Ñä•¹Ñ¥Ñä€ô	Õ­­¥Ð¹•Ñ¹Ñ¥Ñä¡¥¤ì4(€€€€€€€€€€€¥˜€¡•¹Ñ¥Ñä€„ô¹Õ±°¤ì4(€€€€€€€€€€€€€€€•¹Ñ¥Ñä¹É•µ½Ù” ¤ì4(€€€€€€€€€€€ô4(€€€€€€€ô4(4(€€€€€€€1¥ÍÐñ5…À¹¹ÑÉäñ1½…Ñ¥½¸°	±½­…Ñ„øø½É¥¥¹…±Ì€ô4(€€€€€€€€€€€€€€€¹•ÜÉÉ…å1¥ÍÐðø¡Í•ÍÍ¥½¸¹•Ñ=É¥¥¹…±	±½­Ì ¤¹•¹ÑÉåM•Ð ¤¤ì4(€€€€€€€½±±•Ñ¥½¹Ì¹É•Ù•ÉÍ”¡½É¥¥¹…±Ì¤ì4(€€€€€€€™½È€¡5…À¹¹ÑÉäñ1½…Ñ¥½¸°	±½­…Ñ„ø•¹ÑÉä€è½É¥¥¹…±Ì¤ì4(€€€€€€€€€€€1½…Ñ¥½¸±½…Ñ¥½¸€ô•¹ÑÉä¹•Ñ-•ä ¤ì4(€€€€€€€€€€€¥˜€¡±½…Ñ¥½¸¹•Ñ]½É± ¤€ôô¹Õ±°¤ì4(€€€€€€€€€€€€€€€½¹Ñ¥¹Õ”ì4(€€€€€€€€€€€ô4(€€€€€€€€€€€±½…Ñ¥½¸¹•Ñ	±½¬ ¤¹Í•Ñ	±½­…Ñ„ 4(€€€€€€€€€€€€€€€€€€€•¹ÑÉä¹•ÑY…±Õ” ¤¹±½¹” ¤°4(€€€€€€€€€€€€€€€€€€€™…±Í”4(€€€€€€€€€€€€¤ì4(€€€€€€€ô4(4(€€€€€€€ÑÉäì4(€€€€€€€€€€€Y¥±±…•¹Ñ¥Ñå5…¹…•È¹±•…¹ÕÀ 4(€€€€€€€€€€€€€€€€€€€Á±Õ¥¸°4(€€€€€€€€€€€€€€€€€€€Í•ÍÍ¥½¸¹•ÑY¥±±…•% ¤4(€€€€€€€€€€€€¤ì4(€€€€€€€ô…Ñ €¡Q¡É½Ý…‰±”Ñ¡É½Ý…‰±”¤ì4(€€€€€€€€€€€Á±Õ¥¸¹•Ñ1½•È ¤¹Ý…É¹¥¹œ 4(€€€€€€€€€€€€€€€€€€€€‰9•ÑÑ½å…”‘•Ì•¹Ñ¥Ó¥Ì‘ÔÙ¥±±…”¥¹½µÁ±•Ð€è€ˆ4(€€€€€€€€€€€€€€€€€€€€€€€€€€€€¬Ñ¡É½Ý…‰±”¹•Ñ±…ÍÌ ¤¹•ÑM¥µÁ±•9…µ” ¤4(€€€€€€€€€€€€¤ì4(€€€€€€€ô4(€€€ô4)ô4(
+    public void setBlockTracked(VillageGenerationSession session,
+                                World world,
+                                int x,
+                                int y,
+                                int z,
+                                BlockData data) {
+        if (world == null || data == null
+                || y < world.getMinHeight()
+                || y >= world.getMaxHeight()) {
+            return;
+        }
+
+        Block block = world.getBlockAt(x, y, z);
+        if (block.getBlockData().equals(data)) {
+            return;
+        }
+        if (session != null) {
+            session.rememberOriginal(
+                    block.getLocation(),
+                    block.getBlockData()
+            );
+        }
+        block.setBlockData(data, false);
+    }
+
+    /**
+     * Surcharge de compatibilitÃ©. Les nouvelles tÃ¢ches doivent toujours
+     * capturer explicitement leur session.
+     */
+    public void setBlockTracked(World world,
+                                int x,
+                                int y,
+                                int z,
+                                Material material) {
+        setBlockTracked(currentSession, world, x, y, z, material);
+    }
+
+    /**
+     * Surcharge de compatibilitÃ©. Les nouvelles tÃ¢ches doivent toujours
+     * capturer explicitement leur session.
+     */
+    public void setBlockTracked(World world,
+                                int x,
+                                int y,
+                                int z,
+                                BlockData data) {
+        setBlockTracked(currentSession, world, x, y, z, data);
+    }
+
+    public Runnable createSpawnerAction(VillageGenerationSession session,
+                                        World world,
+                                        int x,
+                                        int y,
+                                        int z,
+                                        EntityType type) {
+        return () -> {
+            setBlockTracked(session, world, x, y, z, Material.SPAWNER);
+            if (session != null) {
+                session.trackSpawner(new Location(world, x, y, z));
+            }
+
+            Block block = world.getBlockAt(x, y, z);
+            if (block.getState() instanceof CreatureSpawner spawner) {
+                spawner.setSpawnedType(type);
+                spawner.update(true, false);
+            }
+        };
+    }
+
+    public Runnable createSpawnerAction(World world,
+                                        int x,
+                                        int y,
+                                        int z,
+                                        EntityType type) {
+        return createSpawnerAction(
+                currentSession,
+                world,
+                x,
+                y,
+                z,
+                type
+        );
+    }
+
+    private Runnable spawnMerchantNpc(VillageGenerationSession session,
+                                      World world,
+                                      Location anchor,
+                                      int villageId) {
+        return () -> {
+            if (!(plugin instanceof MinePlugin minePlugin)
+                    || minePlugin.getMerchantManager() == null) {
+                return;
+            }
+
+            Location spawnLocation = anchor != null
+                    ? anchor.clone().add(0.5D, 1.0D, 0.5D)
+                    : new Location(
+                            world,
+                            0.5D,
+                            world.getHighestBlockYAt(0, 0) + 1.0D,
+                            0.5D
+                    );
+            try {
+                Villager villager = (Villager) world.spawnEntity(
+                        spawnLocation,
+                        EntityType.VILLAGER
+                );
+                session.trackEntity(villager.getUniqueId());
+                try {
+                    VillageEntityManager.tagEntity(
+                            villager,
+                            plugin,
+                            villageId
+                    );
+                } catch (Throwable ignored) {
+                    /*
+                     * Certains environnements de test ne fournissent pas le
+                     * conteneur de donnÃ©es persistantes de Paper.
+                     */
+                }
+                minePlugin.getMerchantManager()
+                        .prepareMerchantNpc(villager);
+            } catch (Throwable throwable) {
+                plugin.getLogger().warning(
+                        "Apparition du marchand ignorÃ©e : "
+                                + throwable.getClass().getSimpleName());
+            }
+        };
+    }
+
+    private void spawnVillager(VillageGenerationSession session,
+                               World world,
+                               Location location,
+                               String name) {
+        try {
+            world.getChunkAt(location).load();
+            Villager villager = (Villager) world.spawnEntity(
+                    location,
+                    EntityType.VILLAGER
+            );
+            session.trackEntity(villager.getUniqueId());
+            villager.setCustomName(name);
+            villager.setCustomNameVisible(true);
+            villager.setProfession(Villager.Profession.NONE);
+        } catch (Throwable throwable) {
+            plugin.getLogger().warning(
+                    "Apparition du villageois ignorÃ©e : "
+                            + throwable.getClass().getSimpleName());
+        }
+    }
+
+    /**
+     * Prolonge la grand-rue jusqu'Ã  la face intÃ©rieure du portail.
+     *
+     * <p>La longueur est dÃ©rivÃ©e du plan rÃ©el et de la muraille calculÃ©e :
+     * aucune constante liÃ©e Ã  la configuration par dÃ©faut n'est utilisÃ©e.</p>
+     */
+    private List<Runnable> buildGateRoadConnector(
+            VillageGenerationSession session,
+            World world,
+            VillageLayoutPlan layout,
+            int innerGateZ,
+            int baseY) {
+        List<Runnable> actions = new ArrayList<>();
+        VillageLayoutPlan.StreetPlan mainStreet = layout.streets().stream()
+                .filter(street -> street.type()
+                        == VillageLayoutPlan.StreetType.MAIN)
+                .filter(street -> !street.horizontal())
+                .findFirst()
+                .orElse(null);
+        if (mainStreet == null) {
+            return actions;
+        }
+
+        int roadCenterX = mainStreet.startX();
+        int roadEndZ = mainStreet.maxZ();
+        if (innerGateZ <= roadEndZ) {
+            return actions;
+        }
+
+        int halfWidth = Math.max(1, mainStreet.halfWidth());
+        for (int z = roadEndZ + 1; z <= innerGateZ; z++) {
+            int currentZ = z;
+            for (int dx = -halfWidth; dx <= halfWidth; dx++) {
+                int x = roadCenterX + dx;
+                Material paving;
+                if (Math.abs(dx) == halfWidth) {
+                    paving = Math.floorMod(x + currentZ, 3) == 0
+                            ? Material.STONE_BRICKS
+                            : Material.COBBLESTONE;
+                } else {
+                    paving = Math.floorMod(x * 17 + currentZ * 31, 6) == 0
+                            ? Material.POLISHED_ANDESITE
+                            : Material.GRAVEL;
+                }
+
+                Material finalPaving = paving;
+                actions.add(() -> setBlockTracked(
+                        session,
+                        world,
+                        x,
+                        baseY - 1,
+                        currentZ,
+                        Material.COBBLESTONE
+                ));
+                actions.add(() -> setBlockTracked(
+                        session,
+                        world,
+                        x,
+                        baseY,
+                        currentZ,
+                        finalPaving
+                ));
+            }
+
+            // Deux accotements en terre battue adoucissent la jonction avec
+            // le terrain et Ã©vitent l'effet de ruban minÃ©ral parfaitement net.
+            for (int side : new int[]{-1, 1}) {
+                int shoulderX = roadCenterX
+                        + side * (halfWidth + 1);
+                Material shoulder = Math.floorMod(
+                        shoulderX * 13 + currentZ * 7,
+                        5
+                ) == 0
+                        ? Material.COARSE_DIRT
+                        : Material.DIRT_PATH;
+                actions.add(() -> setBlockTracked(
+                        session,
+                        world,
+                        shoulderX,
+                        baseY,
+                        currentZ,
+                        shoulder
+                ));
+            }
+        }
+        return actions;
+    }
+
+    private List<Runnable> buildResidentialVillagerSpawners(
+            VillageGenerationSession session,
+            World world,
+            VillageLayoutPlan layout,
+            int baseY) {
+        List<VillageLayoutPlan.LotPlan> houses = layout.lots().stream()
+                .filter(VillageLayoutPlan.LotPlan::isHouse)
+                .toList();
+        prepareVillagerSpawnerDistribution(houses.size());
+
+        List<Runnable> actions = new ArrayList<>();
+        for (int index = 0; index < houses.size(); index++) {
+            if (!villagerSpawnerIdx.contains(index)) {
+                continue;
+            }
+
+            VillageLayoutPlan.LotPlan lot = houses.get(index);
+            int spawnerY = baseY + lot.terraceY() - 1;
+            actions.add(createSpawnerAction(
+                    session,
+                    world,
+                    lot.centerX(),
+                    spawnerY,
+                    lot.centerZ(),
+                    EntityType.VILLAGER
+            ));
+        }
+        return actions;
+    }
+
+    private List<Runnable> buildGolemSpawners(
+            VillageGenerationSession session,
+            World world,
+            VillageLayoutPlan layout,
+            int baseY) {
+        List<Runnable> actions = new ArrayList<>();
+        Location plaza = layout.anchors().get("plaza");
+        if (plaza == null) {
+            return actions;
+        }
+
+        int offset = Math.max(
+                3,
+                layoutSettings.effectivePlazaSize() / 2 - 2
+        );
+        for (int i = 0; i < GOLEM_SPAWNERS; i++) {
+            int sign = i == 0 ? -1 : 1;
+            actions.add(createSpawnerAction(
+                    session,
+                    world,
+                    plaza.getBlockX() + sign * offset,
+                    baseY - 2,
+                    plaza.getBlockZ(),
+                    EntityType.IRON_GOLEM
+            ));
+        }
+        return actions;
+    }
+
+    private void logLayoutSummary(VillageLayoutPlan layout) {
+        EnumMap<VillageLayoutPlan.LotRole, Integer> counts =
+                new EnumMap<>(VillageLayoutPlan.LotRole.class);
+        int terracedLots = 0;
+        for (VillageLayoutPlan.LotPlan lot : layout.lots()) {
+            counts.merge(lot.role(), 1, Integer::sum);
+            if (lot.terraceY() > 0) {
+                terracedLots++;
+            }
+        }
+
+        plugin.getLogger().info(
+                "Plan du village : maisons=" + layout.houseCount()
+                        + ", rues=" + layout.streets().size()
+                        + ", terrasses=" + terracedLots
+                        + ", dimensions=" + layout.bounds().width()
+                        + "x" + layout.bounds().depth()
+        );
+        plugin.getLogger().info("RÃ©partition des lots : " + counts);
+    }
+
+    /**
+     * ExÃ©cute la file avec une double limite (nombre d'actions et temps CPU)
+     * afin que les colonnes de terrassement ne figent pas le serveur.
+     */
+    private void buildActionsInBatches(
+            Queue<Runnable> queue,
+            VillageGenerationSession session) {
+        BukkitRunnable runner = new BukkitRunnable() {
+            @Override
+            public void run() {
+                if (currentSession != session) {
+                    clearActiveTask();
+                    cancel();
+                    return;
+                }
+
+                long startedAt = System.nanoTime();
+                int processed = 0;
+                try {
+                    while (processed < MAX_ACTIONS_PER_TICK
+                            && !queue.isEmpty()
+                            && System.nanoTime() - startedAt
+                            < MAX_BATCH_NANOS) {
+                        Runnable action = queue.poll();
+                        if (action != null) {
+                            action.run();
+                            processed++;
+                        }
+                    }
+                } catch (Throwable throwable) {
+                    plugin.getLogger().log(
+                            Level.SEVERE,
+                            "La gÃ©nÃ©ration du village a Ã©chouÃ© ; "
+                                    + "les modifications vont Ãªtre restaurÃ©es.",
+                            throwable
+                    );
+                    clearActiveTask();
+                    cancel();
+                    rollbackSession(session);
+                    return;
+                }
+
+                if (queue.isEmpty()) {
+                    plugin.getLogger().info(
+                            "Village " + session.getVillageId()
+                                    + " construit avec succÃ¨s."
+                    );
+                    clearActiveTask();
+                    cancel();
+                }
+            }
+        };
+
+        activeBuildTask = runner.runTaskTimer(plugin, 1L, 1L);
+    }
+
+    private void clearActiveTask() {
+        activeBuildTask = null;
+    }
+
+    /**
+     * PrÃ©pare une terrasse principale et une transition graduelle vers le
+     * relief naturel. Chaque colonne est une seule tÃ¢che pour maÃ®triser la
+     * taille de la file, mais chaque bloc modifiÃ© reste individuellement suivi.
+     */
+    private List<Runnable> prepareGroundActions(
+            VillageGenerationSession session,
+            World world,
+            int flatMinX,
+            int flatMaxX,
+            int flatMinZ,
+            int flatMaxZ,
+            int baseY,
+            int feather) {
+        List<Runnable> actions = new ArrayList<>();
+        int safeFeather = Math.max(0, feather);
+        int minX = flatMinX - safeFeather;
+        int maxX = flatMaxX + safeFeather;
+        int minZ = flatMinZ - safeFeather;
+        int maxZ = flatMaxZ + safeFeather;
+
+        for (int x = minX; x <= maxX; x++) {
+            for (int z = minZ; z <= maxZ; z++) {
+                final int columnX = x;
+                final int columnZ = z;
+                actions.add(() -> prepareGroundColumn(
+                        session,
+                        world,
+                        columnX,
+                        columnZ,
+                        flatMinX,
+                        flatMaxX,
+                        flatMinZ,
+                        flatMaxZ,
+                        baseY,
+                        safeFeather
+                ));
+            }
+        }
+        return actions;
+    }
+
+    private void prepareGroundColumn(
+            VillageGenerationSession session,
+            World world,
+            int x,
+            int z,
+            int flatMinX,
+            int flatMaxX,
+            int flatMinZ,
+            int flatMaxZ,
+            int baseY,
+            int feather) {
+        int highestY = world.getHighestBlockYAt(x, z);
+        int naturalY = findNaturalGroundY(world, x, z, baseY);
+        int distance = distanceOutside(
+                x,
+                z,
+                flatMinX,
+                flatMaxX,
+                flatMinZ,
+                flatMaxZ
+        );
+
+        int targetY;
+        if (distance <= 0 || feather == 0) {
+            targetY = baseY;
+        } else {
+            /*
+             * La derniÃ¨re couronne prÃ©parÃ©e rejoint exactement le relief
+             * naturel. Avec {@code feather + 1}, il restait encore 20 % de
+             * terrassement au bord, puis une marche brutale hors de la zone.
+             */
+            double ratio = Math.min(
+                    1.0D,
+                    distance / (double) Math.max(1, feather)
+            );
+            targetY = (int) Math.round(
+                    baseY + (naturalY - baseY) * ratio
+            );
+        }
+        targetY = Math.max(
+                world.getMinHeight() + 2,
+                Math.min(world.getMaxHeight() - 2, targetY)
+        );
+
+        /*
+         * On retire aussi les troncs et feuillages au-dessus du sol cible.
+         * Contrairement Ã  l'ancienne version, chaque bloc d'air est mÃ©morisÃ©
+         * et pourra donc Ãªtre restaurÃ© par /village undo.
+         */
+        int clearTop = Math.min(
+                world.getMaxHeight() - 1,
+                /*
+                 * Les nouvelles tours et le chÃ¢telet culminent Ã  environ
+                 * vingt-deux blocs au-dessus du sol. La marge de vingt-quatre
+                 * blocs Ã©vite qu'un tronc ou une canopÃ©e traverse leur toiture.
+                 */
+                Math.max(highestY, targetY + 24)
+        );
+        for (int y = targetY + 1; y <= clearTop; y++) {
+            Block block = world.getBlockAt(x, y, z);
+            if (!block.getType().isAir()) {
+                setBlockTracked(
+                        session,
+                        world,
+                        x,
+                        y,
+                        z,
+                        Material.AIR
+                );
+            }
+        }
+
+        if (naturalY < targetY) {
+            for (int y = naturalY + 1; y < targetY; y++) {
+                Material fill = y < targetY - 3
+                        ? Material.STONE
+                        : Material.DIRT;
+                setBlockTracked(session, world, x, y, z, fill);
+            }
+        }
+
+        setBlockTracked(
+                session,
+                world,
+                x,
+                targetY - 1,
+                z,
+                Math.floorMod(x * 17 + z * 31, 7) == 0
+                        ? Material.COARSE_DIRT
+                        : Material.DIRT
+        );
+        setBlockTracked(
+                session,
+                world,
+                x,
+                targetY,
+                z,
+                terrainTopMaterial(x, z, distance, feather)
+        );
+    }
+
+    private int resolveBaseY(
+            World world,
+            int centerX,
+            int centerZ,
+            int fallbackY) {
+        List<Integer> samples = new ArrayList<>();
+        int[] offsets = {-4, 0, 4};
+        for (int dx : offsets) {
+            for (int dz : offsets) {
+                samples.add(findNaturalGroundY(
+                        world,
+                        centerX + dx,
+                        centerZ + dz,
+                        fallbackY
+                ));
+            }
+        }
+        Collections.sort(samples);
+        int median = samples.get(samples.size() / 2);
+
+        /*
+         * Dans une grotte ou sur une trÃ¨s haute construction, le niveau le
+         * plus proche du joueur est plus prÃ©visible que la surface distante.
+         */
+        if (Math.abs(median - fallbackY) > 18) {
+            return fallbackY;
+        }
+        return median;
+    }
+
+    private int findNaturalGroundY(
+            World world,
+            int x,
+            int z,
+            int fallbackY) {
+        int highest = Math.min(
+                world.getMaxHeight() - 1,
+                world.getHighestBlockYAt(x, z)
+        );
+        int lowerBound = Math.max(
+                world.getMinHeight(),
+                highest - 96
+        );
+
+        for (int y = highest; y >= lowerBound; y--) {
+            Material material = world.getBlockAt(x, y, z).getType();
+            if (isNaturalGround(material)) {
+                return y;
+            }
+        }
+        return Math.max(
+                world.getMinHeight() + 2,
+                Math.min(world.getMaxHeight() - 2, fallbackY)
+        );
+    }
+
+    private boolean isNaturalGround(Material material) {
+        if (material == null || material.isAir() || !material.isSolid()) {
+            return false;
+        }
+
+        String name = material.name();
+        return !name.endsWith("_LEAVES")
+                && !name.endsWith("_LOG")
+                && !name.endsWith("_WOOD")
+                && !name.endsWith("_STEM")
+                && !name.endsWith("_HYPHAE")
+                && material != Material.BAMBOO_BLOCK
+                && material != Material.CACTUS
+                && material != Material.MUSHROOM_STEM;
+    }
+
+    private int distanceOutside(
+            int x,
+            int z,
+            int minX,
+            int maxX,
+            int minZ,
+            int maxZ) {
+        int dx = x < minX
+                ? minX - x
+                : Math.max(0, x - maxX);
+        int dz = z < minZ
+                ? minZ - z
+                : Math.max(0, z - maxZ);
+        return Math.max(dx, dz);
+    }
+
+    private Material terrainTopMaterial(
+            int x,
+            int z,
+            int distance,
+            int feather) {
+        int selector = Math.floorMod(x * 31 + z * 17, 11);
+        if (distance > 0 && distance >= Math.max(1, feather - 1)) {
+            return selector % 3 == 0
+                    ? Material.MOSS_BLOCK
+                    : Material.GRASS_BLOCK;
+        }
+        if (selector == 0) {
+            return Material.COARSE_DIRT;
+        }
+        if (selector == 1) {
+            return Material.MOSS_BLOCK;
+        }
+        return Material.GRASS_BLOCK;
+    }
+
+    /**
+     * Annule la gÃ©nÃ©ration active ou terminÃ©e et restaure les blocs dans
+     * l'ordre inverse de leur premiÃ¨re modification.
+     */
+    private boolean undoVillage() {
+        VillageGenerationSession session = currentSession;
+        if (session == null) {
+            return false;
+        }
+
+        cancelActiveBuild();
+        rollbackSession(session);
+        return true;
+    }
+
+    private void cancelActiveBuild() {
+        if (activeBuildTask != null) {
+            activeBuildTask.cancel();
+            activeBuildTask = null;
+        }
+    }
+
+    private void rollbackSession(VillageGenerationSession session) {
+        if (session == null) {
+            return;
+        }
+
+        /*
+         * On dÃ©tache la session avant la restauration : aucune commande ou
+         * tÃ¢che rÃ©siduelle ne peut alors enregistrer les blocs restaurÃ©s.
+         */
+        if (currentSession == session) {
+            currentSession = null;
+        }
+
+        for (UUID id : session.getGeneratedEntities()) {
+            Entity entity = Bukkit.getEntity(id);
+            if (entity != null) {
+                entity.remove();
+            }
+        }
+
+        List<Map.Entry<Location, BlockData>> originals =
+                new ArrayList<>(session.getOriginalBlocks().entrySet());
+        Collections.reverse(originals);
+        for (Map.Entry<Location, BlockData> entry : originals) {
+            Location location = entry.getKey();
+            if (location.getWorld() == null) {
+                continue;
+            }
+            location.getBlock().setBlockData(
+                    entry.getValue().clone(),
+                    false
+            );
+        }
+
+        try {
+            VillageEntityManager.cleanup(
+                    plugin,
+                    session.getVillageId()
+            );
+        } catch (Throwable throwable) {
+            plugin.getLogger().warning(
+                    "Nettoyage des entitÃ©s du village incomplet : "
+                            + throwable.getClass().getSimpleName()
+            );
+        }
+    }
+}

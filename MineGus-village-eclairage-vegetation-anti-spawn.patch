@@ -1,0 +1,2126 @@
+diff --git a/README.md b/README.md
+index d42d7d048c332fe0b73e2ec6f3f1d18cdd471c1d..c065d1baea4b28163c2cd57542d7a6dd3e7e9cf6 100644
+--- a/README.md
++++ b/README.md
+@@ -28,7 +28,7 @@ Après le premier démarrage, éditez `plugins/MinePlugin/config.yml` :
+ - `/mineur` : `stop-at-y` (Y cible), `default.pattern`, `default.speed`, `default.supports-every`, `default.torch-layers`, `default.use-barrel-master`, `branch.spacing`, `branch.gallery-width`, `limits.max-sessions-per-player`, `economy.*`.
+ - `/garde` : `follow-radius`, les paramètres de formation (`formation-side-distance`, `formation-rear-distance`, `formation-tolerance`), l’espace visuel (`personal-space-radius`, `view-clearance-distance`), les rayons `protection-radius`, `threat-detection-radius` et `combat-leash-radius`, l’assistance (`assist-owner-attacks`, `proactive-defense`, `finish-engaged-targets`), `threat-duration-seconds`, `respawn-delay-seconds`, `friendly-fire`, la neutralité des golems, `notifications` et `attributes.*`. Les valeurs invalides ou hors limites reviennent aux valeurs par défaut sûres.
+ - `/eleveur` : limites d’animaux, temps de recharge, chances de loot cuit, prix en émeraudes.
+-- `/village` : tailles des maisons/grille (`houseSmall`, `houseBig`, `roadHalf`, `spacing`, `plazaSize`, `rows`, `cols`, `wallGap`).
++- `/village` : tailles des maisons/grille (`houseSmall`, `houseBig`, `roadHalf`, `spacing`, `plazaSize`, `rows`, `cols`, `wallGap`), densité de végétation (`decorDensity`) et passe lumineuse finale (`lighting.*`).
+ 
+ Référence par défaut : `src/main/resources/config.yml`. Modifiez seulement la copie dans `plugins/MinePlugin/`.
+ 
+@@ -77,7 +77,7 @@ Référence par défaut : `src/main/resources/config.yml`. Modifiez seulement la
+ - `/eleveur delete <id>` : supprime l’enclos correspondant et nettoie la zone.
+ 
+ ### /village
+-- `/village` : génère un village orthogonal asynchrone autour du joueur (routes, place centrale, lots de maisons/fermes, spawners PNJ/golems, muraille, stand marchand).
++- `/village` : génère un village semi-organique autour du joueur avec routes, place centrale, maisons, fermes, muraille, arbres, mares, jardins et mobilier. Les lanternes visibles sont complétées par un audit de lumière de bloc qui sécurise aussi les intérieurs, toitures, chemins de ronde et abords immédiats avec des blocs `LIGHT` invisibles.
+ - `/village undo` : annule la dernière génération effectuée.
+ 
+ ### /armure
+@@ -109,13 +109,15 @@ Les fonctionnalités persistantes sauvegardent leurs informations (YAML) dans `p
+ - `org.example.Agriculture` : gère `/champ`. Crée terres labourées + irrigation, PNJ fermier + golems, récolte/stockage auto, persistance `farms.yml`.
+ - `org.example.Foret` : gère `/foret`. Grille de pousses, récolte et replantation auto, coffres d’angle, persistance `forests.yml`.
+ - `org.example.Eleveur` : gère `/eleveur`. Génère un ranch (clôtures, coffres, spawners), limite d’animaux par espèce (depuis `config.yml`), ramassage et stockage, scoreboard, persistance `ranches.yml`.
+-- `org.example.Village` : gère `/village` et `undo`. Orchestration asynchrone via une file de `Runnable` pour routes, place, lots, bâtiments, spawners PNJ/golems et muraille; lit la config (`rows`, `cols`, `houseSmall`, `houseBig`, `roadHalf`, `spacing`, `plazaSize`).
++- `org.example.Village` : gère `/village` et `undo`. L'orchestration par file de `Runnable` couvre routes, place, lots, bâtiments, spawners, muraille, décoration et audit lumineux, avec suivi de chaque bloc pour le rollback.
+ - `org.example.Batiments` : helpers statiques de bâtiments (maisons pivotées, toitures, détails). Écrit via `Village#setBlockTracked` pour permettre l’undo.
+ - `org.example.Golem` : sentinelle golem avec rayon de patrouille, retour au point d’ancrage (pathfinder/teleport), attributs ajustés.
+ - `org.example.RoyalGuardManager` : gère `/garde`, les deux Husks personnels, leur suivi, leur combat, leur rappel et leur respawn différé.
+ - `org.example.Armure` : gère `/armure`. Donne l’équipement “roi GIDON”, applique/retire les buffs en boucle, invoque des loups gardes à la prise de dégâts et programme leur disparition.
+ - `org.example.TeleportUtils` : `safeTeleport` (utilise `teleportAsync` si dispo, sinon `teleport`).
+-- `org.example.village.Disposition` : répartition des lots et planification des tâches (routes, maisons, fermes, lampadaires).
++- `org.example.village.Disposition` : répartition des lots et planification des tâches (routes, maisons, fermes et lampadaires alternés).
++- `org.example.village.VillageDecorationBuilder` : réserve les interstices puis ajoute arbres, vergers éclairés, massifs, mares, jardins d'herbes et mobilier sans collision.
++- `org.example.village.VillageLightingBuilder` : pose les lumières décoratives finales et audite les surfaces sombres par petites tuiles afin de bloquer le spawn hostile naturel.
+ - `org.example.village.HouseBuilder` : génère maisons/fermes/lampadaires; renvoie des actions différées.
+ - `org.example.village.TerrainManager` : aplanit/remblaie le terrain; utilitaire `SetBlock` safe.
+ - `org.example.village.WallBuilder` : construit la muraille (corps, crénelages, portes, torches) en tâches différées.
+diff --git a/src/main/java/org/example/Village.java b/src/main/java/org/example/Village.java
+index 7e13d6b12763fd87840bde90cba77ab247c0ff05..b1760c7eaf4b80b4b4fa603bab3923545da0a116 100644
+--- a/src/main/java/org/example/Village.java
++++ b/src/main/java/org/example/Village.java
+@@ -26,6 +26,7 @@ import org.example.village.VillageGenerationSession;
+ import org.example.village.VillageLayoutPlan;
+ import org.example.village.VillageLayoutPlanner;
+ import org.example.village.VillageLayoutSettings;
++import org.example.village.VillageLightingBuilder;
+ import org.example.village.WallBuilder;
+ 
+ import java.util.ArrayList;
+@@ -355,6 +356,23 @@ public final class Village implements CommandExecutor {
+                         setBlockTracked(session, world, x, y, z, material)
+         );
+ 
++        /*
++         * Cette passe est volontairement planifiée après la muraille et tous
++         * les bâtiments. Elle peut ainsi mesurer les zones réellement sombres,
++         * y compris les intérieurs, les toitures et les chemins de ronde.
++         */
++        VillageLightingBuilder.enqueue(
++                plugin,
++                villageCenter,
++                layout,
++                rx,
++                rz,
++                baseY,
++                todo,
++                (x, y, z, material) ->
++                        setBlockTracked(session, world, x, y, z, material)
++        );
++
+         final int resolvedVillageId = villageId;
+         if (villageEntitiesEnabled) {
+             todo.add(() -> GateGuardManager.ensureGuards(
+diff --git a/src/main/java/org/example/village/Disposition.java b/src/main/java/org/example/village/Disposition.java
+index e65d6b503123e1dd56db0748f6fd50b485b33360..38814bf993d27331a924adf81fb17d4e2153cf26 100644
+--- a/src/main/java/org/example/village/Disposition.java
++++ b/src/main/java/org/example/village/Disposition.java
+@@ -360,7 +360,9 @@ public final class Disposition {
+                 continue;
+             }
+ 
+-            int interval = street.type() == StreetType.MAIN ? 10 : 14;
++            // Un rythme plus serré éclaire les façades sans transformer les
++            // rues en alignement uniforme : les côtés restent alternés.
++            int interval = street.type() == StreetType.MAIN ? 8 : 11;
+             if (street.horizontal()) {
+                 int start = street.minX();
+                 int end = street.maxX();
+diff --git a/src/main/java/org/example/village/VillageDecorationBuilder.java b/src/main/java/org/example/village/VillageDecorationBuilder.java
+index a4bb84dd1a2c4e99996b97f4ef6fab08b89b8be8..664cd8a84867bb10022ce0a1cae7a164b4892cc7 100644
+--- a/src/main/java/org/example/village/VillageDecorationBuilder.java
++++ b/src/main/java/org/example/village/VillageDecorationBuilder.java
+@@ -5,6 +5,8 @@ import org.bukkit.Material;
+ import org.bukkit.World;
+ import org.bukkit.block.BlockFace;
+ import org.bukkit.block.data.Bisected;
++import org.bukkit.block.data.type.Lantern;
++import org.bukkit.block.data.type.Leaves;
+ import org.bukkit.block.data.type.Slab;
+ import org.bukkit.block.data.type.Stairs;
+ 
+@@ -66,29 +68,119 @@ public final class VillageDecorationBuilder {
+         List<Cell> candidates = createCandidates(layout.bounds(), random);
+         int built = 0;
+         int index = 0;
++
++        /*
++         * Les arbres sont réservés avant les accessoires aléatoires. Le budget
++         * total reste inchangé, mais une densité "high" ne peut plus produire
++         * par hasard un village presque dépourvu de végétation haute.
++         */
++        int treeTarget = Math.min(settings.treeBudget(), budget);
++        while (built < treeTarget && index < candidates.size()) {
++            Cell candidate = candidates.get(index++);
++            boolean illuminated = built % 3 == 0;
++            if (tryBuildTree(
++                    tasks,
++                    world,
++                    setBlock,
++                    occupancy,
++                    candidate.x(),
++                    candidate.z(),
++                    baseY,
++                    random,
++                    illuminated
++            )) {
++                built++;
++            }
++        }
++
++        /*
++         * On repart du début : les cellules déjà prises échouent proprement
++         * grâce à Occupancy, tandis que les petits interstices ignorés par les
++         * arbres restent disponibles pour des décors compacts.
++         */
++        index = 0;
+         while (built < budget && index < candidates.size()) {
+             Cell candidate = candidates.get(index++);
+             int type = Math.floorMod(
+-                    candidate.x() * 31 + candidate.z() * 17 + random.nextInt(97),
+-                    8
++                    candidate.x() * 31
++                            + candidate.z() * 17
++                            + random.nextInt(97),
++                    12
+             );
+             boolean placed = switch (type) {
+-                case 0 -> tryBuildTree(tasks, world, setBlock, occupancy,
+-                        candidate.x(), candidate.z(), baseY, random);
+-                case 1 -> tryBuildWoodpile(tasks, world, setBlock, occupancy,
++                case 0 -> tryBuildTree(
++                        tasks,
++                        world,
++                        setBlock,
++                        occupancy,
++                        candidate.x(),
++                        candidate.z(),
++                        baseY,
++                        random,
++                        Math.floorMod(candidate.x() + candidate.z(), 4) == 0
++                );
++                case 1 -> tryBuildShrubGarden(
++                        tasks,
++                        setBlock,
++                        occupancy,
++                        candidate.x(),
++                        candidate.z(),
++                        baseY
++                );
++                case 2 -> tryBuildFlowerPatch(
++                        tasks,
++                        setBlock,
++                        occupancy,
++                        candidate.x(),
++                        candidate.z(),
++                        baseY,
++                        random
++                );
++                case 3 -> tryBuildPond(
++                        tasks,
++                        setBlock,
++                        occupancy,
++                        candidate.x(),
++                        candidate.z(),
++                        baseY
++                );
++                case 4 -> tryBuildHerbGarden(
++                        tasks,
++                        setBlock,
++                        occupancy,
++                        candidate.x(),
++                        candidate.z(),
++                        baseY
++                );
++                case 5 -> tryBuildWoodpile(tasks, world, setBlock, occupancy,
+                         candidate.x(), candidate.z(), baseY, random);
+-                case 2 -> tryBuildHaystack(tasks, setBlock, occupancy,
++                case 6 -> tryBuildHaystack(tasks, setBlock, occupancy,
+                         candidate.x(), candidate.z(), baseY);
+-                case 3 -> tryBuildCart(tasks, world, setBlock, occupancy,
+-                        candidate.x(), candidate.z(), baseY, random);
+-                case 4 -> tryBuildLaundry(tasks, world, setBlock, occupancy,
++                case 7 -> tryBuildCart(tasks, world, setBlock, occupancy,
+                         candidate.x(), candidate.z(), baseY, random);
+-                case 5 -> tryBuildFlowerPatch(tasks, setBlock, occupancy,
++                case 8 -> tryBuildLaundry(tasks, world, setBlock, occupancy,
+                         candidate.x(), candidate.z(), baseY, random);
+-                case 6 -> tryBuildWaysideShrine(tasks, setBlock, occupancy,
++                case 9 -> tryBuildWaysideShrine(tasks, setBlock, occupancy,
+                         candidate.x(), candidate.z(), baseY);
+-                default -> tryBuildNoticeBoard(tasks, world, setBlock, occupancy,
+-                        candidate.x(), candidate.z(), baseY, random);
++                case 10 -> tryBuildNoticeBoard(
++                        tasks,
++                        world,
++                        setBlock,
++                        occupancy,
++                        candidate.x(),
++                        candidate.z(),
++                        baseY,
++                        random
++                );
++                default -> tryBuildFlowerPatch(
++                        tasks,
++                        setBlock,
++                        occupancy,
++                        candidate.x(),
++                        candidate.z(),
++                        baseY,
++                        random
++                );
+             };
+             if (placed) {
+                 built++;
+@@ -272,7 +364,19 @@ public final class VillageDecorationBuilder {
+         Cell gate = localPoint(centerX, centerZ, church.facing(), 0, 3);
+         place(tasks, setBlock, gate.x(), baseY + 1, gate.z(), Material.IRON_BARS);
+         Cell tree = localPoint(centerX, centerZ, church.facing(), 3, -2);
+-        buildSmallTree(tasks, setBlock, tree.x(), tree.z(), baseY, Material.OAK_LOG, Material.OAK_LEAVES);
++        buildSmallTree(
++                tasks,
++                world,
++                setBlock,
++                tree.x(),
++                tree.z(),
++                baseY,
++                Material.OAK_LOG,
++                Material.OAK_LEAVES,
++                false,
++                false,
++                church.facing().getOppositeFace()
++        );
+     }
+ 
+     private static void tryBuildOrchard(List<Runnable> tasks,
+@@ -305,14 +409,29 @@ public final class VillageDecorationBuilder {
+             }
+         }
+ 
++        int orchardTreeIndex = 0;
+         for (int dx : new int[]{-3, 0, 3}) {
+             for (int dz : new int[]{-2, 2}) {
+                 Material leaves = Math.floorMod(dx + dz, 2) == 0
+                         ? Material.FLOWERING_AZALEA_LEAVES
+                         : Material.OAK_LEAVES;
+-                buildSmallTree(tasks, setBlock,
+-                        centerX + dx, centerZ + dz, baseY,
+-                        Material.OAK_LOG, leaves);
++                BlockFace lanternSide = dz < 0
++                        ? BlockFace.NORTH
++                        : BlockFace.SOUTH;
++                buildSmallTree(
++                        tasks,
++                        world,
++                        setBlock,
++                        centerX + dx,
++                        centerZ + dz,
++                        baseY,
++                        Material.OAK_LOG,
++                        leaves,
++                        orchardTreeIndex % 3 == 0,
++                        false,
++                        lanternSide
++                );
++                orchardTreeIndex++;
+             }
+         }
+         int beeX = centerX + 4;
+@@ -393,26 +512,80 @@ public final class VillageDecorationBuilder {
+     }
+ 
+     private static boolean tryBuildTree(List<Runnable> tasks,
+-                                        World world,
+-                                        TerrainManager.SetBlock setBlock,
+-                                        Occupancy occupancy,
+-                                        int x,
+-                                        int z,
+-                                        int baseY,
+-                                        Random random) {
++                                         World world,
++                                         TerrainManager.SetBlock setBlock,
++                                         Occupancy occupancy,
++                                         int x,
++                                         int z,
++                                         int baseY,
++                                         Random random,
++                                         boolean illuminated) {
+         Rect rect = new Rect(x - 2, x + 2, z - 2, z + 2);
+         if (!occupancy.claim(rect, 1)) {
+             return false;
+         }
+-        Material log = random.nextBoolean() ? Material.OAK_LOG : Material.BIRCH_LOG;
+-        Material leaves = log == Material.BIRCH_LOG ? Material.BIRCH_LEAVES : Material.OAK_LEAVES;
+-        buildSmallTree(tasks, setBlock, x, z, baseY, log, leaves);
+-        if (random.nextInt(4) == 0) {
+-            place(tasks, setBlock, x + 1, baseY + 1, z, Material.BEE_NEST);
++
++        Material log;
++        Material leaves;
++        switch (random.nextInt(4)) {
++            case 0 -> {
++                log = Material.BIRCH_LOG;
++                leaves = Material.BIRCH_LEAVES;
++            }
++            case 1 -> {
++                log = Material.CHERRY_LOG;
++                leaves = Material.CHERRY_LEAVES;
++            }
++            case 2 -> {
++                log = Material.OAK_LOG;
++                leaves = Material.FLOWERING_AZALEA_LEAVES;
++            }
++            default -> {
++                log = Material.OAK_LOG;
++                leaves = Material.OAK_LEAVES;
++            }
++        }
++
++        BlockFace[] sides = {
++                BlockFace.NORTH,
++                BlockFace.SOUTH,
++                BlockFace.EAST,
++                BlockFace.WEST
++        };
++        BlockFace detailSide = sides[random.nextInt(sides.length)];
++        buildSmallTree(
++                tasks,
++                world,
++                setBlock,
++                x,
++                z,
++                baseY,
++                log,
++                leaves,
++                illuminated,
++                true,
++                detailSide
++        );
++
++        /*
++         * Le nid remplace une feuille au niveau du tronc au lieu de flotter au
++         * ras du sol. Les arbres éclairés gardent leur face libre pour la
++         * chaîne et la lanterne.
++         */
++        if (!illuminated && random.nextInt(4) == 0) {
++            int beeX = x + detailSide.getModX();
++            int beeZ = z + detailSide.getModZ();
++            int beeY = baseY + 3;
++            place(tasks, setBlock, beeX, beeY, beeZ, Material.BEE_NEST);
+             if (world != null) {
+                 tasks.add(() -> VillageStyle.setDirectional(
+-                        world, x + 1, baseY + 1, z,
+-                        Material.BEE_NEST, BlockFace.EAST));
++                        world,
++                        beeX,
++                        beeY,
++                        beeZ,
++                        Material.BEE_NEST,
++                        detailSide
++                ));
+             }
+         }
+         return true;
+@@ -605,6 +778,210 @@ public final class VillageDecorationBuilder {
+         return true;
+     }
+ 
++    /**
++     * Petit massif structuré : les arbustes donnent du volume à hauteur de
++     * joueur, tandis que les mousses et fleurs évitent l'effet de simple carré
++     * d'herbe posé au hasard.
++     */
++    private static boolean tryBuildShrubGarden(
++            List<Runnable> tasks,
++            TerrainManager.SetBlock setBlock,
++            Occupancy occupancy,
++            int x,
++            int z,
++            int baseY) {
++        Rect rect = new Rect(x - 2, x + 2, z - 2, z + 2);
++        if (!occupancy.claim(rect, 1)) {
++            return false;
++        }
++
++        Material[] flowers = {
++                Material.AZURE_BLUET,
++                Material.CORNFLOWER,
++                Material.OXEYE_DAISY,
++                Material.POPPY
++        };
++        for (int dx = -2; dx <= 2; dx++) {
++            for (int dz = -2; dz <= 2; dz++) {
++                int distance = Math.abs(dx) + Math.abs(dz);
++                place(
++                        tasks,
++                        setBlock,
++                        x + dx,
++                        baseY,
++                        z + dz,
++                        Math.floorMod(dx * 7 + dz * 11, 4) == 0
++                                ? Material.GRASS_BLOCK
++                                : Material.MOSS_BLOCK
++                );
++
++                Material detail = null;
++                if (dx == 0 && dz == 0) {
++                    detail = Material.FLOWERING_AZALEA;
++                } else if (distance == 1) {
++                    detail = Math.floorMod(dx + dz, 2) == 0
++                            ? Material.AZALEA
++                            : Material.FLOWERING_AZALEA;
++                } else if (distance == 2
++                        && Math.floorMod(dx * 13 + dz * 17, 3) == 0) {
++                    detail = Material.FERN;
++                } else if (Math.abs(dx) == 2
++                        && Math.abs(dz) == 2) {
++                    detail = flowers[Math.floorMod(
++                            x + z + dx - dz,
++                            flowers.length
++                    )];
++                } else if (distance == 3) {
++                    detail = Material.MOSS_CARPET;
++                }
++
++                if (detail != null) {
++                    place(
++                            tasks,
++                            setBlock,
++                            x + dx,
++                            baseY + 1,
++                            z + dz,
++                            detail
++                    );
++                }
++            }
++        }
++        return true;
++    }
++
++    /**
++     * Mare très peu profonde, bordée de mousse et équipée d'une lanterne basse.
++     * Le fond en argile est écrit avant l'eau pour rester stable même lorsque
++     * la physique est désactivée pendant la génération.
++     */
++    private static boolean tryBuildPond(List<Runnable> tasks,
++                                        TerrainManager.SetBlock setBlock,
++                                        Occupancy occupancy,
++                                        int x,
++                                        int z,
++                                        int baseY) {
++        Rect rect = new Rect(x - 2, x + 2, z - 2, z + 2);
++        if (!occupancy.claim(rect, 1)) {
++            return false;
++        }
++
++        for (int dx = -2; dx <= 2; dx++) {
++            for (int dz = -2; dz <= 2; dz++) {
++                boolean edge = Math.max(Math.abs(dx), Math.abs(dz)) == 2;
++                if (edge) {
++                    Material bank = Math.floorMod(
++                            x + z + dx * 5 + dz * 7,
++                            4
++                    ) == 0
++                            ? Material.MUD
++                            : Material.MOSS_BLOCK;
++                    place(tasks, setBlock, x + dx, baseY, z + dz, bank);
++                } else {
++                    place(
++                            tasks,
++                            setBlock,
++                            x + dx,
++                            baseY - 1,
++                            z + dz,
++                            Material.CLAY
++                    );
++                    place(
++                            tasks,
++                            setBlock,
++                            x + dx,
++                            baseY,
++                            z + dz,
++                            Material.WATER
++                    );
++                }
++            }
++        }
++
++        place(tasks, setBlock, x - 1, baseY + 1, z, Material.LILY_PAD);
++        place(tasks, setBlock, x + 1, baseY + 1, z + 1, Material.LILY_PAD);
++
++        // Le petit fanal rend la mare lisible de nuit sans pylône surdimensionné.
++        place(
++                tasks,
++                setBlock,
++                x + 2,
++                baseY + 1,
++                z - 2,
++                Material.MOSSY_COBBLESTONE_WALL
++        );
++        place(
++                tasks,
++                setBlock,
++                x + 2,
++                baseY + 2,
++                z - 2,
++                Material.LANTERN
++        );
++        return true;
++    }
++
++    /**
++     * Jardin d'herbes compact avec composteur, pots et fanal. Sa faible emprise
++     * lui permet d'occuper les espaces où un arbre ou une charrette ne passent
++     * pas, tout en apportant de la couleur au pied des maisons.
++     */
++    private static boolean tryBuildHerbGarden(
++            List<Runnable> tasks,
++            TerrainManager.SetBlock setBlock,
++            Occupancy occupancy,
++            int x,
++            int z,
++            int baseY) {
++        Rect rect = new Rect(x - 2, x + 2, z - 1, z + 1);
++        if (!occupancy.claim(rect, 1)) {
++            return false;
++        }
++
++        for (int dx = -2; dx <= 2; dx++) {
++            for (int dz = -1; dz <= 1; dz++) {
++                place(
++                        tasks,
++                        setBlock,
++                        x + dx,
++                        baseY,
++                        z + dz,
++                        Math.floorMod(dx + dz, 3) == 0
++                                ? Material.ROOTED_DIRT
++                                : Material.MOSS_BLOCK
++                );
++            }
++        }
++
++        Material[] pottedPlants = {
++                Material.POTTED_FERN,
++                Material.POTTED_DANDELION,
++                Material.POTTED_AZURE_BLUET,
++                Material.POTTED_RED_TULIP,
++                Material.POTTED_OXEYE_DAISY,
++                Material.POTTED_POPPY
++        };
++        int plantIndex = 0;
++        for (int dx = -1; dx <= 1; dx++) {
++            for (int dz : new int[]{-1, 1}) {
++                place(
++                        tasks,
++                        setBlock,
++                        x + dx,
++                        baseY + 1,
++                        z + dz,
++                        pottedPlants[plantIndex++]
++                );
++            }
++        }
++
++        place(tasks, setBlock, x, baseY + 1, z, Material.COMPOSTER);
++        place(tasks, setBlock, x - 2, baseY + 1, z, Material.BARREL);
++        place(tasks, setBlock, x + 2, baseY + 1, z, Material.OAK_FENCE);
++        place(tasks, setBlock, x + 2, baseY + 2, z, Material.LANTERN);
++        return true;
++    }
++
+     private static boolean tryBuildWaysideShrine(List<Runnable> tasks,
+                                                  TerrainManager.SetBlock setBlock,
+                                                  Occupancy occupancy,
+@@ -663,28 +1040,207 @@ public final class VillageDecorationBuilder {
+         return true;
+     }
+ 
++    /**
++     * Construit un arbre compact à la main afin de garder une silhouette
++     * prévisible près des bâtiments. La variante éclairée suspend une lanterne
++     * sous le houppier, sans poteau supplémentaire au sol.
++     */
+     private static void buildSmallTree(List<Runnable> tasks,
++                                       World world,
+                                        TerrainManager.SetBlock setBlock,
+                                        int x,
+                                        int z,
+                                        int baseY,
+                                        Material log,
+-                                       Material leaves) {
++                                       Material leaves,
++                                       boolean illuminated,
++                                       boolean landscaped,
++                                       BlockFace detailSide) {
++        if (landscaped) {
++            landscapeTreeBase(tasks, setBlock, x, z, baseY);
++        }
++
+         place(tasks, setBlock, x, baseY, z, Material.ROOTED_DIRT);
+         for (int dy = 1; dy <= 4; dy++) {
+             place(tasks, setBlock, x, baseY + dy, z, log);
+         }
++
+         for (int dy = 3; dy <= 5; dy++) {
+             int radius = dy == 4 ? 2 : 1;
+             for (int dx = -radius; dx <= radius; dx++) {
+                 for (int dz = -radius; dz <= radius; dz++) {
+-                    if (Math.abs(dx) + Math.abs(dz) <= radius + 1) {
+-                        place(tasks, setBlock, x + dx, baseY + dy, z + dz, leaves);
++                    if (Math.abs(dx) + Math.abs(dz) > radius + 1) {
++                        continue;
+                     }
++
++                    /*
++                     * Le cœur des deux premières couches reste en bois. Dans
++                     * l'ancienne version, les feuilles écrasaient deux blocs
++                     * du tronc une fois la file exécutée.
++                     */
++                    if (dx == 0 && dz == 0 && dy <= 4) {
++                        continue;
++                    }
++                    place(
++                            tasks,
++                            setBlock,
++                            x + dx,
++                            baseY + dy,
++                            z + dz,
++                            leaves
++                    );
+                 }
+             }
+         }
+         place(tasks, setBlock, x, baseY + 6, z, leaves);
++
++        if (illuminated) {
++            BlockFace side = switch (detailSide) {
++                case NORTH, SOUTH, EAST, WEST -> detailSide;
++                default -> BlockFace.EAST;
++            };
++            int lanternX = x + side.getModX();
++            int lanternZ = z + side.getModZ();
++            int lanternY = baseY + 2;
++            int chainY = baseY + 3;
++
++            // La chaîne remplace une feuille basse et paraît fixée dans le houppier.
++            place(tasks, setBlock, lanternX, chainY, lanternZ, Material.CHAIN);
++            place(tasks, setBlock, lanternX, lanternY, lanternZ, Material.LANTERN);
++            if (world != null) {
++                tasks.add(() -> configureHangingLantern(
++                        world,
++                        lanternX,
++                        lanternY,
++                        lanternZ
++                ));
++            }
++        }
++
++        if (world != null) {
++            /*
++             * Les feuilles créées avec leurs données par défaut peuvent avoir
++             * une distance maximale au tronc et dépérir lors d'un tick
++             * aléatoire. La persistance ne concerne que ce petit houppier.
++             */
++            tasks.add(() -> configurePersistentLeaves(
++                    world,
++                    x,
++                    z,
++                    baseY + 3,
++                    baseY + 6,
++                    leaves
++            ));
++        }
++    }
++
++    private static void landscapeTreeBase(List<Runnable> tasks,
++                                          TerrainManager.SetBlock setBlock,
++                                          int x,
++                                          int z,
++                                          int baseY) {
++        Material[] smallFlowers = {
++                Material.DANDELION,
++                Material.AZURE_BLUET,
++                Material.POPPY,
++                Material.CORNFLOWER
++        };
++
++        for (int dx = -2; dx <= 2; dx++) {
++            for (int dz = -2; dz <= 2; dz++) {
++                int distance = Math.abs(dx) + Math.abs(dz);
++                if (distance > 3) {
++                    continue;
++                }
++
++                Material ground = Math.floorMod(
++                        x * 11 + z * 17 + dx * 5 + dz * 7,
++                        5
++                ) == 0
++                        ? Material.GRASS_BLOCK
++                        : Material.MOSS_BLOCK;
++                place(tasks, setBlock, x + dx, baseY, z + dz, ground);
++
++                if (dx == 0 && dz == 0) {
++                    continue;
++                }
++
++                int selector = Math.floorMod(
++                        x * 19 + z * 23 + dx * 13 + dz * 29,
++                        7
++                );
++                if (selector == 0) {
++                    place(
++                            tasks,
++                            setBlock,
++                            x + dx,
++                            baseY + 1,
++                            z + dz,
++                            Material.FERN
++                    );
++                } else if (selector == 1) {
++                    place(
++                            tasks,
++                            setBlock,
++                            x + dx,
++                            baseY + 1,
++                            z + dz,
++                            smallFlowers[Math.floorMod(
++                                    x + z + dx - dz,
++                                    smallFlowers.length
++                            )]
++                    );
++                } else if (selector == 2 && distance >= 2) {
++                    place(
++                            tasks,
++                            setBlock,
++                            x + dx,
++                            baseY + 1,
++                            z + dz,
++                            Material.MOSS_CARPET
++                    );
++                }
++            }
++        }
++    }
++
++    private static void configurePersistentLeaves(World world,
++                                                    int centerX,
++                                                    int centerZ,
++                                                    int minY,
++                                                    int maxY,
++                                                    Material leafMaterial) {
++        for (int x = centerX - 2; x <= centerX + 2; x++) {
++            for (int y = minY; y <= maxY; y++) {
++                for (int z = centerZ - 2; z <= centerZ + 2; z++) {
++                    var block = world.getBlockAt(x, y, z);
++                    if (block.getType() != leafMaterial) {
++                        continue;
++                    }
++
++                    var data = block.getBlockData();
++                    if (data instanceof Leaves leaves) {
++                        leaves.setPersistent(true);
++                        block.setBlockData(leaves, false);
++                    }
++                }
++            }
++        }
++    }
++
++    private static void configureHangingLantern(World world,
++                                                 int x,
++                                                 int y,
++                                                 int z) {
++        if (world.getBlockAt(x, y, z).getType() != Material.LANTERN) {
++            return;
++        }
++
++        var data = Material.LANTERN.createBlockData();
++        if (data instanceof Lantern lantern) {
++            lantern.setHanging(true);
++            world.getBlockAt(x, y, z).setBlockData(lantern, false);
++        }
+     }
+ 
+     /**
+diff --git a/src/main/java/org/example/village/VillageLayoutSettings.java b/src/main/java/org/example/village/VillageLayoutSettings.java
+index 40626f34d54c138c5521481fdae2ffb61556b25a..d09062f503952456cd75cfc41ee274c91aa7803d 100644
+--- a/src/main/java/org/example/village/VillageLayoutSettings.java
++++ b/src/main/java/org/example/village/VillageLayoutSettings.java
+@@ -65,12 +65,33 @@ public record VillageLayoutSettings(
+         return plazaSize;
+     }
+ 
++    /**
++     * Nombre total d'éléments interstitiels, arbres garantis compris.
++     *
++     * <p>Les valeurs restent bornées par la carte d'occupation : augmenter ce
++     * budget densifie le village sans autoriser de collision avec une rue ou
++     * une parcelle bâtie.</p>
++     */
+     public int decorationBudget() {
+         return switch (decorDensity) {
+             case "none", "off" -> 0;
+-            case "low", "light" -> 12;
+-            case "high", "dense" -> 34;
+-            default -> 22;
++            case "low", "light" -> 16;
++            case "high", "dense" -> 42;
++            default -> 28;
++        };
++    }
++
++    /**
++     * Réserve une part du budget aux arbres avant le tirage des petits décors.
++     * Sans cette passe, un village pouvait ne recevoir presque aucun arbre
++     * malgré une densité élevée à cause du hasard du sélecteur décoratif.
++     */
++    public int treeBudget() {
++        return switch (decorDensity) {
++            case "none", "off" -> 0;
++            case "low", "light" -> 4;
++            case "high", "dense" -> 10;
++            default -> 7;
+         };
+     }
+ 
+diff --git a/src/main/java/org/example/village/VillageLightingBuilder.java b/src/main/java/org/example/village/VillageLightingBuilder.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..98bcd6bfc1b86b9ccd8d49b088bf81eef28291a7
+--- /dev/null
++++ b/src/main/java/org/example/village/VillageLightingBuilder.java
+@@ -0,0 +1,1057 @@
++package org.example.village;
++
++import org.bukkit.Location;
++import org.bukkit.Material;
++import org.bukkit.World;
++import org.bukkit.block.Block;
++import org.bukkit.block.data.BlockData;
++import org.bukkit.block.data.Levelled;
++import org.bukkit.block.data.type.Lantern;
++import org.bukkit.configuration.file.FileConfiguration;
++import org.bukkit.plugin.java.JavaPlugin;
++
++import java.util.ArrayDeque;
++import java.util.ArrayList;
++import java.util.Comparator;
++import java.util.HashMap;
++import java.util.LinkedHashMap;
++import java.util.LinkedHashSet;
++import java.util.List;
++import java.util.Map;
++import java.util.PriorityQueue;
++import java.util.Queue;
++import java.util.Set;
++
++/**
++ * Ajoute l'éclairage final du village.
++ *
++ * <p>La classe sépare volontairement deux responsabilités :</p>
++ * <ul>
++ *     <li>les lanternes visibles, qui doivent enrichir l'architecture ;</li>
++ *     <li>l'audit anti-spawn, qui corrige uniquement les surfaces encore
++ *     insuffisamment éclairées avec des blocs {@link Material#LIGHT}
++ *     invisibles.</li>
++ * </ul>
++ *
++ * <p>Toutes les opérations Bukkit sont ajoutées à la file de génération
++ * existante. Elles restent donc exécutées sur le thread principal, après les
++ * bâtiments et la muraille, et bénéficient du rollback de
++ * {@code VillageGenerationSession} via le callback {@code setBlock}.</p>
++ */
++public final class VillageLightingBuilder {
++
++    private static final int DEFAULT_HIDDEN_LIGHT_LEVEL = 12;
++    private static final int DEFAULT_TARGET_BLOCK_LIGHT = 2;
++    private static final int DEFAULT_SCAN_TILE_SIZE = 7;
++    private static final int DEFAULT_SCAN_HEIGHT = 30;
++    private static final int DEFAULT_PERIMETER_SPACING = 14;
++    private static final int DEFAULT_MAX_HIDDEN_LIGHTS = 2048;
++    private static final int[] LIGHT_PLACEMENT_OFFSETS = {2, 1, 0};
++    private static final int[][] CARDINAL_DIRECTIONS = {
++            {1, 0},
++            {-1, 0},
++            {0, 1},
++            {0, -1}
++    };
++
++    private VillageLightingBuilder() {
++    }
++
++    /**
++     * Ajoute l'éclairage décoratif puis l'audit anti-spawn à la fin de la file.
++     *
++     * @param plugin    plugin propriétaire de la configuration ;
++     * @param center    centre géométrique du village ;
++     * @param layout    plan déjà retenu pour les rues et les lots ;
++     * @param rx        demi-largeur intérieure utilisée par la muraille ;
++     * @param rz        demi-profondeur intérieure utilisée par la muraille ;
++     * @param baseY     niveau du sol principal ;
++     * @param queue     file de génération exécutée par lots ;
++     * @param setBlock  écriture suivie par la session pour permettre l'undo.
++     */
++    public static void enqueue(JavaPlugin plugin,
++                               Location center,
++                               VillageLayoutPlan layout,
++                               int rx,
++                               int rz,
++                               int baseY,
++                               Queue<Runnable> queue,
++                               TerrainManager.SetBlock setBlock) {
++        if (plugin == null || center == null || queue == null || setBlock == null) {
++            return;
++        }
++
++        World world = center.getWorld();
++        if (world == null || rx < 4 || rz < 4) {
++            return;
++        }
++
++        LightingSettings settings = LightingSettings.from(plugin.getConfig());
++        if (!settings.enabled()) {
++            return;
++        }
++
++        LightingRunState state = new LightingRunState();
++
++        /*
++         * Les lumières visibles sont posées avant l'audit. L'audit lit ensuite
++         * la lumière de bloc réellement produite et ne complète que les zones
++         * restées sombres.
++         */
++        if (settings.decorative()) {
++            List<DecorativeLightAnchor> anchors = planDecorativeLights(
++                    center,
++                    layout,
++                    rx,
++                    rz,
++                    settings.perimeterSpacing()
++            );
++            state.plannedDecorativeLights = anchors.size();
++            for (DecorativeLightAnchor anchor : anchors) {
++                queue.add(() -> placeDecorativeLight(
++                        world,
++                        anchor,
++                        baseY,
++                        setBlock,
++                        state
++                ));
++            }
++        }
++
++        if (!settings.spawnProof()) {
++            return;
++        }
++
++        /*
++         * outerBounds inclut les tours et le châtelet. Scanner cette emprise
++         * couvre donc également les chemins de ronde et une petite couronne
++         * autour de la muraille, où un monstre serait immédiatement visible
++         * depuis le village.
++         */
++        int[] outerBounds = WallBuilder.outerBounds(center, rx, rz);
++        List<ScanTile> tiles = createScanTiles(
++                outerBounds[0],
++                outerBounds[1],
++                outerBounds[2],
++                outerBounds[3],
++                settings.scanTileSize()
++        );
++        state.plannedTiles = tiles.size();
++
++        for (ScanTile tile : tiles) {
++            queue.add(() -> auditTile(
++                    world,
++                    tile,
++                    baseY,
++                    settings,
++                    setBlock,
++                    state
++            ));
++        }
++
++        queue.add(() -> logAuditResult(plugin, settings, state));
++    }
++
++    /**
++     * Produit un plan déterministe de lumières visibles. Cette méthode ne lit
++     * pas le monde et peut donc être testée sans serveur Bukkit.
++     */
++    static List<DecorativeLightAnchor> planDecorativeLights(Location center,
++                                                             VillageLayoutPlan layout,
++                                                             int rx,
++                                                             int rz,
++                                                             int perimeterSpacing) {
++        if (center == null || rx < 4 || rz < 4) {
++            return List.of();
++        }
++
++        int centerX = center.getBlockX();
++        int centerZ = center.getBlockZ();
++        int spacing = clamp(perimeterSpacing, 8, 24);
++        Map<Long, DecorativeLightAnchor> anchors = new LinkedHashMap<>();
++
++        // Quatre lanternes suspendues transforment le puits en cœur lumineux.
++        for (int dx : new int[]{-1, 1}) {
++            for (int dz : new int[]{-1, 1}) {
++                putAnchor(
++                        anchors,
++                        new DecorativeLightAnchor(
++                                centerX + dx,
++                                centerZ + dz,
++                                DecorativeLightKind.WELL_HANGING,
++                                0,
++                                0
++                        )
++                );
++            }
++        }
++
++        int northZ = centerZ - rz + 3;
++        int southZ = centerZ + rz - 3;
++        int westX = centerX - rx + 3;
++        int eastX = centerX + rx - 3;
++
++        for (int x : centeredPositions(
++                centerX - rx + 5,
++                centerX + rx - 5,
++                spacing
++        )) {
++            addPerimeterAnchor(
++                    anchors,
++                    layout,
++                    centerX,
++                    centerZ,
++                    rx,
++                    rz,
++                    new DecorativeLightAnchor(
++                            x,
++                            northZ,
++                            DecorativeLightKind.PERIMETER_BOLLARD,
++                            0,
++                            1
++                    )
++            );
++            addPerimeterAnchor(
++                    anchors,
++                    layout,
++                    centerX,
++                    centerZ,
++                    rx,
++                    rz,
++                    new DecorativeLightAnchor(
++                            x,
++                            southZ,
++                            DecorativeLightKind.PERIMETER_BOLLARD,
++                            0,
++                            -1
++                    )
++            );
++        }
++
++        for (int z : centeredPositions(
++                centerZ - rz + 5,
++                centerZ + rz - 5,
++                spacing
++        )) {
++            addPerimeterAnchor(
++                    anchors,
++                    layout,
++                    centerX,
++                    centerZ,
++                    rx,
++                    rz,
++                    new DecorativeLightAnchor(
++                            westX,
++                            z,
++                            DecorativeLightKind.PERIMETER_BOLLARD,
++                            1,
++                            0
++                    )
++            );
++            addPerimeterAnchor(
++                    anchors,
++                    layout,
++                    centerX,
++                    centerZ,
++                    rx,
++                    rz,
++                    new DecorativeLightAnchor(
++                            eastX,
++                            z,
++                            DecorativeLightKind.PERIMETER_BOLLARD,
++                            -1,
++                            0
++                    )
++            );
++        }
++
++        return List.copyOf(anchors.values());
++    }
++
++    /**
++     * Découpe une emprise inclusive en tuiles disjointes. Chaque tuile reste
++     * volontairement petite afin de respecter le budget temporel de la file de
++     * génération et d'éviter une longue pause du thread serveur.
++     */
++    static List<ScanTile> createScanTiles(int minX,
++                                          int maxX,
++                                          int minZ,
++                                          int maxZ,
++                                          int requestedTileSize) {
++        if (minX > maxX || minZ > maxZ) {
++            return List.of();
++        }
++
++        int tileSize = clamp(requestedTileSize, 4, 10);
++        List<ScanTile> tiles = new ArrayList<>();
++        for (int x = minX; x <= maxX; x += tileSize) {
++            int tileMaxX = Math.min(maxX, x + tileSize - 1);
++            for (int z = minZ; z <= maxZ; z += tileSize) {
++                int tileMaxZ = Math.min(maxZ, z + tileSize - 1);
++                tiles.add(new ScanTile(x, tileMaxX, z, tileMaxZ));
++            }
++        }
++        return List.copyOf(tiles);
++    }
++
++    /**
++     * Rayon horizontal conservateur offert par une lumière placée deux blocs
++     * au-dessus d'une surface. Il est exposé au package pour les tests.
++     */
++    static int conservativeCoverageRadius(int lightLevel, int targetLevel) {
++        int normalizedLight = clamp(lightLevel, 4, 15);
++        int normalizedTarget = clamp(targetLevel, 1, normalizedLight - 3);
++        return Math.max(0, normalizedLight - normalizedTarget - 3);
++    }
++
++    private static void addPerimeterAnchor(
++            Map<Long, DecorativeLightAnchor> anchors,
++            VillageLayoutPlan layout,
++            int centerX,
++            int centerZ,
++            int rx,
++            int rz,
++            DecorativeLightAnchor anchor) {
++        if (!isPerimeterAnchorFree(
++                anchor.x(),
++                anchor.z(),
++                layout,
++                centerX,
++                centerZ,
++                rx,
++                rz
++        )) {
++            return;
++        }
++        putAnchor(anchors, anchor);
++    }
++
++    private static boolean isPerimeterAnchorFree(int x,
++                                                  int z,
++                                                  VillageLayoutPlan layout,
++                                                  int centerX,
++                                                  int centerZ,
++                                                  int rx,
++                                                  int rz) {
++        if (x <= centerX - rx || x >= centerX + rx
++                || z <= centerZ - rz || z >= centerZ + rz) {
++            return false;
++        }
++
++        /*
++         * Le portail et son parvis restent totalement dégagés. La grande rue
++         * est également filtrée plus bas par StreetPlan#contains.
++         */
++        if (z >= centerZ + rz - 6 && Math.abs(x - centerX) <= 6) {
++            return false;
++        }
++
++        if (layout == null) {
++            return true;
++        }
++
++        for (VillageLayoutPlan.LotPlan lot : layout.lots()) {
++            if (x >= lot.siteMinX() - 2
++                    && x <= lot.siteMaxX() + 2
++                    && z >= lot.siteMinZ() - 2
++                    && z <= lot.siteMaxZ() + 2) {
++                return false;
++            }
++        }
++
++        for (VillageLayoutPlan.StreetPlan street : layout.streets()) {
++            if (street.contains(x, z, 2)) {
++                return false;
++            }
++        }
++
++        return true;
++    }
++
++    private static void putAnchor(Map<Long, DecorativeLightAnchor> anchors,
++                                  DecorativeLightAnchor anchor) {
++        anchors.putIfAbsent(horizontalKey(anchor.x(), anchor.z()), anchor);
++    }
++
++    private static List<Integer> centeredPositions(int min,
++                                                   int max,
++                                                   int spacing) {
++        if (min > max) {
++            return List.of();
++        }
++
++        int length = max - min + 1;
++        if (length <= spacing) {
++            return List.of(min + (length - 1) / 2);
++        }
++
++        List<Integer> positions = new ArrayList<>();
++        int first = min + spacing / 2;
++        int last = max - spacing / 2;
++        for (int value = first; value <= last; value += spacing) {
++            positions.add(value);
++        }
++
++        if (positions.isEmpty()) {
++            positions.add((min + max) / 2);
++        }
++        return positions;
++    }
++
++    private static void placeDecorativeLight(World world,
++                                             DecorativeLightAnchor anchor,
++                                             int baseY,
++                                             TerrainManager.SetBlock setBlock,
++                                             LightingRunState state) {
++        boolean placed = switch (anchor.kind()) {
++            case WELL_HANGING -> placeWellLantern(
++                    world,
++                    anchor.x(),
++                    baseY,
++                    anchor.z(),
++                    setBlock
++            );
++            case PERIMETER_BOLLARD -> placePerimeterBollard(
++                    world,
++                    anchor,
++                    baseY,
++                    setBlock
++            );
++        };
++        if (placed) {
++            state.decorativeLights++;
++        }
++    }
++
++    private static boolean placeWellLantern(World world,
++                                            int x,
++                                            int baseY,
++                                            int z,
++                                            TerrainManager.SetBlock setBlock) {
++        int lanternY = baseY + 2;
++        int chainY = baseY + 3;
++        int supportY = baseY + 4;
++        if (!insideWorld(world, lanternY)
++                || !insideWorld(world, chainY)
++                || !insideWorld(world, supportY)) {
++            return false;
++        }
++
++        Block support = world.getBlockAt(x, supportY, z);
++        Block chain = world.getBlockAt(x, chainY, z);
++        Block lantern = world.getBlockAt(x, lanternY, z);
++        if (isUnoccupiedAir(support)
++                || !isUnoccupiedAir(chain)
++                || !isUnoccupiedAir(lantern)) {
++            return false;
++        }
++
++        setBlock.set(x, chainY, z, Material.CHAIN);
++        setBlock.set(x, lanternY, z, Material.LANTERN);
++        configureHangingLantern(world, x, lanternY, z);
++        return world.getBlockAt(x, lanternY, z).getType() == Material.LANTERN;
++    }
++
++    private static boolean placePerimeterBollard(
++            World world,
++            DecorativeLightAnchor anchor,
++            int baseY,
++            TerrainManager.SetBlock setBlock) {
++        int postY = baseY + 1;
++        int lanternY = baseY + 2;
++        if (!insideWorld(world, postY) || !insideWorld(world, lanternY)) {
++            return false;
++        }
++
++        Block floor = world.getBlockAt(anchor.x(), baseY, anchor.z());
++        Block post = world.getBlockAt(anchor.x(), postY, anchor.z());
++        Block lantern = world.getBlockAt(anchor.x(), lanternY, anchor.z());
++        if (!floor.getType().isSolid()
++                || !isUnoccupiedAir(post)
++                || !isUnoccupiedAir(lantern)) {
++            return false;
++        }
++
++        setBlock.set(
++                anchor.x(),
++                postY,
++                anchor.z(),
++                Material.MOSSY_COBBLESTONE_WALL
++        );
++        setBlock.set(anchor.x(), lanternY, anchor.z(), Material.LANTERN);
++
++        /*
++         * Un tapis de mousse du côté intérieur raccorde le luminaire au jardin
++         * sans créer un nouvel obstacle pour les villageois.
++         */
++        int mossX = anchor.x() + anchor.inwardX();
++        int mossZ = anchor.z() + anchor.inwardZ();
++        if (insideWorld(world, postY)
++                && world.getBlockAt(mossX, baseY, mossZ).getType().isSolid()
++                && isUnoccupiedAir(world.getBlockAt(mossX, postY, mossZ))) {
++            setBlock.set(mossX, postY, mossZ, Material.MOSS_CARPET);
++        }
++
++        return world.getBlockAt(
++                anchor.x(),
++                lanternY,
++                anchor.z()
++        ).getType() == Material.LANTERN;
++    }
++
++    private static void configureHangingLantern(World world,
++                                                 int x,
++                                                 int y,
++                                                 int z) {
++        Block block = world.getBlockAt(x, y, z);
++        if (block.getType() != Material.LANTERN) {
++            return;
++        }
++
++        BlockData data = Material.LANTERN.createBlockData();
++        if (data instanceof Lantern lantern) {
++            lantern.setHanging(true);
++            block.setBlockData(lantern, false);
++        }
++    }
++
++    private static void auditTile(World world,
++                                  ScanTile tile,
++                                  int baseY,
++                                  LightingSettings settings,
++                                  TerrainManager.SetBlock setBlock,
++                                  LightingRunState state) {
++        if (state.limitReached) {
++            return;
++        }
++        state.processedTiles++;
++
++        Set<SurfaceCell> darkSurfaces = findDarkSpawnSurfaces(
++                world,
++                tile,
++                baseY,
++                settings
++        );
++        state.darkSurfacesDetected += darkSurfaces.size();
++        if (darkSurfaces.isEmpty()) {
++            return;
++        }
++
++        for (Set<SurfaceCell> component : connectedComponents(darkSurfaces)) {
++            illuminateComponent(
++                    world,
++                    component,
++                    settings,
++                    setBlock,
++                    state
++            );
++            if (state.limitReached) {
++                return;
++            }
++        }
++    }
++
++    private static Set<SurfaceCell> findDarkSpawnSurfaces(
++            World world,
++            ScanTile tile,
++            int baseY,
++            LightingSettings settings) {
++        Set<SurfaceCell> result = new LinkedHashSet<>();
++        int minFeetY = Math.max(baseY + 1, world.getMinHeight() + 1);
++        int maxFeetY = Math.min(
++                baseY + settings.scanHeight(),
++                world.getMaxHeight() - 2
++        );
++
++        if (minFeetY > maxFeetY) {
++            return result;
++        }
++
++        for (int x = tile.minX(); x <= tile.maxX(); x++) {
++            for (int z = tile.minZ(); z <= tile.maxZ(); z++) {
++                for (int feetY = minFeetY; feetY <= maxFeetY; feetY++) {
++                    Block floor = world.getBlockAt(x, feetY - 1, z);
++                    if (!floor.getType().isSolid()) {
++                        continue;
++                    }
++
++                    Block feet = world.getBlockAt(x, feetY, z);
++                    Block head = world.getBlockAt(x, feetY + 1, z);
++                    if (!isPassableDrySpace(feet)
++                            || !isPassableDrySpace(head)
++                            || feet.getLightFromBlocks()
++                            >= settings.targetBlockLight()) {
++                        continue;
++                    }
++
++                    /*
++                     * Le test est volontairement plus large que la règle
++                     * interne de chaque type de monstre : mieux vaut éclairer
++                     * quelques escaliers ou dalles en trop que laisser une
++                     * terrasse valide dans l'obscurité.
++                     */
++                    result.add(new SurfaceCell(x, feetY, z));
++                }
++            }
++        }
++        return result;
++    }
++
++    private static boolean isPassableDrySpace(Block block) {
++        return block.isPassable() && !block.isLiquid();
++    }
++
++    /**
++     * N'écrase jamais un bloc LIGHT déjà présent. Material#isAir couvre les
++     * variantes AIR/CAVE_AIR/VOID_AIR, tandis que l'exclusion explicite
++     * protège une lumière invisible préexistante et ses BlockData.
++     */
++    private static boolean isUnoccupiedAir(Block block) {
++        return block.getType().isAir()
++                && block.getType() != Material.LIGHT;
++    }
++
++    private static List<Set<SurfaceCell>> connectedComponents(
++            Set<SurfaceCell> cells) {
++        List<Set<SurfaceCell>> components = new ArrayList<>();
++        Set<SurfaceCell> unvisited = new LinkedHashSet<>(cells);
++
++        while (!unvisited.isEmpty()) {
++            SurfaceCell start = unvisited.iterator().next();
++            Set<SurfaceCell> component = new LinkedHashSet<>();
++            ArrayDeque<SurfaceCell> frontier = new ArrayDeque<>();
++            frontier.add(start);
++            unvisited.remove(start);
++
++            while (!frontier.isEmpty()) {
++                SurfaceCell current = frontier.removeFirst();
++                component.add(current);
++                forEachNeighbour(current, neighbour -> {
++                    if (unvisited.remove(neighbour)) {
++                        frontier.addLast(neighbour);
++                    }
++                });
++            }
++            components.add(component);
++        }
++
++        return components;
++    }
++
++    private static void illuminateComponent(
++            World world,
++            Set<SurfaceCell> component,
++            LightingSettings settings,
++            TerrainManager.SetBlock setBlock,
++            LightingRunState state) {
++        Set<SurfaceCell> remaining = new LinkedHashSet<>(component);
++        while (!remaining.isEmpty()) {
++            if (state.hiddenLights >= settings.maxHiddenLights()) {
++                state.limitReached = true;
++                state.unresolvedDarkSurfaces += remaining.size();
++                return;
++            }
++
++            LightPlacement placement = selectLightPlacement(world, remaining);
++            if (placement == null) {
++                state.unresolvedDarkSurfaces += remaining.size();
++                return;
++            }
++
++            if (!placeInvisibleLight(
++                    world,
++                    placement,
++                    settings.hiddenLightLevel(),
++                    setBlock
++            )) {
++                /*
++                 * Un autre élément a pu occuper la cellule entre le scan et la
++                 * pose. On retire seulement ce candidat puis on poursuit avec
++                 * le reste du composant.
++                 */
++                remaining.remove(placement.surface());
++                state.unresolvedDarkSurfaces++;
++                continue;
++            }
++
++            state.hiddenLights++;
++            removeCoveredSurfaces(
++                    component,
++                    remaining,
++                    placement,
++                    settings.hiddenLightLevel(),
++                    settings.targetBlockLight()
++            );
++        }
++    }
++
++    private static LightPlacement selectLightPlacement(
++            World world,
++            Set<SurfaceCell> candidates) {
++        if (candidates.isEmpty()) {
++            return null;
++        }
++
++        double averageX = candidates.stream()
++                .mapToInt(SurfaceCell::x)
++                .average()
++                .orElse(0.0D);
++        double averageY = candidates.stream()
++                .mapToInt(SurfaceCell::feetY)
++                .average()
++                .orElse(0.0D);
++        double averageZ = candidates.stream()
++                .mapToInt(SurfaceCell::z)
++                .average()
++                .orElse(0.0D);
++
++        List<SurfaceCell> ordered = new ArrayList<>(candidates);
++        ordered.sort(Comparator
++                .comparingInt(SurfaceCell::x)
++                .thenComparingInt(SurfaceCell::feetY)
++                .thenComparingInt(SurfaceCell::z));
++
++        LightPlacement best = null;
++        double bestScore = Double.MAX_VALUE;
++        for (SurfaceCell candidate : ordered) {
++            int lightY = findAvailableLightY(world, candidate);
++            if (lightY == Integer.MIN_VALUE) {
++                continue;
++            }
++
++            double dx = candidate.x() - averageX;
++            double dy = candidate.feetY() - averageY;
++            double dz = candidate.z() - averageZ;
++            double score = dx * dx + dy * dy + dz * dz;
++            if (score < bestScore) {
++                bestScore = score;
++                best = new LightPlacement(candidate, lightY);
++            }
++        }
++        return best;
++    }
++
++    private static int findAvailableLightY(World world,
++                                           SurfaceCell surface) {
++        /*
++         * La priorité va à une cellule au-dessus de la tête : le bloc LIGHT
++         * reste ainsi invisible et ne remplace ni fleurs, ni tapis, ni petit
++         * mobilier au niveau des pieds.
++         */
++        for (int offset : LIGHT_PLACEMENT_OFFSETS) {
++            int y = surface.feetY() + offset;
++            if (insideWorld(world, y)
++                    && isUnoccupiedAir(world.getBlockAt(
++                            surface.x(),
++                            y,
++                            surface.z()
++                    ))) {
++                return y;
++            }
++        }
++        return Integer.MIN_VALUE;
++    }
++
++    private static boolean placeInvisibleLight(
++            World world,
++            LightPlacement placement,
++            int requestedLevel,
++            TerrainManager.SetBlock setBlock) {
++        SurfaceCell surface = placement.surface();
++        Block target = world.getBlockAt(
++                surface.x(),
++                placement.lightY(),
++                surface.z()
++        );
++        if (!isUnoccupiedAir(target)) {
++            return false;
++        }
++
++        /*
++         * setBlock mémorise d'abord l'AIR original pour /village undo. La
++         * modification de BlockData ci-dessous ne change ensuite que le niveau
++         * du même bloc déjà suivi par la session.
++         */
++        setBlock.set(
++                surface.x(),
++                placement.lightY(),
++                surface.z(),
++                Material.LIGHT
++        );
++
++        Block lightBlock = world.getBlockAt(
++                surface.x(),
++                placement.lightY(),
++                surface.z()
++        );
++        if (lightBlock.getType() != Material.LIGHT) {
++            return false;
++        }
++
++        BlockData data = Material.LIGHT.createBlockData();
++        if (data instanceof Levelled levelled) {
++            levelled.setLevel(clamp(requestedLevel, 0, 15));
++            lightBlock.setBlockData(levelled, false);
++        }
++        return true;
++    }
++
++    private static void removeCoveredSurfaces(
++            Set<SurfaceCell> component,
++            Set<SurfaceCell> remaining,
++            LightPlacement placement,
++            int lightLevel,
++            int targetLevel) {
++        int maxDistance = Math.max(0, lightLevel - targetLevel - 1);
++        int initialDistance = Math.abs(
++                placement.lightY() - placement.surface().feetY()
++        );
++
++        Map<SurfaceCell, Integer> distances = new HashMap<>();
++        PriorityQueue<CellDistance> frontier = new PriorityQueue<>(
++                Comparator.comparingInt(CellDistance::distance)
++        );
++        distances.put(placement.surface(), initialDistance);
++        frontier.add(new CellDistance(
++                placement.surface(),
++                initialDistance
++        ));
++
++        while (!frontier.isEmpty()) {
++            CellDistance current = frontier.poll();
++            int knownDistance = distances.getOrDefault(
++                    current.cell(),
++                    Integer.MAX_VALUE
++            );
++            if (current.distance() != knownDistance) {
++                continue;
++            }
++            if (current.distance() > maxDistance) {
++                break;
++            }
++
++            remaining.remove(current.cell());
++            forEachNeighbour(current.cell(), neighbour -> {
++                if (!component.contains(neighbour)) {
++                    return;
++                }
++
++                int edgeCost = 1 + Math.abs(
++                        neighbour.feetY() - current.cell().feetY()
++                );
++                int candidateDistance = current.distance() + edgeCost;
++                if (candidateDistance > maxDistance) {
++                    return;
++                }
++
++                int previous = distances.getOrDefault(
++                        neighbour,
++                        Integer.MAX_VALUE
++                );
++                if (candidateDistance < previous) {
++                    distances.put(neighbour, candidateDistance);
++                    frontier.add(new CellDistance(
++                            neighbour,
++                            candidateDistance
++                    ));
++                }
++            });
++        }
++
++        /*
++         * Même avec une configuration volontairement très faible, la cellule
++         * qui porte la source ne doit jamais maintenir la boucle active.
++         */
++        remaining.remove(placement.surface());
++    }
++
++    private static void forEachNeighbour(SurfaceCell cell,
++                                         java.util.function.Consumer<SurfaceCell> consumer) {
++        for (int[] direction : CARDINAL_DIRECTIONS) {
++            for (int deltaY = -1; deltaY <= 1; deltaY++) {
++                consumer.accept(new SurfaceCell(
++                        cell.x() + direction[0],
++                        cell.feetY() + deltaY,
++                        cell.z() + direction[1]
++                ));
++            }
++        }
++    }
++
++    private static void logAuditResult(JavaPlugin plugin,
++                                       LightingSettings settings,
++                                       LightingRunState state) {
++        if (state.limitReached || state.unresolvedDarkSurfaces > 0) {
++            plugin.getLogger().warning(
++                    "Audit lumineux du village incomplet : "
++                            + state.hiddenLights
++                            + " lumières invisibles posées, "
++                            + "au moins "
++                            + state.unresolvedDarkSurfaces
++                            + " surfaces sombres non corrigées ; "
++                            + state.processedTiles
++                            + "/"
++                            + state.plannedTiles
++                            + " tuiles analysées. "
++                            + "Vérifiez village.lighting.max-hidden-lights "
++                            + "(actuel : "
++                            + settings.maxHiddenLights()
++                            + ")."
++            );
++            return;
++        }
++
++        plugin.getLogger().fine(
++                "Éclairage du village terminé : "
++                        + state.decorativeLights
++                        + "/"
++                        + state.plannedDecorativeLights
++                        + " lanternes décoratives, "
++                        + state.hiddenLights
++                        + " lumières invisibles, "
++                        + state.darkSurfacesDetected
++                        + " surfaces sombres initialement détectées sur "
++                        + state.plannedTiles
++                        + " tuiles."
++        );
++    }
++
++    private static boolean insideWorld(World world, int y) {
++        return y >= world.getMinHeight() && y < world.getMaxHeight();
++    }
++
++    private static long horizontalKey(int x, int z) {
++        return ((long) x << 32) ^ (z & 0xffffffffL);
++    }
++
++    private static int clamp(int value, int min, int max) {
++        return Math.max(min, Math.min(max, value));
++    }
++
++    enum DecorativeLightKind {
++        WELL_HANGING,
++        PERIMETER_BOLLARD
++    }
++
++    record DecorativeLightAnchor(int x,
++                                 int z,
++                                 DecorativeLightKind kind,
++                                 int inwardX,
++                                 int inwardZ) {
++    }
++
++    record ScanTile(int minX, int maxX, int minZ, int maxZ) {
++        ScanTile {
++            if (minX > maxX || minZ > maxZ) {
++                throw new IllegalArgumentException(
++                        "Tuile d'éclairage invalide."
++                );
++            }
++        }
++
++        boolean contains(int x, int z) {
++            return x >= minX && x <= maxX
++                    && z >= minZ && z <= maxZ;
++        }
++    }
++
++    private record SurfaceCell(int x, int feetY, int z) {
++    }
++
++    private record LightPlacement(SurfaceCell surface, int lightY) {
++    }
++
++    private record CellDistance(SurfaceCell cell, int distance) {
++    }
++
++    private record LightingSettings(boolean enabled,
++                                    boolean decorative,
++                                    boolean spawnProof,
++                                    int hiddenLightLevel,
++                                    int targetBlockLight,
++                                    int scanTileSize,
++                                    int scanHeight,
++                                    int perimeterSpacing,
++                                    int maxHiddenLights) {
++
++        private static LightingSettings from(FileConfiguration config) {
++            boolean enabled = config.getBoolean(
++                    "village.lighting.enabled",
++                    true
++            );
++            int hiddenLevel = clamp(
++                    config.getInt(
++                            "village.lighting.hidden-light-level",
++                            DEFAULT_HIDDEN_LIGHT_LEVEL
++                    ),
++                    4,
++                    15
++            );
++            int targetLevel = clamp(
++                    config.getInt(
++                            "village.lighting.target-min-block-light",
++                            DEFAULT_TARGET_BLOCK_LIGHT
++                    ),
++                    1,
++                    hiddenLevel - 3
++            );
++
++            return new LightingSettings(
++                    enabled,
++                    enabled && config.getBoolean(
++                            "village.lighting.decorative",
++                            true
++                    ),
++                    enabled && config.getBoolean(
++                            "village.lighting.spawn-proof",
++                            true
++                    ),
++                    hiddenLevel,
++                    targetLevel,
++                    clamp(
++                            config.getInt(
++                                    "village.lighting.scan-tile-size",
++                                    DEFAULT_SCAN_TILE_SIZE
++                            ),
++                            4,
++                            10
++                    ),
++                    clamp(
++                            config.getInt(
++                                    "village.lighting.scan-height",
++                                    DEFAULT_SCAN_HEIGHT
++                            ),
++                            16,
++                            40
++                    ),
++                    clamp(
++                            config.getInt(
++                                    "village.lighting.perimeter-lantern-spacing",
++                                    DEFAULT_PERIMETER_SPACING
++                            ),
++                            8,
++                            24
++                    ),
++                    clamp(
++                            config.getInt(
++                                    "village.lighting.max-hidden-lights",
++                                    DEFAULT_MAX_HIDDEN_LIGHTS
++                            ),
++                            64,
++                            4096
++                    )
++            );
++        }
++    }
++
++    private static final class LightingRunState {
++        private int plannedDecorativeLights;
++        private int decorativeLights;
++        private int plannedTiles;
++        private int processedTiles;
++        private int darkSurfacesDetected;
++        private int hiddenLights;
++        private int unresolvedDarkSurfaces;
++        private boolean limitReached;
++    }
++}
+diff --git a/src/main/resources/config.yml b/src/main/resources/config.yml
+index 4634623e16d449182949a35b2c20c6e673e3c3a7..0c10cd6acefff8500c6f5c129d3b800bf4b43e33 100644
+--- a/src/main/resources/config.yml
++++ b/src/main/resources/config.yml
+@@ -160,6 +160,26 @@ village:
+   # Respiration minimale entre les derniers jardins et la face intérieure.
+   wallGap: 7
+ 
++  # Passe lumineuse finale du village (les lampadaires de rue restent liés au décor).
++  lighting:
++    enabled: true
++    # Compléments visibles du puits et de la promenade intérieure.
++    decorative: true
++    # Audit des surfaces sombres avec des blocs LIGHT invisibles.
++    spawn-proof: true
++    # Niveau des blocs LIGHT ajoutés par l'audit (4 à 15).
++    hidden-light-level: 12
++    # Marge de sécurité : la correction vise au moins ce niveau de lumière de bloc.
++    target-min-block-light: 2
++    # Petites tuiles pour lisser le coût de l'audit dans la file de génération.
++    scan-tile-size: 7
++    # Hauteur contrôlée au-dessus du sol : intérieurs, toits, tours et clochers.
++    scan-height: 30
++    # Espacement des bornes lumineuses placées le long de la muraille.
++    perimeter-lantern-spacing: 14
++    # Garde-fou pour une configuration de village anormalement grande.
++    max-hidden-lights: 2048
++
+ # Paramètres des métiers
+ jobs:
+   mineur:
+diff --git a/src/test/java/org/example/village/VillageLayoutPlannerTest.java b/src/test/java/org/example/village/VillageLayoutPlannerTest.java
+index 55cb203a0f710b9a5934afdc7df872560593b84e..c968e7b865fc10f304736a11e7047ad58ff406bc 100644
+--- a/src/test/java/org/example/village/VillageLayoutPlannerTest.java
++++ b/src/test/java/org/example/village/VillageLayoutPlannerTest.java
+@@ -180,6 +180,7 @@ class VillageLayoutPlannerTest {
+         assertEquals(10, legacy.houseCountMax());
+         assertEquals(3, legacy.terrainMaxStep());
+         assertEquals("high", legacy.decorDensity());
+-        assertEquals(34, legacy.decorationBudget());
++        assertEquals(42, legacy.decorationBudget());
++        assertEquals(10, legacy.treeBudget());
+     }
+ }
+diff --git a/src/test/java/org/example/village/VillageLightingBuilderTest.java b/src/test/java/org/example/village/VillageLightingBuilderTest.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..1db3b849581d102b84376b0ab5e302f78fd8458a
+--- /dev/null
++++ b/src/test/java/org/example/village/VillageLightingBuilderTest.java
+@@ -0,0 +1,151 @@
++package org.example.village;
++
++import org.bukkit.Location;
++import org.junit.jupiter.api.Test;
++
++import java.util.HashMap;
++import java.util.HashSet;
++import java.util.List;
++import java.util.Map;
++import java.util.Random;
++import java.util.Set;
++
++import static org.junit.jupiter.api.Assertions.assertEquals;
++import static org.junit.jupiter.api.Assertions.assertFalse;
++import static org.junit.jupiter.api.Assertions.assertTrue;
++
++class VillageLightingBuilderTest {
++
++    @Test
++    void decorativeLightsStayInsideWallAndOutsideReservedInfrastructure() {
++        VillageLayoutSettings settings = new VillageLayoutSettings(
++                "semi_organic",
++                4,
++                5,
++                9,
++                11,
++                20,
++                2,
++                13,
++                12,
++                16,
++                2,
++                1,
++                2,
++                "high"
++        );
++        Location center = new Location(null, 0, 64, 0);
++        VillageLayoutPlan layout = VillageLayoutPlanner.plan(
++                center,
++                settings,
++                new Random(17)
++        );
++        VillageLayoutPlan.Bounds bounds = layout.bounds();
++        int rx = Math.max(
++                Math.abs(bounds.minX() - center.getBlockX()),
++                Math.abs(bounds.maxX() - center.getBlockX())
++        ) + 7;
++        int rz = Math.max(
++                Math.abs(bounds.minZ() - center.getBlockZ()),
++                Math.abs(bounds.maxZ() - center.getBlockZ())
++        ) + 7;
++
++        List<VillageLightingBuilder.DecorativeLightAnchor> anchors =
++                VillageLightingBuilder.planDecorativeLights(
++                        center,
++                        layout,
++                        rx,
++                        rz,
++                        14
++                );
++
++        long wellLights = anchors.stream()
++                .filter(anchor -> anchor.kind()
++                        == VillageLightingBuilder.DecorativeLightKind.WELL_HANGING)
++                .count();
++        long perimeterLights = anchors.stream()
++                .filter(anchor -> anchor.kind()
++                        == VillageLightingBuilder.DecorativeLightKind.PERIMETER_BOLLARD)
++                .count();
++
++        assertEquals(4, wellLights);
++        assertTrue(perimeterLights >= 4);
++
++        Set<String> positions = new HashSet<>();
++        for (VillageLightingBuilder.DecorativeLightAnchor anchor : anchors) {
++            assertTrue(positions.add(anchor.x() + ":" + anchor.z()));
++
++            if (anchor.kind()
++                    != VillageLightingBuilder.DecorativeLightKind.PERIMETER_BOLLARD) {
++                continue;
++            }
++
++            assertTrue(anchor.x() > center.getBlockX() - rx);
++            assertTrue(anchor.x() < center.getBlockX() + rx);
++            assertTrue(anchor.z() > center.getBlockZ() - rz);
++            assertTrue(anchor.z() < center.getBlockZ() + rz);
++
++            // Le parvis du portail sud reste praticable.
++            assertFalse(
++                    anchor.z() >= center.getBlockZ() + rz - 6
++                            && Math.abs(anchor.x() - center.getBlockX()) <= 6
++            );
++
++            for (VillageLayoutPlan.LotPlan lot : layout.lots()) {
++                boolean overlaps = anchor.x() >= lot.siteMinX() - 2
++                        && anchor.x() <= lot.siteMaxX() + 2
++                        && anchor.z() >= lot.siteMinZ() - 2
++                        && anchor.z() <= lot.siteMaxZ() + 2;
++                assertFalse(overlaps);
++            }
++            for (VillageLayoutPlan.StreetPlan street : layout.streets()) {
++                assertFalse(street.contains(anchor.x(), anchor.z(), 2));
++            }
++        }
++    }
++
++    @Test
++    void scanTilesCoverEveryCellExactlyOnce() {
++        int minX = -19;
++        int maxX = 23;
++        int minZ = -17;
++        int maxZ = 21;
++        int tileSize = 7;
++        List<VillageLightingBuilder.ScanTile> tiles =
++                VillageLightingBuilder.createScanTiles(
++                        minX,
++                        maxX,
++                        minZ,
++                        maxZ,
++                        tileSize
++                );
++
++        Map<String, Integer> coverage = new HashMap<>();
++        for (VillageLightingBuilder.ScanTile tile : tiles) {
++            assertTrue(tile.maxX() - tile.minX() + 1 <= tileSize);
++            assertTrue(tile.maxZ() - tile.minZ() + 1 <= tileSize);
++            for (int x = tile.minX(); x <= tile.maxX(); x++) {
++                for (int z = tile.minZ(); z <= tile.maxZ(); z++) {
++                    assertTrue(tile.contains(x, z));
++                    coverage.merge(x + ":" + z, 1, Integer::sum);
++                }
++            }
++        }
++
++        int expectedCells = (maxX - minX + 1) * (maxZ - minZ + 1);
++        assertEquals(expectedCells, coverage.size());
++        assertTrue(coverage.values().stream().allMatch(count -> count == 1));
++    }
++
++    @Test
++    void defaultLightLevelCoversOneSevenBlockTileWithSafetyMargin() {
++        assertEquals(
++                7,
++                VillageLightingBuilder.conservativeCoverageRadius(12, 2)
++        );
++        assertEquals(
++                0,
++                VillageLightingBuilder.conservativeCoverageRadius(4, 1)
++        );
++    }
++}
+diff --git a/src/test/java/org/example/village/VillageStructureTest.java b/src/test/java/org/example/village/VillageStructureTest.java
+index 25f2b1c5ffb94ee30d28e2cb75b0988e59b34f28..8c6ad79cc475256f321840f787755cfc5cede282 100644
+--- a/src/test/java/org/example/village/VillageStructureTest.java
++++ b/src/test/java/org/example/village/VillageStructureTest.java
+@@ -484,6 +484,8 @@ class VillageStructureTest {
+         assertTrue(values.contains(Material.RAW_IRON_BLOCK));
+         assertTrue(values.contains(Material.COAL_BLOCK));
+         assertTrue(values.contains(Material.OAK_LEAVES));
++        assertTrue(values.contains(Material.LANTERN));
++        assertTrue(values.contains(Material.CHAIN));
+     }
+ 
+     private static String key(int x, int y, int z) {

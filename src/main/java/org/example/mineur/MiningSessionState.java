@@ -19,7 +19,7 @@ import java.util.UUID;
  */
 public final class MiningSessionState {
 
-    public static final int CURRENT_SCHEMA_VERSION = 4;
+    public static final int CURRENT_SCHEMA_VERSION = 5;
     private static final int MAX_TRUSTED_PLAYERS = 256;
     private static final int MAX_STORED_CONTAINERS = 256;
     private static final int MAX_INSPECTED_LIST_ENTRIES = 1_024;
@@ -42,6 +42,14 @@ public final class MiningSessionState {
     public double minerY;
     public UUID owner;
     public final List<Vector> containers = new ArrayList<>();
+
+    /**
+     * Version et emprise du chevalement automatique. Une valeur nulle conserve
+     * la compatibilité avec les anciennes sessions qui utilisaient des coffres
+     * isolés autour de la mine.
+     */
+    public int structureVersion = 0;
+    public StructureBounds structureBounds;
     public boolean useBarrelMaster = false;
     public boolean paused = false;
     public boolean waitingStorage = false;
@@ -127,6 +135,19 @@ public final class MiningSessionState {
             }
         }
         map.put("containers", serializedContainers);
+
+        /*
+         * Une version sans emprise ne représente aucune structure restaurable.
+         * Sérialiser explicitement zéro évite un état YAML contradictoire.
+         */
+        map.put(
+                "structureVersion",
+                structureBounds != null ? Math.max(0, structureVersion) : 0
+        );
+        map.put(
+                "structureBounds",
+                structureBounds != null ? structureBounds.toList() : null
+        );
         map.put("useBarrelMaster", useBarrelMaster);
         map.put("paused", paused);
         map.put("waitingStorage", waitingStorage);
@@ -239,6 +260,17 @@ public final class MiningSessionState {
             }
         }
 
+        state.structureVersion = Math.max(0, intValue(map.get("structureVersion"), 0));
+        state.structureBounds = structureBoundsValue(
+                map.get("structureBounds"),
+                state,
+                minimumY,
+                maximumY
+        );
+        if (state.structureBounds == null) {
+            state.structureVersion = 0;
+        }
+
         state.useBarrelMaster = booleanValue(map.get("useBarrelMaster"), false);
         state.paused = booleanValue(map.get("paused"), false);
         state.waitingStorage = booleanValue(map.get("waitingStorage"), false);
@@ -289,6 +321,78 @@ public final class MiningSessionState {
             cursor.copyFrom(pendingCursor);
         }
         pendingCursor = null;
+    }
+
+    /**
+     * Emprise bornée et sérialisable du bâtiment associé à la mine.
+     */
+    public record StructureBounds(int minX,
+                                  int maxX,
+                                  int minY,
+                                  int maxY,
+                                  int minZ,
+                                  int maxZ) {
+
+        public StructureBounds {
+            if (minX > maxX || minY > maxY || minZ > maxZ) {
+                throw new IllegalArgumentException("Emprise de structure invalide.");
+            }
+        }
+
+        public List<Integer> toList() {
+            return List.of(minX, maxX, minY, maxY, minZ, maxZ);
+        }
+
+        public boolean containsHorizontal(int x, int z) {
+            return x >= minX && x <= maxX && z >= minZ && z <= maxZ;
+        }
+    }
+
+    private static StructureBounds structureBoundsValue(Object value,
+                                                        MiningSessionState state,
+                                                        int worldMinimumY,
+                                                        int worldMaximumY) {
+        if (!(value instanceof List<?> list) || list.size() < 6 || state == null || state.base == null) {
+            return null;
+        }
+
+        Integer minX = nullableInt(list.get(0));
+        Integer maxX = nullableInt(list.get(1));
+        Integer minY = nullableInt(list.get(2));
+        Integer maxY = nullableInt(list.get(3));
+        Integer minZ = nullableInt(list.get(4));
+        Integer maxZ = nullableInt(list.get(5));
+        if (minX == null || maxX == null || minY == null || maxY == null
+                || minZ == null || maxZ == null
+                || minX > maxX || minY > maxY || minZ > maxZ) {
+            return null;
+        }
+
+        long spanX = (long) maxX - minX + 1L;
+        long spanY = (long) maxY - minY + 1L;
+        long spanZ = (long) maxZ - minZ + 1L;
+        if (spanX > 1_024L || spanY > 128L || spanZ > 1_024L
+                || minY < worldMinimumY || maxY >= worldMaximumY) {
+            return null;
+        }
+
+        /*
+         * Une emprise forgée ne doit pas pouvoir forcer le chargement de chunks
+         * éloignés. Le bâtiment réel reste à moins de 128 blocs de l'emprise
+         * minée, même avec les limites de configuration maximales.
+         */
+        long mineMaxX = (long) state.base.getBlockX() + Math.max(1, state.width) - 1L;
+        long mineMaxZ = (long) state.base.getBlockZ() + Math.max(1, state.length) - 1L;
+        if ((long) state.base.getBlockX() - minX > 128L
+                || (long) minX - mineMaxX > 128L
+                || (long) maxX - mineMaxX > 128L
+                || (long) state.base.getBlockZ() - minZ > 128L
+                || (long) minZ - mineMaxZ > 128L
+                || (long) maxZ - mineMaxZ > 128L) {
+            return null;
+        }
+
+        return new StructureBounds(minX, maxX, minY, maxY, minZ, maxZ);
     }
 
     private static int effectiveMinimumHeight(World world) {

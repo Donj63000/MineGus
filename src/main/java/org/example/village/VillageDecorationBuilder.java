@@ -5,6 +5,8 @@ import org.bukkit.Material;
 import org.bukkit.World;
 import org.bukkit.block.BlockFace;
 import org.bukkit.block.data.Bisected;
+import org.bukkit.block.data.type.Lantern;
+import org.bukkit.block.data.type.Leaves;
 import org.bukkit.block.data.type.Slab;
 import org.bukkit.block.data.type.Stairs;
 
@@ -66,29 +68,119 @@ public final class VillageDecorationBuilder {
         List<Cell> candidates = createCandidates(layout.bounds(), random);
         int built = 0;
         int index = 0;
+
+        /*
+         * Les arbres sont réservés avant les accessoires aléatoires. Le budget
+         * total reste inchangé, mais une densité "high" ne peut plus produire
+         * par hasard un village presque dépourvu de végétation haute.
+         */
+        int treeTarget = Math.min(settings.treeBudget(), budget);
+        while (built < treeTarget && index < candidates.size()) {
+            Cell candidate = candidates.get(index++);
+            boolean illuminated = built % 3 == 0;
+            if (tryBuildTree(
+                    tasks,
+                    world,
+                    setBlock,
+                    occupancy,
+                    candidate.x(),
+                    candidate.z(),
+                    baseY,
+                    random,
+                    illuminated
+            )) {
+                built++;
+            }
+        }
+
+        /*
+         * On repart du début : les cellules déjà prises échouent proprement
+         * grâce à Occupancy, tandis que les petits interstices ignorés par les
+         * arbres restent disponibles pour des décors compacts.
+         */
+        index = 0;
         while (built < budget && index < candidates.size()) {
             Cell candidate = candidates.get(index++);
             int type = Math.floorMod(
-                    candidate.x() * 31 + candidate.z() * 17 + random.nextInt(97),
-                    8
+                    candidate.x() * 31
+                            + candidate.z() * 17
+                            + random.nextInt(97),
+                    12
             );
             boolean placed = switch (type) {
-                case 0 -> tryBuildTree(tasks, world, setBlock, occupancy,
+                case 0 -> tryBuildTree(
+                        tasks,
+                        world,
+                        setBlock,
+                        occupancy,
+                        candidate.x(),
+                        candidate.z(),
+                        baseY,
+                        random,
+                        Math.floorMod(candidate.x() + candidate.z(), 4) == 0
+                );
+                case 1 -> tryBuildShrubGarden(
+                        tasks,
+                        setBlock,
+                        occupancy,
+                        candidate.x(),
+                        candidate.z(),
+                        baseY
+                );
+                case 2 -> tryBuildFlowerPatch(
+                        tasks,
+                        setBlock,
+                        occupancy,
+                        candidate.x(),
+                        candidate.z(),
+                        baseY,
+                        random
+                );
+                case 3 -> tryBuildPond(
+                        tasks,
+                        setBlock,
+                        occupancy,
+                        candidate.x(),
+                        candidate.z(),
+                        baseY
+                );
+                case 4 -> tryBuildHerbGarden(
+                        tasks,
+                        setBlock,
+                        occupancy,
+                        candidate.x(),
+                        candidate.z(),
+                        baseY
+                );
+                case 5 -> tryBuildWoodpile(tasks, world, setBlock, occupancy,
                         candidate.x(), candidate.z(), baseY, random);
-                case 1 -> tryBuildWoodpile(tasks, world, setBlock, occupancy,
-                        candidate.x(), candidate.z(), baseY, random);
-                case 2 -> tryBuildHaystack(tasks, setBlock, occupancy,
+                case 6 -> tryBuildHaystack(tasks, setBlock, occupancy,
                         candidate.x(), candidate.z(), baseY);
-                case 3 -> tryBuildCart(tasks, world, setBlock, occupancy,
+                case 7 -> tryBuildCart(tasks, world, setBlock, occupancy,
                         candidate.x(), candidate.z(), baseY, random);
-                case 4 -> tryBuildLaundry(tasks, world, setBlock, occupancy,
+                case 8 -> tryBuildLaundry(tasks, world, setBlock, occupancy,
                         candidate.x(), candidate.z(), baseY, random);
-                case 5 -> tryBuildFlowerPatch(tasks, setBlock, occupancy,
-                        candidate.x(), candidate.z(), baseY, random);
-                case 6 -> tryBuildWaysideShrine(tasks, setBlock, occupancy,
+                case 9 -> tryBuildWaysideShrine(tasks, setBlock, occupancy,
                         candidate.x(), candidate.z(), baseY);
-                default -> tryBuildNoticeBoard(tasks, world, setBlock, occupancy,
-                        candidate.x(), candidate.z(), baseY, random);
+                case 10 -> tryBuildNoticeBoard(
+                        tasks,
+                        world,
+                        setBlock,
+                        occupancy,
+                        candidate.x(),
+                        candidate.z(),
+                        baseY,
+                        random
+                );
+                default -> tryBuildFlowerPatch(
+                        tasks,
+                        setBlock,
+                        occupancy,
+                        candidate.x(),
+                        candidate.z(),
+                        baseY,
+                        random
+                );
             };
             if (placed) {
                 built++;
@@ -272,7 +364,19 @@ public final class VillageDecorationBuilder {
         Cell gate = localPoint(centerX, centerZ, church.facing(), 0, 3);
         place(tasks, setBlock, gate.x(), baseY + 1, gate.z(), Material.IRON_BARS);
         Cell tree = localPoint(centerX, centerZ, church.facing(), 3, -2);
-        buildSmallTree(tasks, setBlock, tree.x(), tree.z(), baseY, Material.OAK_LOG, Material.OAK_LEAVES);
+        buildSmallTree(
+                tasks,
+                world,
+                setBlock,
+                tree.x(),
+                tree.z(),
+                baseY,
+                Material.OAK_LOG,
+                Material.OAK_LEAVES,
+                false,
+                false,
+                church.facing().getOppositeFace()
+        );
     }
 
     private static void tryBuildOrchard(List<Runnable> tasks,
@@ -305,14 +409,29 @@ public final class VillageDecorationBuilder {
             }
         }
 
+        int orchardTreeIndex = 0;
         for (int dx : new int[]{-3, 0, 3}) {
             for (int dz : new int[]{-2, 2}) {
                 Material leaves = Math.floorMod(dx + dz, 2) == 0
                         ? Material.FLOWERING_AZALEA_LEAVES
                         : Material.OAK_LEAVES;
-                buildSmallTree(tasks, setBlock,
-                        centerX + dx, centerZ + dz, baseY,
-                        Material.OAK_LOG, leaves);
+                BlockFace lanternSide = dz < 0
+                        ? BlockFace.NORTH
+                        : BlockFace.SOUTH;
+                buildSmallTree(
+                        tasks,
+                        world,
+                        setBlock,
+                        centerX + dx,
+                        centerZ + dz,
+                        baseY,
+                        Material.OAK_LOG,
+                        leaves,
+                        orchardTreeIndex % 3 == 0,
+                        false,
+                        lanternSide
+                );
+                orchardTreeIndex++;
             }
         }
         int beeX = centerX + 4;
@@ -393,26 +512,80 @@ public final class VillageDecorationBuilder {
     }
 
     private static boolean tryBuildTree(List<Runnable> tasks,
-                                        World world,
-                                        TerrainManager.SetBlock setBlock,
-                                        Occupancy occupancy,
-                                        int x,
-                                        int z,
-                                        int baseY,
-                                        Random random) {
+                                         World world,
+                                         TerrainManager.SetBlock setBlock,
+                                         Occupancy occupancy,
+                                         int x,
+                                         int z,
+                                         int baseY,
+                                         Random random,
+                                         boolean illuminated) {
         Rect rect = new Rect(x - 2, x + 2, z - 2, z + 2);
         if (!occupancy.claim(rect, 1)) {
             return false;
         }
-        Material log = random.nextBoolean() ? Material.OAK_LOG : Material.BIRCH_LOG;
-        Material leaves = log == Material.BIRCH_LOG ? Material.BIRCH_LEAVES : Material.OAK_LEAVES;
-        buildSmallTree(tasks, setBlock, x, z, baseY, log, leaves);
-        if (random.nextInt(4) == 0) {
-            place(tasks, setBlock, x + 1, baseY + 1, z, Material.BEE_NEST);
+
+        Material log;
+        Material leaves;
+        switch (random.nextInt(4)) {
+            case 0 -> {
+                log = Material.BIRCH_LOG;
+                leaves = Material.BIRCH_LEAVES;
+            }
+            case 1 -> {
+                log = Material.CHERRY_LOG;
+                leaves = Material.CHERRY_LEAVES;
+            }
+            case 2 -> {
+                log = Material.OAK_LOG;
+                leaves = Material.FLOWERING_AZALEA_LEAVES;
+            }
+            default -> {
+                log = Material.OAK_LOG;
+                leaves = Material.OAK_LEAVES;
+            }
+        }
+
+        BlockFace[] sides = {
+                BlockFace.NORTH,
+                BlockFace.SOUTH,
+                BlockFace.EAST,
+                BlockFace.WEST
+        };
+        BlockFace detailSide = sides[random.nextInt(sides.length)];
+        buildSmallTree(
+                tasks,
+                world,
+                setBlock,
+                x,
+                z,
+                baseY,
+                log,
+                leaves,
+                illuminated,
+                true,
+                detailSide
+        );
+
+        /*
+         * Le nid remplace une feuille au niveau du tronc au lieu de flotter au
+         * ras du sol. Les arbres éclairés gardent leur face libre pour la
+         * chaîne et la lanterne.
+         */
+        if (!illuminated && random.nextInt(4) == 0) {
+            int beeX = x + detailSide.getModX();
+            int beeZ = z + detailSide.getModZ();
+            int beeY = baseY + 3;
+            place(tasks, setBlock, beeX, beeY, beeZ, Material.BEE_NEST);
             if (world != null) {
                 tasks.add(() -> VillageStyle.setDirectional(
-                        world, x + 1, baseY + 1, z,
-                        Material.BEE_NEST, BlockFace.EAST));
+                        world,
+                        beeX,
+                        beeY,
+                        beeZ,
+                        Material.BEE_NEST,
+                        detailSide
+                ));
             }
         }
         return true;
@@ -605,6 +778,210 @@ public final class VillageDecorationBuilder {
         return true;
     }
 
+    /**
+     * Petit massif structuré : les arbustes donnent du volume à hauteur de
+     * joueur, tandis que les mousses et fleurs évitent l'effet de simple carré
+     * d'herbe posé au hasard.
+     */
+    private static boolean tryBuildShrubGarden(
+            List<Runnable> tasks,
+            TerrainManager.SetBlock setBlock,
+            Occupancy occupancy,
+            int x,
+            int z,
+            int baseY) {
+        Rect rect = new Rect(x - 2, x + 2, z - 2, z + 2);
+        if (!occupancy.claim(rect, 1)) {
+            return false;
+        }
+
+        Material[] flowers = {
+                Material.AZURE_BLUET,
+                Material.CORNFLOWER,
+                Material.OXEYE_DAISY,
+                Material.POPPY
+        };
+        for (int dx = -2; dx <= 2; dx++) {
+            for (int dz = -2; dz <= 2; dz++) {
+                int distance = Math.abs(dx) + Math.abs(dz);
+                place(
+                        tasks,
+                        setBlock,
+                        x + dx,
+                        baseY,
+                        z + dz,
+                        Math.floorMod(dx * 7 + dz * 11, 4) == 0
+                                ? Material.GRASS_BLOCK
+                                : Material.MOSS_BLOCK
+                );
+
+                Material detail = null;
+                if (dx == 0 && dz == 0) {
+                    detail = Material.FLOWERING_AZALEA;
+                } else if (distance == 1) {
+                    detail = Math.floorMod(dx + dz, 2) == 0
+                            ? Material.AZALEA
+                            : Material.FLOWERING_AZALEA;
+                } else if (distance == 2
+                        && Math.floorMod(dx * 13 + dz * 17, 3) == 0) {
+                    detail = Material.FERN;
+                } else if (Math.abs(dx) == 2
+                        && Math.abs(dz) == 2) {
+                    detail = flowers[Math.floorMod(
+                            x + z + dx - dz,
+                            flowers.length
+                    )];
+                } else if (distance == 3) {
+                    detail = Material.MOSS_CARPET;
+                }
+
+                if (detail != null) {
+                    place(
+                            tasks,
+                            setBlock,
+                            x + dx,
+                            baseY + 1,
+                            z + dz,
+                            detail
+                    );
+                }
+            }
+        }
+        return true;
+    }
+
+    /**
+     * Mare très peu profonde, bordée de mousse et équipée d'une lanterne basse.
+     * Le fond en argile est écrit avant l'eau pour rester stable même lorsque
+     * la physique est désactivée pendant la génération.
+     */
+    private static boolean tryBuildPond(List<Runnable> tasks,
+                                        TerrainManager.SetBlock setBlock,
+                                        Occupancy occupancy,
+                                        int x,
+                                        int z,
+                                        int baseY) {
+        Rect rect = new Rect(x - 2, x + 2, z - 2, z + 2);
+        if (!occupancy.claim(rect, 1)) {
+            return false;
+        }
+
+        for (int dx = -2; dx <= 2; dx++) {
+            for (int dz = -2; dz <= 2; dz++) {
+                boolean edge = Math.max(Math.abs(dx), Math.abs(dz)) == 2;
+                if (edge) {
+                    Material bank = Math.floorMod(
+                            x + z + dx * 5 + dz * 7,
+                            4
+                    ) == 0
+                            ? Material.MUD
+                            : Material.MOSS_BLOCK;
+                    place(tasks, setBlock, x + dx, baseY, z + dz, bank);
+                } else {
+                    place(
+                            tasks,
+                            setBlock,
+                            x + dx,
+                            baseY - 1,
+                            z + dz,
+                            Material.CLAY
+                    );
+                    place(
+                            tasks,
+                            setBlock,
+                            x + dx,
+                            baseY,
+                            z + dz,
+                            Material.WATER
+                    );
+                }
+            }
+        }
+
+        place(tasks, setBlock, x - 1, baseY + 1, z, Material.LILY_PAD);
+        place(tasks, setBlock, x + 1, baseY + 1, z + 1, Material.LILY_PAD);
+
+        // Le petit fanal rend la mare lisible de nuit sans pylône surdimensionné.
+        place(
+                tasks,
+                setBlock,
+                x + 2,
+                baseY + 1,
+                z - 2,
+                Material.MOSSY_COBBLESTONE_WALL
+        );
+        place(
+                tasks,
+                setBlock,
+                x + 2,
+                baseY + 2,
+                z - 2,
+                Material.LANTERN
+        );
+        return true;
+    }
+
+    /**
+     * Jardin d'herbes compact avec composteur, pots et fanal. Sa faible emprise
+     * lui permet d'occuper les espaces où un arbre ou une charrette ne passent
+     * pas, tout en apportant de la couleur au pied des maisons.
+     */
+    private static boolean tryBuildHerbGarden(
+            List<Runnable> tasks,
+            TerrainManager.SetBlock setBlock,
+            Occupancy occupancy,
+            int x,
+            int z,
+            int baseY) {
+        Rect rect = new Rect(x - 2, x + 2, z - 1, z + 1);
+        if (!occupancy.claim(rect, 1)) {
+            return false;
+        }
+
+        for (int dx = -2; dx <= 2; dx++) {
+            for (int dz = -1; dz <= 1; dz++) {
+                place(
+                        tasks,
+                        setBlock,
+                        x + dx,
+                        baseY,
+                        z + dz,
+                        Math.floorMod(dx + dz, 3) == 0
+                                ? Material.ROOTED_DIRT
+                                : Material.MOSS_BLOCK
+                );
+            }
+        }
+
+        Material[] pottedPlants = {
+                Material.POTTED_FERN,
+                Material.POTTED_DANDELION,
+                Material.POTTED_AZURE_BLUET,
+                Material.POTTED_RED_TULIP,
+                Material.POTTED_OXEYE_DAISY,
+                Material.POTTED_POPPY
+        };
+        int plantIndex = 0;
+        for (int dx = -1; dx <= 1; dx++) {
+            for (int dz : new int[]{-1, 1}) {
+                place(
+                        tasks,
+                        setBlock,
+                        x + dx,
+                        baseY + 1,
+                        z + dz,
+                        pottedPlants[plantIndex++]
+                );
+            }
+        }
+
+        place(tasks, setBlock, x, baseY + 1, z, Material.COMPOSTER);
+        place(tasks, setBlock, x - 2, baseY + 1, z, Material.BARREL);
+        place(tasks, setBlock, x + 2, baseY + 1, z, Material.OAK_FENCE);
+        place(tasks, setBlock, x + 2, baseY + 2, z, Material.LANTERN);
+        return true;
+    }
+
     private static boolean tryBuildWaysideShrine(List<Runnable> tasks,
                                                  TerrainManager.SetBlock setBlock,
                                                  Occupancy occupancy,
@@ -663,28 +1040,207 @@ public final class VillageDecorationBuilder {
         return true;
     }
 
+    /**
+     * Construit un arbre compact à la main afin de garder une silhouette
+     * prévisible près des bâtiments. La variante éclairée suspend une lanterne
+     * sous le houppier, sans poteau supplémentaire au sol.
+     */
     private static void buildSmallTree(List<Runnable> tasks,
+                                       World world,
                                        TerrainManager.SetBlock setBlock,
                                        int x,
                                        int z,
                                        int baseY,
                                        Material log,
-                                       Material leaves) {
+                                       Material leaves,
+                                       boolean illuminated,
+                                       boolean landscaped,
+                                       BlockFace detailSide) {
+        if (landscaped) {
+            landscapeTreeBase(tasks, setBlock, x, z, baseY);
+        }
+
         place(tasks, setBlock, x, baseY, z, Material.ROOTED_DIRT);
         for (int dy = 1; dy <= 4; dy++) {
             place(tasks, setBlock, x, baseY + dy, z, log);
         }
+
         for (int dy = 3; dy <= 5; dy++) {
             int radius = dy == 4 ? 2 : 1;
             for (int dx = -radius; dx <= radius; dx++) {
                 for (int dz = -radius; dz <= radius; dz++) {
-                    if (Math.abs(dx) + Math.abs(dz) <= radius + 1) {
-                        place(tasks, setBlock, x + dx, baseY + dy, z + dz, leaves);
+                    if (Math.abs(dx) + Math.abs(dz) > radius + 1) {
+                        continue;
                     }
+
+                    /*
+                     * Le cœur des deux premières couches reste en bois. Dans
+                     * l'ancienne version, les feuilles écrasaient deux blocs
+                     * du tronc une fois la file exécutée.
+                     */
+                    if (dx == 0 && dz == 0 && dy <= 4) {
+                        continue;
+                    }
+                    place(
+                            tasks,
+                            setBlock,
+                            x + dx,
+                            baseY + dy,
+                            z + dz,
+                            leaves
+                    );
                 }
             }
         }
         place(tasks, setBlock, x, baseY + 6, z, leaves);
+
+        if (illuminated) {
+            BlockFace side = switch (detailSide) {
+                case NORTH, SOUTH, EAST, WEST -> detailSide;
+                default -> BlockFace.EAST;
+            };
+            int lanternX = x + side.getModX();
+            int lanternZ = z + side.getModZ();
+            int lanternY = baseY + 2;
+            int chainY = baseY + 3;
+
+            // La chaîne remplace une feuille basse et paraît fixée dans le houppier.
+            place(tasks, setBlock, lanternX, chainY, lanternZ, Material.CHAIN);
+            place(tasks, setBlock, lanternX, lanternY, lanternZ, Material.LANTERN);
+            if (world != null) {
+                tasks.add(() -> configureHangingLantern(
+                        world,
+                        lanternX,
+                        lanternY,
+                        lanternZ
+                ));
+            }
+        }
+
+        if (world != null) {
+            /*
+             * Les feuilles créées avec leurs données par défaut peuvent avoir
+             * une distance maximale au tronc et dépérir lors d'un tick
+             * aléatoire. La persistance ne concerne que ce petit houppier.
+             */
+            tasks.add(() -> configurePersistentLeaves(
+                    world,
+                    x,
+                    z,
+                    baseY + 3,
+                    baseY + 6,
+                    leaves
+            ));
+        }
+    }
+
+    private static void landscapeTreeBase(List<Runnable> tasks,
+                                          TerrainManager.SetBlock setBlock,
+                                          int x,
+                                          int z,
+                                          int baseY) {
+        Material[] smallFlowers = {
+                Material.DANDELION,
+                Material.AZURE_BLUET,
+                Material.POPPY,
+                Material.CORNFLOWER
+        };
+
+        for (int dx = -2; dx <= 2; dx++) {
+            for (int dz = -2; dz <= 2; dz++) {
+                int distance = Math.abs(dx) + Math.abs(dz);
+                if (distance > 3) {
+                    continue;
+                }
+
+                Material ground = Math.floorMod(
+                        x * 11 + z * 17 + dx * 5 + dz * 7,
+                        5
+                ) == 0
+                        ? Material.GRASS_BLOCK
+                        : Material.MOSS_BLOCK;
+                place(tasks, setBlock, x + dx, baseY, z + dz, ground);
+
+                if (dx == 0 && dz == 0) {
+                    continue;
+                }
+
+                int selector = Math.floorMod(
+                        x * 19 + z * 23 + dx * 13 + dz * 29,
+                        7
+                );
+                if (selector == 0) {
+                    place(
+                            tasks,
+                            setBlock,
+                            x + dx,
+                            baseY + 1,
+                            z + dz,
+                            Material.FERN
+                    );
+                } else if (selector == 1) {
+                    place(
+                            tasks,
+                            setBlock,
+                            x + dx,
+                            baseY + 1,
+                            z + dz,
+                            smallFlowers[Math.floorMod(
+                                    x + z + dx - dz,
+                                    smallFlowers.length
+                            )]
+                    );
+                } else if (selector == 2 && distance >= 2) {
+                    place(
+                            tasks,
+                            setBlock,
+                            x + dx,
+                            baseY + 1,
+                            z + dz,
+                            Material.MOSS_CARPET
+                    );
+                }
+            }
+        }
+    }
+
+    private static void configurePersistentLeaves(World world,
+                                                    int centerX,
+                                                    int centerZ,
+                                                    int minY,
+                                                    int maxY,
+                                                    Material leafMaterial) {
+        for (int x = centerX - 2; x <= centerX + 2; x++) {
+            for (int y = minY; y <= maxY; y++) {
+                for (int z = centerZ - 2; z <= centerZ + 2; z++) {
+                    var block = world.getBlockAt(x, y, z);
+                    if (block.getType() != leafMaterial) {
+                        continue;
+                    }
+
+                    var data = block.getBlockData();
+                    if (data instanceof Leaves leaves) {
+                        leaves.setPersistent(true);
+                        block.setBlockData(leaves, false);
+                    }
+                }
+            }
+        }
+    }
+
+    private static void configureHangingLantern(World world,
+                                                 int x,
+                                                 int y,
+                                                 int z) {
+        if (world.getBlockAt(x, y, z).getType() != Material.LANTERN) {
+            return;
+        }
+
+        var data = Material.LANTERN.createBlockData();
+        if (data instanceof Lantern lantern) {
+            lantern.setHanging(true);
+            world.getBlockAt(x, y, z).setBlockData(lantern, false);
+        }
     }
 
     /**

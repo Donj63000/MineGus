@@ -8,7 +8,8 @@ mineur:
   # true reproduit les mises à jour naturelles (sable/gravier, fluides, redstone).
   apply-physics: true
 
-  # La décoration reste désactivée par défaut et ne remplace jamais un bloc existant.
+  # Décorations internes de la carrière (torches, supports et escalier).
+  # La cabane de surface possède son propre interrupteur ci-dessous.
   allow-block-placement: false
   default:
     pattern: QUARRY
@@ -33,7 +34,39 @@ mineur:
     barrel-search-height: 2
     # Distance horizontale maximale depuis le bord de l'emprise minée.
     maximum-distance: 24
+    # Compte les blocs de coffre : 32 = 16 coffres doubles.
     max-containers: 32
+
+  # Chevalement automatique construit autour de toute nouvelle mine qui
+  # n'utilise pas le mode manuel « tonneau maître ».
+  structure:
+    enabled: true
+
+    # La plateforme supérieure se trouve cinq blocs au-dessus du niveau choisi.
+    # Les valeurs sont bornées entre 4 et 6.
+    platform-height: 5
+
+    # Le pavillon fermé reste carré, grandit selon le plus grand côté de la mine,
+    # puis demeure plafonné pour éviter une toiture démesurée. Le cadre, les
+    # piliers et les passerelles suivent toujours l'emprise complète de la carrière.
+    cabin-min-size: 15
+    cabin-max-size: 17
+    wall-height: 5
+
+    # 16 coffres doubles = 864 emplacements d'inventaire.
+    # La valeur effective respecte aussi storage.max-containers.
+    double-chests: 16
+
+    # Profondeur maximale de recherche d'un sol stable sous chacun des 4 piliers.
+    foundation-depth: 6
+
+    # Budget de sécurité comprenant blocs posés, dégagements et fondations.
+    max-planned-blocks: 12000
+
+    # Déclenche des événements Bukkit de casse/pose synthétiques afin que les
+    # plugins de claims puissent refuser la construction. Le propriétaire doit
+    # alors être connecté, ce qui est toujours le cas lors d'un nouveau /mineur.
+    fire-protection-events: true
 
   branch:
     spacing: 6        # espacement entre deux branches sur l'axe X
@@ -103,15 +136,27 @@ garde:
   # false protège les gardes contre les coups accidentels du propriétaire et de son propre duo.
   friendly-fire: false
 
+  # Les Husks sont des monstres pour la règle vanilla du lit. true autorise le sommeil uniquement
+  # lorsqu'ils sont les seuls ennemis proches et qu'aucun garde d'un autre joueur ne menace le dormeur.
+  # Une interdiction explicite d'un plugin de protection et tout vrai monstre restent prioritaires.
+  allow-sleep-near-guards: true
+  # Empêche les gardes d'altérer les blocs (œufs de tortue, terre labourée, portes cassées, etc.).
+  # Les portes peuvent toujours être ouvertes par leur pathfinder et les plaques de pression restent actives.
+  prevent-block-damage: true
+
   # true empêche tous les golems de fer (naturels, villageois ou créés par MineGus)
   # de conserver un garde royal comme cible et bloque leurs dégâts.
   iron-golem-neutrality: true
-  # Rayon du filet de sécurité local contre une cible injectée sans événement Bukkit.
+  # Rayon partagé du filet de sécurité local des golems contre une cible injectée sans
+  # événement Bukkit. Le nom historique de la clé est conservé pour les configurations existantes.
   # Le contrôle principal reste événementiel ; ce balayage borné ne s'exécute qu'une fois par seconde.
   iron-golem-neutrality-radius: 32
-  # Si un golem parvient malgré tout à tenter une frappe, les dégâts restent annulés
+  # Si un golem de fer parvient malgré tout à tenter une frappe, les dégâts restent annulés
   # et le duo contre-attaque. Passez à false pour une neutralité strictement pacifique.
   iron-golem-retaliation: true
+  # Les golems de neige attaquent eux aussi les Husks. true annule cette hostilité et leurs
+  # projectiles résiduels sans ordonner aux gardes de tuer une défense amicale de la base.
+  snow-golem-neutrality: true
 
   # Messages lors de la mort et du retour d'un garde.
   notifications: true
@@ -159,6 +204,26 @@ village:
   decorDensity: high
   # Respiration minimale entre les derniers jardins et la face intérieure.
   wallGap: 7
+
+  # Passe lumineuse finale du village (les lampadaires de rue restent liés au décor).
+  lighting:
+    enabled: true
+    # Compléments visibles du puits et de la promenade intérieure.
+    decorative: true
+    # Audit des surfaces sombres avec des blocs LIGHT invisibles.
+    spawn-proof: true
+    # Niveau des blocs LIGHT ajoutés par l'audit (4 à 15).
+    hidden-light-level: 12
+    # Marge de sécurité : la correction vise au moins ce niveau de lumière de bloc.
+    target-min-block-light: 2
+    # Petites tuiles pour lisser le coût de l'audit dans la file de génération.
+    scan-tile-size: 7
+    # Hauteur contrôlée au-dessus du sol : intérieurs, toits, tours et clochers.
+    scan-height: 30
+    # Espacement des bornes lumineuses placées le long de la muraille.
+    perimeter-lantern-spacing: 14
+    # Garde-fou pour une configuration de village anormalement grande.
+    max-hidden-lights: 2048
 
 # Paramètres des métiers
 jobs:

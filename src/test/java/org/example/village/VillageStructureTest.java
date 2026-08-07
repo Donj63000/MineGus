@@ -484,6 +484,8 @@ class VillageStructureTest {
         assertTrue(values.contains(Material.RAW_IRON_BLOCK));
         assertTrue(values.contains(Material.COAL_BLOCK));
         assertTrue(values.contains(Material.OAK_LEAVES));
+        assertTrue(values.contains(Material.LANTERN));
+        assertTrue(values.contains(Material.CHAIN));
     }
 
     private static String key(int x, int y, int z) {

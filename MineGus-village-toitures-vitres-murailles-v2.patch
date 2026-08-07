@@ -365,4 +365,3365 @@ index 8b8a8af5b5b5e7e102e2e3bc94b11fb8efd39bc1..abba6ef9d6b66f76ff79adbc7bffb276
                                   VillageStyle.Palette palette) {
 -        boolean alongZ = riseFrom == BlockFace.NORTH
 -                || riseFrom == BlockFace.SOUTH;
-+        BlockFace lowSide = switch ﬂæµÍ⁄$z{-ÆÈ‹j◊ùFW&ñ¬Â5DÙ‰UÙ%$î4µ0¢≤¢÷FW&ñ¬‰4Ù$$ƒU5DÙ‰P¢≤ì∞¢∞¢÷FW&ñ¬÷FW&ñ√∞¢“ñbÑ÷FÇÊ'2ÜGÇí”“tDUÙÑƒeıtîEDÇí∞¢“÷FW&ñ¬“÷FÇÊf∆ˆ˜$÷ˆBáÇ≤¢¬"í”“ ¢“Ú÷FW&ñ¬‰4Ù$$ƒU5DÙ‰P¢≤ñbÑ÷FÇÊ'2ÜGÇí”“$Ù4ÖÙÑƒeıtîEDÇí∞¢≤÷FW&ñ¬“÷FÇÊf∆ˆ˜$÷ˆBáÇ≤¢¬2í”“ ¢≤Ú÷FW&ñ¬ÂÙƒï4ÑTEÙ‰DU4ïDP¢¢÷FW&ñ¬Â5DÙ‰UÙ%$î4µ3∞¢“V«6R∞¢“÷FW&ñ¬“÷FÇÊf∆ˆ˜$÷ˆBáÇ¢r≤¢¢3¬Rí”“ ¢“Ú÷FW&ñ¬ÂÙƒï4ÑTEÙ‰DU4ïDP¢“¢÷FW&ñ¬‰u$dT√∞¢≤ñÁB6V∆V7F˜"“÷FÇÊf∆ˆ˜$÷ˆBÄ¢≤Ç¢r≤¢¢3¿¢≤p¢≤ì∞¢≤÷FW&ñ¬“7vóF6Çá6V∆V7F˜"í∞¢≤66R”‚÷FW&ñ¬ÂÙƒï4ÑTEÙ‰DU4ïDS∞¢≤66R”‚÷FW&ñ¬‰4Ù$$ƒU5DÙ‰S∞¢≤66R"”‚÷FW&ñ¬‰‰DU4ïDS∞¢≤FVfV«B”‚÷FW&ñ¬‰u$dT√∞¢≤”∞¢–¢∞¢÷FW&ñ¬fñÊƒ÷FW&ñ¬“÷FW&ñ√∞¢“VWVRÊFBÇÇí”‚6WD&∆ˆ6≤Á6WBáÇ¬&6Uí¬g¢¬fñÊƒ÷FW&ñ¬íì∞¢≤∆6RáVWVR¬6WD&∆ˆ6≤¿¢≤Ç¿¢≤&6Uí¿¢≤g¢¿¢≤fñÊƒ÷FW&ñ¿¢≤ì∞¢–¢–¢∞¢≤ÚÚ&˜&ÊW2&76W2Ví6G&VÁB¬vVÁG,:ñR6Á2|:¶ÊW"∆W2¶˜VWW'2‡¢≤f˜"ÜñÁBGÇ¢ÊWrñÁEµ◊∞¢≤‘$Ù4ÖÙÑƒeıtîEDÇ¿¢≤$Ù4ÖÙÑƒeıtîEDÄ¢≤“í∞¢≤ñÁBÇ“6VÁFW%Ç≤GÉ∞¢≤∆6RáVWVR¬6WD&∆ˆ6≤¿¢≤Ç¿¢≤&6Uí≤¿¢≤VÊE¢“"¿¢≤÷FW&ñ¬Â5DÙ‰UÙ%$î4µıtƒ¿¢≤ì∞¢≤∆6RáVWVR¬6WD&∆ˆ6≤¿¢≤Ç¿¢≤&6Uí≤"¿¢≤VÊE¢“"¿¢≤÷FW&ñ¬‰ƒÂDU$‡¢≤ì∞¢≤–¢–¢ ¢“&ófFR7FFñ2fˆñBFEF˜6∆"ÖVWVS≈'VÊÊ&∆S‚VWVR¿¢“v˜&∆Bv˜&∆B¿¢“FW'&ñ‰÷ÊvW"Â6WD&∆ˆ6≤6WD&∆ˆ6≤¿¢“ñÁBÇ¿¢“ñÁBí¿¢“ñÁB¢í∞¢“VWVRÊFBÇÇí”‚6WD&∆ˆ6≤Á6WBáÇ¬í¬¢¬÷FW&ñ¬Â5DÙ‰UÙ%$î4µı4ƒ"íì∞¢≤&ófFR7FFñ2fˆñB∆6RÖVWVS≈'VÊÊ&∆S‚VWVR¿¢≤FW'&ñ‰÷ÊvW"Â6WD&∆ˆ6≤6WD&∆ˆ6≤¿¢≤ñÁBÇ¿¢≤ñÁBí¿¢≤ñÁB¢¿¢≤÷FW&ñ¬÷FW&ñ¬í∞¢≤VWVRÊFBÇÇí”‚6WD&∆ˆ6≤Á6WBáÇ¬í¬¢¬÷FW&ñ¬íì∞¢≤–¢∞¢≤&ófFR7FFñ2fˆñB7Fó"ÖVWVS≈'VÊÊ&∆S‚VWVR¿¢≤v˜&∆Bv˜&∆B¿¢≤FW'&ñ‰÷ÊvW"Â6WD&∆ˆ6≤6WD&∆ˆ6≤¿¢≤ñÁBÇ¿¢≤ñÁBí¿¢≤ñÁB¢¿¢≤÷FW&ñ¬÷FW&ñ¬¿¢≤&∆ˆ6¥f6Rf6ñÊr¿¢≤7Fó'2‰Ü∆bÜ∆b¿¢≤7Fó'2Â6ÜR6ÜRí∞¢≤∆6RáVWVR¬6WD&∆ˆ6≤¬Ç¬í¬¢¬÷FW&ñ¬ì∞¢≤VWVRÊFBÇÇí”‚fñ∆∆vU7Gñ∆RÁ6WE7Fó"Ä¢≤v˜&∆B¿¢≤Ç¿¢≤í¿¢≤¢¿¢≤÷FW&ñ¬¿¢≤f6ñÊr¿¢≤Ü∆b¿¢≤6ÜP¢≤íì∞¢≤–¢∞¢≤&ófFR7FFñ2fˆñB6∆"ÖVWVS≈'VÊÊ&∆S‚VWVR¿¢≤v˜&∆Bv˜&∆B¿¢≤FW'&ñ‰÷ÊvW"Â6WD&∆ˆ6≤6WD&∆ˆ6≤¿¢≤ñÁBÇ¿¢≤ñÁBí¿¢≤ñÁB¢¿¢≤÷FW&ñ¬÷FW&ñ¬¿¢≤6∆"ÂGóRGóRí∞¢≤∆6RáVWVR¬6WD&∆ˆ6≤¬Ç¬í¬¢¬÷FW&ñ¬ì∞¢VWVRÊFBÇÇí”‚fñ∆∆vU7Gñ∆RÁ6WE6∆"Ä¢“v˜&∆B¬Ç¬í¬¢¿¢“÷FW&ñ¬Â5DÙ‰UÙ%$î4µı4ƒ"¿¢“6∆"ÂGóRÂDı ¢≤v˜&∆B¿¢≤Ç¿¢≤í¿¢≤¢¿¢≤÷FW&ñ¬¿¢≤GóP¢íì∞¢–¢ ¢≤&ófFR7FFñ2&ˆˆ∆V‚÷W&∆ˆ‰BÜñÁB6ˆ˜&FñÊFRí∞¢≤&WGW&‚÷FÇÊf∆ˆ˜$÷ˆBÜ6ˆ˜&FñÊFR¬Bí√“∞¢≤–¢∞¢≤&ófFR7FFñ2&ˆˆ∆V‚ó56∆óD6ˆ˜&FñÊFRÜñÁBÇ¿¢≤ñÁB¢¿¢≤ñÁB÷ñÂÇ¿¢≤ñÁB÷ÖÇí∞¢≤&WGW&‚÷FÇÊf∆ˆ˜$÷ˆBÄ¢≤Üó46ˆ˜&FñÊFRáÇ¬¢¬÷ñÂÇ¬÷ÖÇí¿¢≤ê¢≤í”“C∞¢≤–¢∞¢≤&ófFR7FFñ2÷FW&ñ¬v∆∑vï7FˆÊRÜñÁBÇ¬ñÁB¢í∞¢≤&WGW&‚÷FÇÊf∆ˆ˜$÷ˆBáÇ¢2≤¢¢r¬íí”“ ¢≤Ú÷FW&ñ¬‰‘ı55ïı5DÙ‰UÙ%$î4µ0¢≤¢÷FW&ñ¬ÂÙƒï4ÑTEÙ‰DU4ïDS∞¢≤–¢∞¢≤&ófFR7FFñ2÷FW&ñ¬f˜VÊFFñˆÂ7FˆÊRÜñÁBÇ¬ñÁBí¬ñÁB¢í∞¢≤ñÁB6V∆V7F˜"“÷FÇÊf∆ˆ˜$÷ˆBÄ¢≤Ç¢í≤í¢≤¢¢#2¿¢≤p¢≤ì∞¢≤&WGW&‚6V∆V7F˜"√“¢≤Ú÷FW&ñ¬‰DTU4ƒDUÙ%$î4µ0¢≤¢÷FW&ñ¬‰4Ù$$ƒTEÙDTU4ƒDS∞¢≤–¢∞¢&ófFR7FFñ2÷FW&ñ¬GFW&ÊVE7FˆÊRÑ÷FW&ñ¬&ñ÷'í¿¢ñÁBÇ¿¢ñÁBí¿¢ñÁB¢í∞¢“ñÁB6V∆V7F˜"“÷FÇÊf∆ˆ˜$÷ˆBáÇ¢3≤í¢2≤¢¢r¬#2ì∞¢“ñbá6V∆V7F˜"”“«¬6V∆V7F˜"”“rí∞¢“&WGW&‚÷FW&ñ¬‰‘ı55ïı5DÙ‰UÙ%$î4µ3∞¢“–¢“ñbá6V∆V7F˜"”“2í∞¢“&WGW&‚÷FW&ñ¬‰5$4¥TEı5DÙ‰UÙ%$î4µ3∞¢“–¢“ñbá6V∆V7F˜"”“í∞¢“&WGW&‚÷FW&ñ¬‰4Ù$$ƒU5DÙ‰S∞¢“–¢“&WGW&‚&ñ÷'í”“ÁV∆¬Ú÷FW&ñ¬Â5DÙ‰UÙ%$î4µ2¢&ñ÷'ì∞¢≤ñÁB6V∆V7F˜"“÷FÇÊf∆ˆ˜$÷ˆBÄ¢≤Ç¢3≤í¢2≤¢¢r¿¢≤#ê¢≤ì∞¢≤&WGW&‚7vóF6Çá6V∆V7F˜"í∞¢≤66R¬r”‚÷FW&ñ¬‰‘ı55ïı5DÙ‰UÙ%$î4µ3∞¢≤66R2”‚÷FW&ñ¬‰5$4¥TEı5DÙ‰UÙ%$î4µ3∞¢≤66R”‚÷FW&ñ¬‰4Ù$$ƒU5DÙ‰S∞¢≤66Rr”‚÷FW&ñ¬‰‰DU4ïDS∞¢≤66R#2”‚÷FW&ñ¬‰DTU4ƒDUÙ%$î4µ3∞¢≤FVfV«B”‚&ñ÷'í”“ÁV∆¿¢≤Ú÷FW&ñ¬Â5DÙ‰UÙ%$î4µ0¢≤¢&ñ÷'ì∞¢≤”∞¢–¢ ¢&ófFR7FFñ2&ˆˆ∆V‚ó4˜WFW$f6RÜñÁBÇ¿§”CsB√r≥csb√3V&∆ñ2fñÊ¬6∆72v∆ƒ'Vñ∆FW"∞¢ñÁB÷ÖÇ¿¢ñÁB÷ñÂ¢¿¢ñÁB÷Ö¢í∞¢“&WGW&‚Ç”“÷ñÂÇ«¬Ç”“÷ÖÇ«¬¢”“÷ñÂ¢«¬¢”“÷Ö£∞¢≤&WGW&‚Ç”“÷ñÂÄ¢≤«¬Ç”“÷ÖÄ¢≤«¬¢”“÷ñÂ†¢≤«¬¢”“÷Ö£∞¢≤–¢∞¢≤&ófFR7FFñ2&∆ˆ6¥f6R˜WGv&Df6RÜñÁBÇ¿¢≤ñÁB¢¿¢≤ñÁB÷ñÂÇ¿¢≤ñÁB÷ÖÇ¿¢≤ñÁB÷ñÂ¢¿¢≤ñÁB÷Ö¢í∞¢≤ñbáÇ”“÷ñÂÇí∞¢≤&WGW&‚&∆ˆ6¥f6RÂtU5C∞¢≤–¢≤ñbáÇ”“÷ÖÇí∞¢≤&WGW&‚&∆ˆ6¥f6R‰T5C∞¢≤–¢≤ñbá¢”“÷ñÂ¢í∞¢≤&WGW&‚&∆ˆ6¥f6R‰‰ı%DÉ∞¢≤–¢≤ñbá¢”“÷Ö¢í∞¢≤&WGW&‚&∆ˆ6¥f6RÂ4ıUDÉ∞¢≤–¢≤&WGW&‚&∆ˆ6¥f6RÂ4Tƒc∞¢–¢ ¢&ófFR7FFñ2ñÁBÜó46ˆ˜&FñÊFRÜñÁBÇ¿§”CÉ2√B≥sí√V&∆ñ2fñÊ¬6∆72v∆ƒ'Vñ∆FW"∞¢ñÁB÷ÖÇí∞¢&WGW&‚Ç”“÷ñÂÇ«¬Ç”“÷ÖÇÚ¢¢É∞¢–¢∞¢≤&ófFR7FFñ2&ˆˆ∆V‚6&FñÊ¬Ñ&∆ˆ6¥f6Rf6Rí∞¢≤&WGW&‚f6R”“&∆ˆ6¥f6R‰‰ı%DÄ¢≤«¬f6R”“&∆ˆ6¥f6RÂ4ıUDÄ¢≤«¬f6R”“&∆ˆ6¥f6R‰T5@¢≤«¬f6R”“&∆ˆ6¥f6RÂtU5C∞¢≤–¢–¶Fñfb“÷vóB˜7&2˜FW7Bˆ¶fˆ˜&rˆWÜ◊∆R˜fñ∆∆vRıfñ∆∆vU7G'V7GW&UFW7BÊ¶f"˜7&2˜FW7Bˆ¶fˆ˜&rˆWÜ◊∆R˜fñ∆∆vRıfñ∆∆vU7G'V7GW&UFW7BÊ¶f¶ñÊFWÇC##3ÜCÜFcs66SsSfSsSvff&SSc##ì#&3Cí‚„SF&6S#ìc#ÜC&3&CÜSff3ñ3CFfV#f#cSsBcC@¢“““˜7&2˜FW7Bˆ¶fˆ˜&rˆWÜ◊∆R˜fñ∆∆vRıfñ∆∆vU7G'V7GW&UFW7BÊ¶f¢≤≤≤"˜7&2˜FW7Bˆ¶fˆ˜&rˆWÜ◊∆R˜fñ∆∆vRıfñ∆∆vU7G'V7GW&UFW7BÊ¶f§”3Ç√b≥3Ç√Ç6∆72fñ∆∆vU7G'V7GW&UFW7B∞¢ì∞¢VWVRÊf˜$V6ÇÖ'VÊÊ&∆S£ß'V‚ì∞¢ ¢≤ñÁEµ“&˜VÊG2“v∆ƒ'Vñ∆FW"Ê˜WFW$&˜VÊG2Ä¢≤ÊWr∆ˆ6Fñˆ‚ÜÁV∆¬¬¬cB¬í¿¢≤¿¢≤ ¢≤ì∞¢≤76W'DWV«2Ç”b¬&˜VÊG5≥“ì∞¢≤76W'DWV«2Éb¬&˜VÊG5≥“ì∞¢≤76W'DWV«2Ç”b¬&˜VÊG5≥%“ì∞¢≤76W'DWV«2Éb¬&˜VÊG5≥5“ì∞¢≤76W'DWV«2Ñ÷FW&ñ¬‰D$µÙÙµı5Dï%2¿¢≤&∆ˆ6∑2ÊvWBÜ∂WíÇ”b¬sÇ¬”bííì∞¢∞¢76W'EG'VRÜ&∆ˆ6∑2Áf«VW2ÇíÊ6ˆÁFñÁ2Ñ÷FW&ñ¬‰ƒÂDU$‚íì∞¢76W'EG'VRÜ&∆ˆ6∑2Áf«VW2ÇíÊ6ˆÁFñÁ2Ñ÷FW&ñ¬‰4Ñî‚íì∞¢76W'EG'VRÜ&∆ˆ6∑2Áf«VW2ÇíÊ6ˆÁFñÁ2Ñ÷FW&ñ¬‰D$µÙÙµÙdT‰4Ríì∞§”Cb√B≥SÇ√#B6∆72fñ∆∆vU7G'V7GW&UFW7B∞¢76W'EG'VRÜ&∆ˆ6∑2Áf«VW2ÇíÊ6ˆÁFñÁ2Ñ÷FW&ñ¬Â5DÙ‰UÙ%$î4µı4ƒ"íì∞¢76W'EG'VRÜ&∆ˆ6∑2Áf«VW2ÇíÊ6ˆÁFñÁ2Ñ÷FW&ñ¬‰ï$ÙÂÙ$%2íì∞¢ ¢“ÚÚ∆R76vR&W7FR∆ñ'&R7W"F˜WFR∆ÜWFWW"WFñ∆R‡¢“f˜"ÜñÁBí“cS≤í√“cÉ≤í≤≤í∞¢“76W'DWV«2Ñ÷FW&ñ¬‰ï"¬&∆ˆ6∑2ÊvWBÜ∂WíÉ¬í¬ííì∞¢≤Ú†¢≤¢fV2'£”WBVÊR:óó76WW"FRG&ˆó2&∆ˆ72¬∆R6å:'FV∆WBW7B6VÁG,:ê¢≤¢7W"£”‚∆R76vR6ˆÁ6W'fR6ñÁ&∆ˆ72∆ñ'&W27W"F˜WFR6¢≤¢&ˆfˆÊFWW"WB∆ÜW'6R&W7FRVÁFú:á&V÷VÁB&V∆Wl:ñR‡¢≤¢¢≤f˜"ÜñÁBí“cS≤í√“cì≤í≤≤í∞¢≤76W'DWV«2Ñ÷FW&ñ¬‰ï"¬&∆ˆ6∑2ÊvWBÜ∂WíÉ¬í¬ííì∞¢–¢“ÚÚ∆ÜW'6RW7Bfó6ñ&∆RFÁ2∆v∆W&ñR¬÷ó2ÊR&∆˜VR2¬v&6ÜR‡¢“76W'DWV«2Ñ÷FW&ñ¬‰ï$ÙÂÙ$%2¬&∆ˆ6∑2ÊvWBÜ∂WíÉ¬cí¬"ííì∞¢≤76W'DWV«2Ñ÷FW&ñ¬‰4Ñï4TƒTEı5DÙ‰UÙ%$î4µ2¿¢≤&∆ˆ6∑2ÊvWBÜ∂WíÉ¬s¬Rííì∞¢≤76W'DWV«2Ñ÷FW&ñ¬‰ï$ÙÂÙ$%2¿¢≤&∆ˆ6∑2ÊvWBÜ∂WíÉ¬s¬Bííì∞¢∞¢≤ÚÚ∆W2F˜W'2WB∆WW'2:óó2Fˆ÷ñÊVÁBÊWGFV÷VÁB∆W26˜W'FñÊW2‡¢76W'EG'VRÜ&∆ˆ6∑2Ê∂Wï6WBÇíÁ7G&V“Çê¢“ÊÁî÷F6Çá˜6óFñˆ‚”‚îˆbá˜6óFñˆ‚í„“s2íì∞¢≤ÊÁî÷F6Çá˜6óFñˆ‚”‚îˆbá˜6óFñˆ‚í„“Ébíì∞¢≤76W'EG'VRÜ&∆ˆ6∑2Áf«VW2ÇíÊ6ˆÁFñÁ2Ñ÷FW&ñ¬‰DTU4ƒDUÙ%$î4µ2íì∞¢≤76W'EG'VRÜ&∆ˆ6∑2Áf«VW2ÇíÊ6ˆÁFñÁ2Ñ÷FW&ñ¬‰u$ïı5Dî‰TEÙtƒ52íì∞¢–¢ ¢FW7@§”sR√b≥ìr√Ç6∆72fñ∆∆vU7G'V7GW&UFW7B∞¢76W'DWV«2Ñ÷FW&ñ¬Â5%T4UıE$DÙı"¬7'V6U∆WGFRÁ6áWGFW"Çíì∞¢76W'DWV«2Ñ÷FW&ñ¬Â5%T4UÙdT‰4R¬7'V6U∆WGFRÊfVÊ6RÇíì∞¢76W'DWV«2Ñ÷FW&ñ¬‰Ùµıƒ‰µ2¬7'V6U∆WGFRÊf∆ˆ˜"Çíì∞¢≤76W'DWV«2Ñ÷FW&ñ¬‰tƒ52¬7'V6U∆WGFRÁvñÊF˜rÇíì∞¢≤76W'DWV«2Ñ÷FW&ñ¬‰tƒ52¬F&¥ˆµ∆WGFRÁvñÊF˜rÇíì∞¢–¢ ¢FW7@§”ìÇ√B≥#"√cR6∆72fñ∆∆vU7G'V7GW&UFW7B∞¢÷FW&ñ¬Â5%T4Uı4ƒ"¿¢÷FW&ñ¬ÂtÑïDUıDU%$4ıED¿¢÷FW&ñ¬Â5E$ïTEı5%T4UÙƒÙr¿¢“÷FW&ñ¬‰tƒ55ı‰P¢≤÷FW&ñ¬‰tƒ50¢ì∞¢F6∑2Êf˜$V6ÇÖ'VÊÊ&∆S£ß'V‚ì∞¢ ¢“76W'DWV«2Ñ÷FW&ñ¬Â5%T4Uı4ƒ"¬&∆ˆ6∑2ÊvWBÜ∂WíÉ¬s2¬ííì∞¢“76W'DWV«2Ñ÷FW&ñ¬‰tƒ55ı‰R¬&∆ˆ6∑2ÊvWBÜ∂WíÉ¬s¬”Bííì∞¢“76W'DWV«2Ñ÷FW&ñ¬‰tƒ55ı‰R¬&∆ˆ6∑2ÊvWBÜ∂WíÉ¬s¬Bííì∞¢“76W'Df«6RÜ&∆ˆ6∑2Ê∂Wï6WBÇíÁ7G&V“ÇíÊÁî÷F6Çá˜6óFñˆ‚”‚îˆbá˜6óFñˆ‚í‚s2íì∞¢≤76W'DWV«2Ñ÷FW&ñ¬Â5%T4Uı4ƒ"¬&∆ˆ6∑2ÊvWBÜ∂WíÉ¬sR¬ííì∞¢≤76W'DWV«2Ñ÷FW&ñ¬Â5%T4Uıƒ‰µ2¬&∆ˆ6∑2ÊvWBÜ∂WíÉ¬sB¬ííì∞¢≤76W'DWV«2Ñ÷FW&ñ¬‰tƒ52¬&∆ˆ6∑2ÊvWBÜ∂WíÉ¬s¬”Bííì∞¢≤76W'DWV«2Ñ÷FW&ñ¬‰tƒ52¬&∆ˆ6∑2ÊvWBÜ∂WíÉ¬s¬Bííì∞¢≤76W'Df«6RÜ&∆ˆ6∑2Ê∂Wï6WBÇíÁ7G&V“Çê¢≤ÊÁî÷F6Çá˜6óFñˆ‚”‚îˆbá˜6óFñˆ‚í‚sRíì∞¢∞¢≤Ú†¢≤¢6ÜVRÊófVRGRÊ˜ñRW7B∆Vñ‚VÁG&R6W2FWWÇ&◊ÁG2‚6W2&∆ˆ70¢≤¢V◊:¶6ÜVÁB∆R6ñV¬Bv&:ÁG&RVÁG&RFWWÇ&Ê|:ñW2BvW66∆ñW'2‡¢≤¢¢≤f˜"ÜñÁB∆ñW"“≤∆ñW"√“C≤∆ñW"≤≤í∞¢≤76W'EG'VRÜ&∆ˆ6∑2Ê6ˆÁFñÁ4∂WíÜ∂WíÉ¬s≤∆ñW"¬ííì∞¢≤–¢≤–¢∞¢≤FW7@¢≤fˆñBÜó&ˆˆeW6W56ˆ∆ñE6á&ñÊ∂ñÊt6˜&TÊE7W˜'FVD6Çí∞¢≤÷≈7G&ñÊr¬÷FW&ñ√‚&∆ˆ6∑2“ÊWrÜ6Ñ÷√‚Çì∞¢≤∆ó7C≈'VÊÊ&∆S‚F6∑2“ÊWr'&î∆ó7C√‚Çì∞¢≤FW'&ñ‰÷ÊvW"Â6WD&∆ˆ6≤6WD&∆ˆ6≤–¢≤áÇ¬í¬¢¬÷FW&ñ¬í”‚&∆ˆ6∑2ÁWBÜ∂WíáÇ¬í¬¢í¬÷FW&ñ¬ì∞¢∞¢≤fñ∆∆vU&ˆˆd'Vñ∆FW"Ê'Vñ∆DÜóÄ¢≤F6∑2¿¢≤ÁV∆¬¿¢≤6WD&∆ˆ6≤¿¢≤”"¿¢≤"¿¢≤”"¿¢≤"¿¢≤s¿¢≤÷FW&ñ¬‰D$µÙÙµıƒ‰µ2¿¢≤÷FW&ñ¬‰D$µÙÙµı5Dï%2¿¢≤÷FW&ñ¬‰D$µÙÙµı4ƒ ¢≤ì∞¢≤F6∑2Êf˜$V6ÇÖ'VÊÊ&∆S£ß'V‚ì∞¢∞¢≤f˜"ÜñÁB∆ñW"“≤∆ñW"√“3≤∆ñW"≤≤í∞¢≤ñÁB÷ñ‚“”2≤∆ñW#∞¢≤ñÁB÷Ç“2“∆ñW#∞¢≤f˜"ÜñÁBÇ“÷ñ„≤Ç√“÷É≤Ç≤≤í∞¢≤f˜"ÜñÁB¢“÷ñ„≤¢√“÷É≤¢≤≤í∞¢≤76W'EG'VRÄ¢≤&∆ˆ6∑2Ê6ˆÁFñÁ4∂WíÜ∂WíáÇ¬s≤∆ñW"¬¢íí¿¢≤%G&˜RL:óFV7L:íFÁ2∆RÊ˜ñRFRFˆóGW&RV‚7&˜WR ¢≤ì∞¢≤–¢≤–¢≤–¢∞¢≤76W'DWV«2Ñ÷FW&ñ¬‰D$µÙÙµıƒ‰µ2¿¢≤&∆ˆ6∑2ÊvWBÜ∂WíÉ¬s2¬ííì∞¢≤76W'DWV«2Ñ÷FW&ñ¬‰D$µÙÙµı4ƒ"¿¢≤&∆ˆ6∑2ÊvWBÜ∂WíÉ¬sB¬ííì∞¢–¢ ¢FW7@§”3b√r≥#√í6∆72fñ∆∆vU7G'V7GW&UFW7B∞¢7V6ñƒ'Vñ∆FñÊw2Ê'Vñ∆D6áW&6ÇÜÁV∆¬¬∆˜B¬cB¬6WD&∆ˆ6≤ê¢Êf˜$V6ÇÖ'VÊÊ&∆S£ß'V‚ì∞¢ ¢“76W'EG'VRÜ&∆ˆ6∑2Áf«VW2ÇíÊ6ˆÁFñÁ2Ñ÷FW&ñ¬‰$≈TUı5Dî‰TEÙtƒ55ı‰Ríì∞¢≤76W'EG'VRÜ&∆ˆ6∑2Áf«VW2ÇíÊ6ˆÁFñÁ2Ñ÷FW&ñ¬‰$≈TUı5Dî‰TEÙtƒ52íì∞¢≤76W'Df«6RÜ&∆ˆ6∑2Áf«VW2ÇíÁ7G&V“Çê¢≤ÊÁî÷F6ÇÜ÷FW&ñ¬”‚÷FW&ñ¬ÊÊ÷RÇíÊVÊG5vóFÇÇ%Ùtƒ55ı‰R"ííì∞¢76W'EG'VRÜ&∆ˆ6∑2Áf«VW2ÇíÊ6ˆÁFñÁ2Ñ÷FW&ñ¬ÂT%E•Ù$ƒÙ4≤íì∞¢76W'EG'VRÜ&∆ˆ6∑2Áf«VW2ÇíÊ6ˆÁFñÁ2Ñ÷FW&ñ¬Â5%T4Uı5Dï%2íì∞¢76W'EG'VRÜ&∆ˆ6∑2Áf«VW2ÇíÊ6ˆÁFñÁ2Ñ÷FW&ñ¬‰D$µÙÙµı5Dï%2íì∞§”#3√r≥3r√í6∆72fñ∆∆vU7G'V7GW&UFW7B∞¢ ¢76W'EG'VRáf«VW2Ê6ˆÁFñÁ2Ñ÷FW&ñ¬Â5%T4Uı5Dï%2íì∞¢76W'EG'VRáf«VW2Ê6ˆÁFñÁ2Ñ÷FW&ñ¬Â5%T4Uı4ƒ"íì∞¢“76W'EG'VRáf«VW2Ê6ˆÁFñÁ2Ñ÷FW&ñ¬‰tƒ55ı‰Ríì∞¢≤76W'EG'VRáf«VW2Ê6ˆÁFñÁ2Ñ÷FW&ñ¬‰tƒ52íì∞¢≤76W'Df«6Ráf«VW2Á7G&V“Çê¢≤ÊÁî÷F6ÇÜ÷FW&ñ¬”‚÷FW&ñ¬ÊÊ÷RÇíÊVÊG5vóFÇÇ%Ùtƒ55ı‰R"ííì∞¢76W'EG'VRáf«VW2Ê6ˆÁFñÁ2Ñ÷FW&ñ¬Â5%T4UÙDÙı"íì∞¢76W'EG'VRáf«VW2Ê6ˆÁFñÁ2Ñ÷FW&ñ¬‰ƒÂDU$‚íì∞¢76W'EG'VRáf«VW2Ê6ˆÁFñÁ2Ñ÷FW&ñ¬Â$TEıtƒ≈Ù$‰‰U"ê
++        BlockFace lowSide = switch (riseFrom) {
++            case NORTH, SOUTH, EAST, WEST -> riseFrom;
++            default -> BlockFace.NORTH;
++        };
++        BlockFace highDirection = VillageStyle.opposite(lowSide);
++        boolean alongZ = lowSide == BlockFace.NORTH
++                || lowSide == BlockFace.SOUTH;
+         int layers = alongZ
+-                ? volume.footprintDepth() + 1
+-                : volume.footprintWidth() + 1;
++                ? volume.footprintDepth() + 2
++                : volume.footprintWidth() + 2;
++        int highY = roofY;
+ 
++        /*
++         * Pente √† un demi-bloc par case : une rang√©e d'escalier est suivie
++         * d'une rang√©e pleine au m√™me niveau. Ce rythme donne un appentis moins
++         * haut qu'un pignon tout en formant une membrane continue. L'ancienne
++         * version ne posait que des escaliers isol√©s et ressemblait, vue de
++         * c√¥t√©, √† plusieurs poutres flottantes.
++         */
+         for (int layer = 0; layer < layers; layer++) {
+             int currentY = roofY + layer / 2;
++            highY = currentY;
++            boolean stairRow = layer % 2 == 0 && layer < layers - 1;
++
+             if (alongZ) {
+-                int z = riseFrom == BlockFace.NORTH
++                int z = lowSide == BlockFace.NORTH
+                         ? volume.minZ() - 1 + layer
+                         : volume.maxZ() + 1 - layer;
++
+                 for (int x = volume.minX() - 1;
+                      x <= volume.maxX() + 1;
+                      x++) {
+-                    stair(tasks, world, sb, x, currentY, z,
+-                            palette.roofStairs(), riseFrom);
++                    for (int supportY = roofY;
++                         supportY <= currentY;
++                         supportY++) {
++                        place(
++                                tasks,
++                                sb,
++                                x,
++                                supportY,
++                                z,
++                                palette.roofBlock()
++                        );
++                    }
++                    if (stairRow) {
++                        stair(
++                                tasks,
++                                world,
++                                sb,
++                                x,
++                                currentY,
++                                z,
++                                palette.roofStairs(),
++                                highDirection
++                        );
++                    }
+                 }
+ 
+-                /*
+-                 * Remplissage triangulaire des deux murs lat√©raux. Sans cette
+-                 * √©tape, la pente laissait voir le ciel au-dessus des murs.
+-                 */
+                 if (z >= volume.minZ() && z <= volume.maxZ()) {
+-                    fillShedColumn(tasks, sb,
+-                            volume.minX(), z, roofY, currentY, palette);
+-                    fillShedColumn(tasks, sb,
+-                            volume.maxX(), z, roofY, currentY, palette);
++                    fillShedColumn(
++                            tasks,
++                            sb,
++                            volume.minX(),
++                            z,
++                            roofY,
++                            currentY,
++                            palette
++                    );
++                    fillShedColumn(
++                            tasks,
++                            sb,
++                            volume.maxX(),
++                            z,
++                            roofY,
++                            currentY,
++                            palette
++                    );
+                 }
+             } else {
+-                int x = riseFrom == BlockFace.WEST
++                int x = lowSide == BlockFace.WEST
+                         ? volume.minX() - 1 + layer
+                         : volume.maxX() + 1 - layer;
++
+                 for (int z = volume.minZ() - 1;
+                      z <= volume.maxZ() + 1;
+                      z++) {
+-                    stair(tasks, world, sb, x, currentY, z,
+-                            palette.roofStairs(), riseFrom);
++                    for (int supportY = roofY;
++                         supportY <= currentY;
++                         supportY++) {
++                        place(
++                                tasks,
++                                sb,
++                                x,
++                                supportY,
++                                z,
++                                palette.roofBlock()
++                        );
++                    }
++                    if (stairRow) {
++                        stair(
++                                tasks,
++                                world,
++                                sb,
++                                x,
++                                currentY,
++                                z,
++                                palette.roofStairs(),
++                                highDirection
++                        );
++                    }
+                 }
+ 
+                 if (x >= volume.minX() && x <= volume.maxX()) {
+-                    fillShedColumn(tasks, sb,
+-                            x, volume.minZ(), roofY, currentY, palette);
+-                    fillShedColumn(tasks, sb,
+-                            x, volume.maxZ(), roofY, currentY, palette);
++                    fillShedColumn(
++                            tasks,
++                            sb,
++                            x,
++                            volume.minZ(),
++                            roofY,
++                            currentY,
++                            palette
++                    );
++                    fillShedColumn(
++                            tasks,
++                            sb,
++                            x,
++                            volume.maxZ(),
++                            roofY,
++                            currentY,
++                            palette
++                    );
+                 }
+             }
+         }
+ 
+         /*
+-         * Le mur haut doit rejoindre la sous-face de toiture sur toute sa
+-         * largeur, pas seulement aux angles.
++         * Le mur haut rejoint la sous-face sur toute sa largeur et porte un
++         * couvre-joint en dalles. Aucune rang√©e terminale ne flotte.
+          */
+-        int highY = roofY + (layers - 1) / 2;
+         if (alongZ) {
+-            int highZ = riseFrom == BlockFace.NORTH
++            int highZ = lowSide == BlockFace.NORTH
+                     ? volume.maxZ()
+                     : volume.minZ();
++            int capZ = highZ + highDirection.getModZ();
+             for (int x = volume.minX(); x <= volume.maxX(); x++) {
+-                fillShedColumn(tasks, sb,
+-                        x, highZ, roofY, highY, palette);
++                fillShedColumn(
++                        tasks,
++                        sb,
++                        x,
++                        highZ,
++                        roofY,
++                        highY,
++                        palette
++                );
++                slab(
++                        tasks,
++                        world,
++                        sb,
++                        x,
++                        highY + 1,
++                        capZ,
++                        palette.roofSlab(),
++                        Slab.Type.BOTTOM
++                );
+             }
+         } else {
+-            int highX = riseFrom == BlockFace.WEST
++            int highX = lowSide == BlockFace.WEST
+                     ? volume.maxX()
+                     : volume.minX();
++            int capX = highX + highDirection.getModX();
+             for (int z = volume.minZ(); z <= volume.maxZ(); z++) {
+-                fillShedColumn(tasks, sb,
+-                        highX, z, roofY, highY, palette);
++                fillShedColumn(
++                        tasks,
++                        sb,
++                        highX,
++                        z,
++                        roofY,
++                        highY,
++                        palette
++                );
++                slab(
++                        tasks,
++                        world,
++                        sb,
++                        capX,
++                        highY + 1,
++                        z,
++                        palette.roofSlab(),
++                        Slab.Type.BOTTOM
++                );
+             }
+         }
+     }
+@@ -1319,22 +1626,51 @@ public final class HouseBuilder {
+         int boxZ = z + outward.getModZ();
+ 
+         // Appui ext√©rieur sous la fen√™tre, puis v√©g√©tation au niveau du vitrage.
+-        // L'ancienne version empilait deux dalles devant la baie.
+-        slab(tasks, world, sb, boxX, y - 1, boxZ,
+-                palette.roofSlab(), Slab.Type.BOTTOM);
+-        place(tasks, sb, boxX, y, boxZ,
+-                seed % 2 == 0 ? Material.FERN : Material.POPPY);
++        slab(
++                tasks,
++                world,
++                sb,
++                boxX,
++                y - 1,
++                boxZ,
++                palette.roofSlab(),
++                Slab.Type.BOTTOM
++        );
++        place(
++                tasks,
++                sb,
++                boxX,
++                y,
++                boxZ,
++                seed % 2 == 0 ? Material.FERN : Material.POPPY
++        );
+ 
+-        // Volets sur le plan du mur, de part et d'autre de la baie.
++        /*
++         * Les volets sont plac√©s un bloc devant la fa√ßade puis d√©cal√©s sur les
++         * c√¥t√©s. Ils ne remplacent donc plus la ma√ßonnerie, un montant de
++         * colombage ou le second bloc de la baie verticale.
++         */
+         for (BlockFace side : List.of(
+                 VillageStyle.leftOf(outward),
+                 VillageStyle.rightOf(outward))) {
+-            int sx = x + side.getModX();
+-            int sz = z + side.getModZ();
+-            place(tasks, sb, sx, y, sz, palette.shutter());
+-            if (world != null) {
+-                trapdoor(tasks, world, sx, y, sz,
+-                        palette.shutter(), outward, true, Bisected.Half.BOTTOM);
++            int sx = x + outward.getModX() + side.getModX();
++            int sz = z + outward.getModZ() + side.getModZ();
++
++            for (int dy = 0; dy <= 1; dy++) {
++                place(tasks, sb, sx, y + dy, sz, palette.shutter());
++                if (world != null) {
++                    trapdoor(
++                            tasks,
++                            world,
++                            sx,
++                            y + dy,
++                            sz,
++                            palette.shutter(),
++                            outward,
++                            true,
++                            Bisected.Half.BOTTOM
++                    );
++                }
+             }
+         }
+     }
+@@ -1416,12 +1752,37 @@ public final class HouseBuilder {
+         }
+     }
+ 
+-    private static boolean framePattern(int x, int z, int y, HouseVolume volume, int volumeIndex) {
++    private static boolean framePattern(int x,
++                                        int z,
++                                        int y,
++                                        int baseY,
++                                        HouseVolume volume,
++                                        int volumeIndex) {
+         int localX = x - volume.minX();
+         int localZ = z - volume.minZ();
+-        return ((localX + volumeIndex) % 3 == 0 && (z == volume.minZ() || z == volume.maxZ()))
+-                || ((localZ + volumeIndex) % 3 == 0 && (x == volume.minX() || x == volume.maxX()))
+-                || ((y - 1) % 4 == 0 && !corner(x, z, volume));
++        int relativeY = y - baseY;
++        boolean northSouthWall = z == volume.minZ()
++                || z == volume.maxZ();
++        boolean eastWestWall = x == volume.minX()
++                || x == volume.maxX();
++
++        /*
++         * Le bandeau d'√©tage d√©pend de la hauteur locale de la maison, et non
++         * de l'altitude absolue du monde. Les montants restent r√©guliers ; les
++         * fen√™tres, calcul√©es avant cette m√©thode, conservent toujours leur
++         * baie compl√®te.
++         */
++        boolean floorTie = relativeY == 4 && volume.wallHeight() >= 6;
++        boolean northSouthPost = northSouthWall
++                && localX > 0
++                && localX < volume.footprintWidth() - 1
++                && Math.floorMod(localX + volumeIndex, 3) == 0;
++        boolean eastWestPost = eastWestWall
++                && localZ > 0
++                && localZ < volume.footprintDepth() - 1
++                && Math.floorMod(localZ + volumeIndex, 3) == 0;
++
++        return floorTie || northSouthPost || eastWestPost;
+     }
+ 
+     private static boolean perimeter(int x, int z, HouseVolume volume) {
+@@ -1473,13 +1834,32 @@ public final class HouseBuilder {
+         }
+ 
+         if (onNorthSouthWall) {
+-            return x > volume.minX() + 1
+-                    && x < volume.maxX() - 1
+-                    && (x - volume.minX()) % 2 == 0;
++            return isWindowBay(
++                    x - volume.minX(),
++                    volume.footprintWidth()
++            );
++        }
++        return isWindowBay(
++                z - volume.minZ(),
++                volume.footprintDepth()
++        );
++    }
++
++    /**
++     * R√©partit des baies sym√©triques sans d√©pendre de la parit√© du b√¢timent.
++     */
++    private static boolean isWindowBay(int localCoordinate, int length) {
++        if (length < 5) {
++            return false;
++        }
++
++        int first = 2;
++        int last = length - 3;
++        if (localCoordinate == first || localCoordinate == last) {
++            return true;
+         }
+-        return z > volume.minZ() + 1
+-                && z < volume.maxZ() - 1
+-                && (z - volume.minZ()) % 2 == 0;
++
++        return length >= 10 && localCoordinate == (length - 1) / 2;
+     }
+ 
+     private static BlockFace outward(int x, int z, HouseVolume volume) {
+diff --git a/src/main/java/org/example/village/SpecialBuildings.java b/src/main/java/org/example/village/SpecialBuildings.java
+index d91fd8b7d5a75d1c452b746d1eefb059b4e20ead..32b0f5338effff7ea70cbee40e3834708478d194 100644
+--- a/src/main/java/org/example/village/SpecialBuildings.java
++++ b/src/main/java/org/example/village/SpecialBuildings.java
+@@ -62,7 +62,7 @@ public final class SpecialBuildings {
+                     if (frontDoor) {
+                         continue;
+                     }
+-                    place(tasks, sb, x, y, z, stained ? Material.BLUE_STAINED_GLASS_PANE : Material.STONE_BRICKS);
++                    place(tasks, sb, x, y, z, stained ? Material.BLUE_STAINED_GLASS : Material.STONE_BRICKS);
+                 }
+             }
+         }
+@@ -101,11 +101,12 @@ public final class SpecialBuildings {
+                 maxZ,
+                 naveTop + 1,
+                 BlockFace.SOUTH,
++                Material.DARK_OAK_PLANKS,
+                 Material.DARK_OAK_STAIRS,
+                 Material.DARK_OAK_SLAB,
+                 Material.STONE_BRICKS,
+                 Material.STRIPPED_DARK_OAK_LOG,
+-                Material.BLUE_STAINED_GLASS_PANE
++                Material.BLUE_STAINED_GLASS
+         );
+         buildTowerRoof(tasks, world, sb, towerX + 2, towerZ + 2, baseY + 13);
+ 
+@@ -192,6 +193,7 @@ public final class SpecialBuildings {
+                 maxZ,
+                 baseY + 6,
+                 lot.facing(),
++                Material.SPRUCE_PLANKS,
+                 Material.SPRUCE_STAIRS,
+                 Material.SPRUCE_SLAB,
+                 Material.STONE_BRICKS,
+@@ -595,6 +597,7 @@ public final class SpecialBuildings {
+                 centerZ - 2,
+                 centerZ + 2,
+                 y,
++                Material.DARK_OAK_PLANKS,
+                 Material.DARK_OAK_STAIRS,
+                 Material.DARK_OAK_SLAB
+         );
+@@ -608,10 +611,51 @@ public final class SpecialBuildings {
+                                     int z,
+                                     int y,
+                                     BlockFace facing) {
++        BlockFace outward = facing == null ? BlockFace.SOUTH : facing;
++        BlockFace inward = VillageStyle.opposite(outward);
++
++        /*
++         * L'appentis est une petite couverture pleine de trois blocs de
++         * profondeur. L'ancienne version ne posait que deux lignes
++         * d'escaliers, ce qui produisait deux barres horizontales flottantes.
++         */
+         for (int dx = 0; dx < 4; dx++) {
+-            place(tasks, sb, x + dx, y - 1, z + 1, Material.STRIPPED_SPRUCE_LOG);
+-            stair(tasks, world, sb, x + dx, y, z + 1, Material.SPRUCE_STAIRS, facing);
+-            stair(tasks, world, sb, x + dx, y + 1, z, Material.SPRUCE_STAIRS, facing);
++            for (int depth = 0; depth <= 2; depth++) {
++                int roofX = x + dx + outward.getModX() * depth;
++                int roofZ = z + outward.getModZ() * depth;
++                int roofY = y + (depth == 0 ? 1 : 0);
++
++                place(tasks, sb, roofX, roofY, roofZ, Material.SPRUCE_PLANKS);
++                if (depth == 0 || depth == 2) {
++                    stair(
++                            tasks,
++                            world,
++                            sb,
++                            roofX,
++                            roofY,
++                            roofZ,
++                            Material.SPRUCE_STAIRS,
++                            inward
++                    );
++                }
++            }
++        }
++
++        // Deux poteaux d'angle portent r√©ellement la rive ext√©rieure.
++        for (int dx : new int[]{0, 3}) {
++            int postX = x + dx + outward.getModX() * 2;
++            int postZ = z + outward.getModZ() * 2;
++            for (int postY = y - 3; postY <= y - 1; postY++) {
++                place(
++                        tasks,
++                        sb,
++                        postX,
++                        postY,
++                        postZ,
++                        Material.STRIPPED_SPRUCE_LOG
++                );
++            }
++            place(tasks, sb, postX, y, postZ, Material.SPRUCE_SLAB);
+         }
+     }
+ 
+diff --git a/src/main/java/org/example/village/VillageRoofBuilder.java b/src/main/java/org/example/village/VillageRoofBuilder.java
+index 6c61d21c85021ef1f3ded9908a7bdc3a918caaf2..4199ff591281bf82cf1b79c0a3443c81c2ff6c01 100644
+--- a/src/main/java/org/example/village/VillageRoofBuilder.java
++++ b/src/main/java/org/example/village/VillageRoofBuilder.java
+@@ -9,17 +9,68 @@ import org.bukkit.block.data.type.Stairs;
+ import java.util.List;
+ 
+ /**
+- * G√©n√©rateur partag√© des couvertures architecturales.
++ * Construit les couvertures communes du village.
+  *
+- * <p>Les anciennes impl√©mentations ne dessinaient que deux lignes d'escaliers
+- * et laissaient l'int√©rieur des toits ouvert. Cette classe construit une coque
+- * compl√®te, remplit les pignons et garantit un fa√Ætage continu, quelle que soit
+- * l'orientation de la fa√ßade.</p>
++ * <p>Une toiture Minecraft ne peut pas √™tre consid√©r√©e comme ferm√©e lorsque
++ * seules ses rang√©es d'escaliers visibles sont pos√©es. Les demi-volumes des
++ * escaliers, les angles et les changements de niveau laissent alors passer le
++ * ciel suivant l'angle de cam√©ra. Cette classe construit donc syst√©matiquement
++ * un noyau plein en gradins, puis remplace uniquement sa peau ext√©rieure par
++ * des escaliers et des dalles orient√©s vers le fa√Ætage.</p>
++ *
++ * <p>Le noyau est volontairement limit√© au volume de la couverture : il ne
++ * descend jamais dans les pi√®ces habitables. Les pignons restent d√©coratifs et
++ * peuvent conserver une fen√™tre de grenier en bloc de verre plein.</p>
+  */
+ public final class VillageRoofBuilder {
+ 
+     private VillageRoofBuilder() {}
+ 
++    /**
++     * Signature historique conserv√©e pour les appels externes.
++     *
++     * <p>Le bloc plein est d√©duit de la famille de l'escalier. Les nouveaux
++     * appels internes utilisent l'autre surcharge afin de ne laisser aucune
++     * ambigu√Øt√© sur le mat√©riau du noyau.</p>
++     */
++    public static void buildGable(List<Runnable> tasks,
++                                  World world,
++                                  TerrainManager.SetBlock sb,
++                                  int minX,
++                                  int maxX,
++                                  int minZ,
++                                  int maxZ,
++                                  int roofY,
++                                  BlockFace facade,
++                                  Material stairMaterial,
++                                  Material slabMaterial,
++                                  Material gableFill,
++                                  Material gableBeam,
++                                  Material atticWindow) {
++        buildGable(
++                tasks,
++                world,
++                sb,
++                minX,
++                maxX,
++                minZ,
++                maxZ,
++                roofY,
++                facade,
++                solidMaterialFromStairs(stairMaterial),
++                stairMaterial,
++                slabMaterial,
++                gableFill,
++                gableBeam,
++                atticWindow
++        );
++    }
++
++    /**
++     * Construit un toit √† deux pans enti√®rement ferm√©.
++     *
++     * @param roofBlock bloc plein plac√© sous les escaliers de couverture
++     */
+     public static void buildGable(List<Runnable> tasks,
+                                   World world,
+                                   TerrainManager.SetBlock sb,
+@@ -29,53 +80,151 @@ public final class VillageRoofBuilder {
+                                   int maxZ,
+                                   int roofY,
+                                   BlockFace facade,
++                                  Material roofBlock,
+                                   Material stairMaterial,
+                                   Material slabMaterial,
+                                   Material gableFill,
+                                   Material gableBeam,
+                                   Material atticWindow) {
+-        boolean ridgeAlongZ = facade == BlockFace.NORTH || facade == BlockFace.SOUTH;
+-        int crossSpan = ridgeAlongZ ? maxX - minX + 3 : maxZ - minZ + 3;
+-        int slopeLayers = Math.max(1, crossSpan / 2);
++        if (!valid(tasks, sb, minX, maxX, minZ, maxZ)
++                || roofBlock == null
++                || stairMaterial == null
++                || slabMaterial == null) {
++            return;
++        }
++
++        boolean ridgeAlongZ = facade == BlockFace.NORTH
++                || facade == BlockFace.SOUTH;
++        int crossMin = ridgeAlongZ ? minX - 1 : minZ - 1;
++        int crossMax = ridgeAlongZ ? maxX + 1 : maxZ + 1;
++        int axisMin = ridgeAlongZ ? minZ : minX;
++        int axisMax = ridgeAlongZ ? maxZ : maxX;
++        int visibleAxisMin = axisMin - 1;
++        int visibleAxisMax = axisMax + 1;
++        int slopeLayers = Math.max(1, (crossMax - crossMin + 2) / 2);
++        int ridgeY = roofY;
+ 
+         for (int layer = 0; layer < slopeLayers; layer++) {
++            int lowCross = crossMin + layer;
++            int highCross = crossMax - layer;
++            if (lowCross > highCross) {
++                break;
++            }
++
+             int y = roofY + layer;
+-            if (ridgeAlongZ) {
+-                int westX = minX - 1 + layer;
+-                int eastX = maxX + 1 - layer;
+-                for (int z = minZ - 1; z <= maxZ + 1; z++) {
+-                    if (westX < eastX) {
+-                        stair(tasks, world, sb, westX, y, z, stairMaterial, BlockFace.WEST);
+-                        stair(tasks, world, sb, eastX, y, z, stairMaterial, BlockFace.EAST);
+-                    } else {
+-                        slab(tasks, world, sb, westX, y, z, slabMaterial, Slab.Type.TOP);
+-                    }
++            ridgeY = y;
++
++            /*
++             * Le rectangle plein forme une membrane continue. Les deux cases
++             * de d√©bord longitudinal ne sont pas remplies afin de ne pas cacher
++             * les pignons : seules les rives visibles y sont prolong√©es.
++             */
++            fillGableCore(
++                    tasks,
++                    sb,
++                    ridgeAlongZ,
++                    lowCross,
++                    highCross,
++                    axisMin,
++                    axisMax,
++                    y,
++                    roofBlock
++            );
++
++            if (highCross - lowCross >= 2) {
++                BlockFace lowFacing = ridgeAlongZ
++                        ? BlockFace.EAST
++                        : BlockFace.SOUTH;
++                BlockFace highFacing = ridgeAlongZ
++                        ? BlockFace.WEST
++                        : BlockFace.NORTH;
++
++                for (int axis = visibleAxisMin; axis <= visibleAxisMax; axis++) {
++                    placeCrossAxisStair(
++                            tasks,
++                            world,
++                            sb,
++                            ridgeAlongZ,
++                            lowCross,
++                            axis,
++                            y,
++                            stairMaterial,
++                            lowFacing,
++                            Stairs.Shape.STRAIGHT
++                    );
++                    placeCrossAxisStair(
++                            tasks,
++                            world,
++                            sb,
++                            ridgeAlongZ,
++                            highCross,
++                            axis,
++                            y,
++                            stairMaterial,
++                            highFacing,
++                            Stairs.Shape.STRAIGHT
++                    );
+                 }
+             } else {
+-                int northZ = minZ - 1 + layer;
+-                int southZ = maxZ + 1 - layer;
+-                for (int x = minX - 1; x <= maxX + 1; x++) {
+-                    if (northZ < southZ) {
+-                        stair(tasks, world, sb, x, y, northZ, stairMaterial, BlockFace.NORTH);
+-                        stair(tasks, world, sb, x, y, southZ, stairMaterial, BlockFace.SOUTH);
+-                    } else {
+-                        slab(tasks, world, sb, x, y, northZ, slabMaterial, Slab.Type.TOP);
++                /*
++                 * Une terminaison d'un ou deux blocs reste pleine. Deux
++                 * escaliers face √† face au sommet conserveraient une cavit√©
++                 * centrale visible depuis le grenier.
++                 */
++                for (int cross = lowCross; cross <= highCross; cross++) {
++                    for (int axis = visibleAxisMin;
++                         axis <= visibleAxisMax;
++                         axis++) {
++                        placeCrossAxis(
++                                tasks,
++                                sb,
++                                ridgeAlongZ,
++                                cross,
++                                axis,
++                                y,
++                                roofBlock
++                        );
+                     }
+                 }
+             }
+         }
+ 
+         /*
+-         * Le fa√Ætage remplace la derni√®re rang√©e de pente au m√™me niveau.
+-         * L'ancienne coordonn√©e {@code roofY + slopeLayers} le faisait flotter
+-         * un demi-bloc au-dessus de la couverture.
++         * Le fa√Ætage est pos√© un demi-bloc au-dessus du noyau plein. Il ne
++         * flotte donc jamais et masque la jonction entre les deux pans.
+          */
+-        buildRidge(tasks, world, sb, minX, maxX, minZ, maxZ,
+-                roofY + slopeLayers - 1, ridgeAlongZ, slabMaterial);
+-        fillGableEnds(tasks, sb, minX, maxX, minZ, maxZ, roofY,
+-                slopeLayers, ridgeAlongZ, gableFill, gableBeam, atticWindow);
++        buildRidge(
++                tasks,
++                world,
++                sb,
++                minX,
++                maxX,
++                minZ,
++                maxZ,
++                ridgeY + 1,
++                ridgeAlongZ,
++                slabMaterial
++        );
++
++        fillGableEnds(
++                tasks,
++                sb,
++                minX,
++                maxX,
++                minZ,
++                maxZ,
++                roofY,
++                slopeLayers,
++                ridgeAlongZ,
++                gableFill,
++                gableBeam,
++                atticWindow
++        );
+     }
+ 
++    /**
++     * Signature historique conserv√©e pour les appels externes.
++     */
+     public static void buildHip(List<Runnable> tasks,
+                                 World world,
+                                 TerrainManager.SetBlock sb,
+@@ -86,34 +235,98 @@ public final class VillageRoofBuilder {
+                                 int roofY,
+                                 Material stairMaterial,
+                                 Material slabMaterial) {
+-        int layer = 0;
++        buildHip(
++                tasks,
++                world,
++                sb,
++                minX,
++                maxX,
++                minZ,
++                maxZ,
++                roofY,
++                solidMaterialFromStairs(stairMaterial),
++                stairMaterial,
++                slabMaterial
++        );
++    }
++
++    /**
++     * Construit un toit en croupe ferm√©, y compris dans les quatre angles.
++     *
++     * @param roofBlock bloc plein utilis√© pour le noyau en gradins
++     */
++    public static void buildHip(List<Runnable> tasks,
++                                World world,
++                                TerrainManager.SetBlock sb,
++                                int minX,
++                                int maxX,
++                                int minZ,
++                                int maxZ,
++                                int roofY,
++                                Material roofBlock,
++                                Material stairMaterial,
++                                Material slabMaterial) {
++        if (!valid(tasks, sb, minX, maxX, minZ, maxZ)
++                || roofBlock == null
++                || stairMaterial == null
++                || slabMaterial == null) {
++            return;
++        }
++
+         int ringMinX = minX - 1;
+         int ringMaxX = maxX + 1;
+         int ringMinZ = minZ - 1;
+         int ringMaxZ = maxZ + 1;
++        int layer = 0;
+ 
+         while (ringMinX <= ringMaxX && ringMinZ <= ringMaxZ) {
+             int y = roofY + layer;
+             int width = ringMaxX - ringMinX + 1;
+             int depth = ringMaxZ - ringMinZ + 1;
+ 
++            /*
++             * Chaque √©tage est d'abord une plaque pleine. La plaque sup√©rieure
++             * plus petite masque son centre ; seule la couronne d'escalier
++             * demeure visible. M√™me avec un pack de ressources tr√®s contrast√©,
++             * aucun rayon de ciel ne peut appara√Ætre entre deux couronnes.
++             */
++            fillRectangle(
++                    tasks,
++                    sb,
++                    ringMinX,
++                    ringMaxX,
++                    ringMinZ,
++                    ringMaxZ,
++                    y,
++                    roofBlock
++            );
++
+             if (width <= 2 || depth <= 2) {
+-                for (int x = ringMinX; x <= ringMaxX; x++) {
+-                    for (int z = ringMinZ; z <= ringMaxZ; z++) {
+-                        slab(tasks, world, sb, x, y, z, slabMaterial, Slab.Type.TOP);
+-                    }
+-                }
++                capHipRoof(
++                        tasks,
++                        world,
++                        sb,
++                        ringMinX,
++                        ringMaxX,
++                        ringMinZ,
++                        ringMaxZ,
++                        y + 1,
++                        slabMaterial
++                );
+                 break;
+             }
+ 
+-            for (int x = ringMinX; x <= ringMaxX; x++) {
+-                stair(tasks, world, sb, x, y, ringMinZ, stairMaterial, BlockFace.NORTH);
+-                stair(tasks, world, sb, x, y, ringMaxZ, stairMaterial, BlockFace.SOUTH);
+-            }
+-            for (int z = ringMinZ + 1; z <= ringMaxZ - 1; z++) {
+-                stair(tasks, world, sb, ringMinX, y, z, stairMaterial, BlockFace.WEST);
+-                stair(tasks, world, sb, ringMaxX, y, z, stairMaterial, BlockFace.EAST);
+-            }
++            buildHipRing(
++                    tasks,
++                    world,
++                    sb,
++                    ringMinX,
++                    ringMaxX,
++                    ringMinZ,
++                    ringMaxZ,
++                    y,
++                    stairMaterial
++            );
+ 
+             ringMinX++;
+             ringMaxX--;
+@@ -123,6 +336,185 @@ public final class VillageRoofBuilder {
+         }
+     }
+ 
++    private static void buildHipRing(List<Runnable> tasks,
++                                     World world,
++                                     TerrainManager.SetBlock sb,
++                                     int minX,
++                                     int maxX,
++                                     int minZ,
++                                     int maxZ,
++                                     int y,
++                                     Material stairMaterial) {
++        // Les quatre pentes regardent le centre du toit, jamais l'ext√©rieur.
++        for (int x = minX + 1; x <= maxX - 1; x++) {
++            stair(
++                    tasks,
++                    world,
++                    sb,
++                    x,
++                    y,
++                    minZ,
++                    stairMaterial,
++                    BlockFace.SOUTH,
++                    Stairs.Shape.STRAIGHT
++            );
++            stair(
++                    tasks,
++                    world,
++                    sb,
++                    x,
++                    y,
++                    maxZ,
++                    stairMaterial,
++                    BlockFace.NORTH,
++                    Stairs.Shape.STRAIGHT
++            );
++        }
++        for (int z = minZ + 1; z <= maxZ - 1; z++) {
++            stair(
++                    tasks,
++                    world,
++                    sb,
++                    minX,
++                    y,
++                    z,
++                    stairMaterial,
++                    BlockFace.EAST,
++                    Stairs.Shape.STRAIGHT
++            );
++            stair(
++                    tasks,
++                    world,
++                    sb,
++                    maxX,
++                    y,
++                    z,
++                    stairMaterial,
++                    BlockFace.WEST,
++                    Stairs.Shape.STRAIGHT
++            );
++        }
++
++        /*
++         * Des formes d'angle explicites √©vitent les quatre √©videments visibles
++         * sur les anciennes tours. Le bloc plein d√©j√† pos√© sous chaque escalier
++         * reste une s√©curit√© suppl√©mentaire pour les packs de mod√®les custom.
++         */
++        stair(
++                tasks,
++                world,
++                sb,
++                minX,
++                y,
++                minZ,
++                stairMaterial,
++                BlockFace.SOUTH,
++                Stairs.Shape.OUTER_LEFT
++        );
++        stair(
++                tasks,
++                world,
++                sb,
++                maxX,
++                y,
++                minZ,
++                stairMaterial,
++                BlockFace.SOUTH,
++                Stairs.Shape.OUTER_RIGHT
++        );
++        stair(
++                tasks,
++                world,
++                sb,
++                maxX,
++                y,
++                maxZ,
++                stairMaterial,
++                BlockFace.NORTH,
++                Stairs.Shape.OUTER_LEFT
++        );
++        stair(
++                tasks,
++                world,
++                sb,
++                minX,
++                y,
++                maxZ,
++                stairMaterial,
++                BlockFace.NORTH,
++                Stairs.Shape.OUTER_RIGHT
++        );
++    }
++
++    private static void capHipRoof(List<Runnable> tasks,
++                                   World world,
++                                   TerrainManager.SetBlock sb,
++                                   int minX,
++                                   int maxX,
++                                   int minZ,
++                                   int maxZ,
++                                   int y,
++                                   Material slabMaterial) {
++        /*
++         * Une toiture rectangulaire se termine par un petit fa√Ætage ; une
++         * toiture carr√©e par une calotte. Dans les deux cas les dalles reposent
++         * sur la plaque pleine construite juste en dessous.
++         */
++        for (int x = minX; x <= maxX; x++) {
++            for (int z = minZ; z <= maxZ; z++) {
++                slab(
++                        tasks,
++                        world,
++                        sb,
++                        x,
++                        y,
++                        z,
++                        slabMaterial,
++                        Slab.Type.BOTTOM
++                );
++            }
++        }
++    }
++
++    private static void fillGableCore(List<Runnable> tasks,
++                                      TerrainManager.SetBlock sb,
++                                      boolean ridgeAlongZ,
++                                      int crossMin,
++                                      int crossMax,
++                                      int axisMin,
++                                      int axisMax,
++                                      int y,
++                                      Material roofBlock) {
++        for (int cross = crossMin; cross <= crossMax; cross++) {
++            for (int axis = axisMin; axis <= axisMax; axis++) {
++                placeCrossAxis(
++                        tasks,
++                        sb,
++                        ridgeAlongZ,
++                        cross,
++                        axis,
++                        y,
++                        roofBlock
++                );
++            }
++        }
++    }
++
++    private static void fillRectangle(List<Runnable> tasks,
++                                      TerrainManager.SetBlock sb,
++                                      int minX,
++                                      int maxX,
++                                      int minZ,
++                                      int maxZ,
++                                      int y,
++                                      Material material) {
++        for (int x = minX; x <= maxX; x++) {
++            for (int z = minZ; z <= maxZ; z++) {
++                place(tasks, sb, x, y, z, material);
++            }
++        }
++    }
++
+     private static void buildRidge(List<Runnable> tasks,
+                                    World world,
+                                    TerrainManager.SetBlock sb,
+@@ -137,18 +529,54 @@ public final class VillageRoofBuilder {
+             int ridgeA = (minX + maxX) / 2;
+             int ridgeB = (minX + maxX + 1) / 2;
+             for (int z = minZ - 1; z <= maxZ + 1; z++) {
+-                slab(tasks, world, sb, ridgeA, y, z, slabMaterial, Slab.Type.TOP);
++                slab(
++                        tasks,
++                        world,
++                        sb,
++                        ridgeA,
++                        y,
++                        z,
++                        slabMaterial,
++                        Slab.Type.BOTTOM
++                );
+                 if (ridgeB != ridgeA) {
+-                    slab(tasks, world, sb, ridgeB, y, z, slabMaterial, Slab.Type.TOP);
++                    slab(
++                            tasks,
++                            world,
++                            sb,
++                            ridgeB,
++                            y,
++                            z,
++                            slabMaterial,
++                            Slab.Type.BOTTOM
++                    );
+                 }
+             }
+         } else {
+             int ridgeA = (minZ + maxZ) / 2;
+             int ridgeB = (minZ + maxZ + 1) / 2;
+             for (int x = minX - 1; x <= maxX + 1; x++) {
+-                slab(tasks, world, sb, x, y, ridgeA, slabMaterial, Slab.Type.TOP);
++                slab(
++                        tasks,
++                        world,
++                        sb,
++                        x,
++                        y,
++                        ridgeA,
++                        slabMaterial,
++                        Slab.Type.BOTTOM
++                );
+                 if (ridgeB != ridgeA) {
+-                    slab(tasks, world, sb, x, y, ridgeB, slabMaterial, Slab.Type.TOP);
++                    slab(
++                            tasks,
++                            world,
++                            sb,
++                            x,
++                            y,
++                            ridgeB,
++                            slabMaterial,
++                            Slab.Type.BOTTOM
++                    );
+                 }
+             }
+         }
+@@ -166,10 +594,15 @@ public final class VillageRoofBuilder {
+                                       Material fill,
+                                       Material beam,
+                                       Material window) {
++        if (fill == null || beam == null) {
++            return;
++        }
++
+         int crossMin = ridgeAlongZ ? minX : minZ;
+         int crossMax = ridgeAlongZ ? maxX : maxZ;
+         int firstEnd = ridgeAlongZ ? minZ : minX;
+         int secondEnd = ridgeAlongZ ? maxZ : maxX;
++        int center = (crossMin + crossMax) / 2;
+ 
+         for (int level = 0; level < slopeLayers; level++) {
+             int rowMin = crossMin + level;
+@@ -177,23 +610,95 @@ public final class VillageRoofBuilder {
+             if (rowMin > rowMax) {
+                 break;
+             }
++
+             int y = roofY + level;
+             for (int cross = rowMin; cross <= rowMax; cross++) {
+-                boolean structural = cross == rowMin
+-                        || cross == rowMax
+-                        || (cross == (crossMin + crossMax) / 2 && level % 2 == 0);
+-                Material material = structural ? beam : fill;
+-                placeAtEnd(tasks, sb, ridgeAlongZ, cross, y, firstEnd, material);
+-                placeAtEnd(tasks, sb, ridgeAlongZ, cross, y, secondEnd, material);
++                boolean edgeBeam = cross == rowMin || cross == rowMax;
++                boolean centralPost = cross == center;
++                boolean tieBeam = level == 0;
++                Material material = edgeBeam || centralPost || tieBeam
++                        ? beam
++                        : fill;
++
++                placeAtEnd(
++                        tasks,
++                        sb,
++                        ridgeAlongZ,
++                        cross,
++                        y,
++                        firstEnd,
++                        material
++                );
++                placeAtEnd(
++                        tasks,
++                        sb,
++                        ridgeAlongZ,
++                        cross,
++                        y,
++                        secondEnd,
++                        material
++                );
+             }
+         }
+ 
+-        // Petite fen√™tre de grenier centr√©e, uniquement si le pignon est assez large.
+-        if (window != null && crossMax - crossMin >= 5 && slopeLayers >= 3) {
+-            int center = (crossMin + crossMax) / 2;
++        /*
++         * Le vitrage est pos√© en dernier afin qu'aucune poutre d√©corative ne
++         * puisse le remplacer. Un bloc plein, et non une vitre fine, garantit
++         * un raccord propre contre la terre cuite et les poutres.
++         */
++        if (window != null
++                && crossMax - crossMin >= 5
++                && slopeLayers >= 3) {
+             int windowY = roofY + 1;
+-            placeAtEnd(tasks, sb, ridgeAlongZ, center, windowY, firstEnd, window);
+-            placeAtEnd(tasks, sb, ridgeAlongZ, center, windowY, secondEnd, window);
++            placeAtEnd(
++                    tasks,
++                    sb,
++                    ridgeAlongZ,
++                    center,
++                    windowY,
++                    firstEnd,
++                    window
++            );
++            placeAtEnd(
++                    tasks,
++                    sb,
++                    ridgeAlongZ,
++                    center,
++                    windowY,
++                    secondEnd,
++                    window
++            );
++        }
++    }
++
++    private static void placeCrossAxisStair(List<Runnable> tasks,
++                                            World world,
++                                            TerrainManager.SetBlock sb,
++                                            boolean ridgeAlongZ,
++                                            int cross,
++                                            int axis,
++                                            int y,
++                                            Material material,
++                                            BlockFace facing,
++                                            Stairs.Shape shape) {
++        if (ridgeAlongZ) {
++            stair(tasks, world, sb, cross, y, axis, material, facing, shape);
++        } else {
++            stair(tasks, world, sb, axis, y, cross, material, facing, shape);
++        }
++    }
++
++    private static void placeCrossAxis(List<Runnable> tasks,
++                                       TerrainManager.SetBlock sb,
++                                       boolean ridgeAlongZ,
++                                       int cross,
++                                       int axis,
++                                       int y,
++                                       Material material) {
++        if (ridgeAlongZ) {
++            place(tasks, sb, cross, y, axis, material);
++        } else {
++            place(tasks, sb, axis, y, cross, material);
+         }
+     }
+ 
+@@ -218,11 +723,19 @@ public final class VillageRoofBuilder {
+                               int y,
+                               int z,
+                               Material material,
+-                              BlockFace facing) {
++                              BlockFace facing,
++                              Stairs.Shape shape) {
+         place(tasks, sb, x, y, z, material);
+         tasks.add(() -> VillageStyle.setStair(
+-                world, x, y, z, material, facing,
+-                Stairs.Half.BOTTOM, Stairs.Shape.STRAIGHT));
++                world,
++                x,
++                y,
++                z,
++                material,
++                facing,
++                Stairs.Half.BOTTOM,
++                shape
++        ));
+     }
+ 
+     private static void slab(List<Runnable> tasks,
+@@ -234,7 +747,14 @@ public final class VillageRoofBuilder {
+                              Material material,
+                              Slab.Type type) {
+         place(tasks, sb, x, y, z, material);
+-        tasks.add(() -> VillageStyle.setSlab(world, x, y, z, material, type));
++        tasks.add(() -> VillageStyle.setSlab(
++                world,
++                x,
++                y,
++                z,
++                material,
++                type
++        ));
+     }
+ 
+     private static void place(List<Runnable> tasks,
+@@ -245,4 +765,55 @@ public final class VillageRoofBuilder {
+                               Material material) {
+         tasks.add(() -> sb.set(x, y, z, material));
+     }
++
++    private static boolean valid(List<Runnable> tasks,
++                                 TerrainManager.SetBlock sb,
++                                 int minX,
++                                 int maxX,
++                                 int minZ,
++                                 int maxZ) {
++        return tasks != null
++                && sb != null
++                && minX <= maxX
++                && minZ <= maxZ;
++    }
++
++    /**
++     * D√©duit un bloc plein √† partir d'un escalier pour pr√©server la compatibilit√©
++     * avec les appels historiques du projet et d'√©ventuelles extensions.
++     */
++    private static Material solidMaterialFromStairs(Material stairs) {
++        if (stairs == null) {
++            return Material.SPRUCE_PLANKS;
++        }
++
++        String name = stairs.name();
++        String[] candidates = {
++                name.replace("STONE_BRICK_STAIRS", "STONE_BRICKS"),
++                name.replace("NETHER_BRICK_STAIRS", "NETHER_BRICKS"),
++                name.replace("DEEPSLATE_TILE_STAIRS", "DEEPSLATE_TILES"),
++                name.replace("DEEPSLATE_BRICK_STAIRS", "DEEPSLATE_BRICKS"),
++                name.replace("BRICK_STAIRS", "BRICKS"),
++                name.replace("QUARTZ_STAIRS", "QUARTZ_BLOCK"),
++                name.replace("_STAIRS", "_PLANKS"),
++                name.replace("_STAIRS", ""),
++                name.equals("PURPUR_STAIRS") ? "PURPUR_BLOCK" : ""
++        };
++
++        for (String candidate : candidates) {
++            /*
++             * String#replace renvoie la cha√Æne d'origine lorsque le suffixe
++             * n'est pas pr√©sent. Il ne faut surtout pas accepter alors
++             * l'escalier lui-m√™me comme mat√©riau du noyau.
++             */
++            if (candidate.isBlank() || candidate.equals(name)) {
++                continue;
++            }
++            Material material = Material.getMaterial(candidate);
++            if (material != null && material.isBlock()) {
++                return material;
++            }
++        }
++        return Material.SPRUCE_PLANKS;
++    }
+ }
+diff --git a/src/main/java/org/example/village/VillageStyle.java b/src/main/java/org/example/village/VillageStyle.java
+index 65579fae5556b253518f533d01d929193ff8b0b6..cecaf0d127eada71ea13d5ca2b25ce3ba9d5415f 100644
+--- a/src/main/java/org/example/village/VillageStyle.java
++++ b/src/main/java/org/example/village/VillageStyle.java
+@@ -87,7 +87,12 @@ public final class VillageStyle {
+                 fence,
+                 roofStairs,
+                 Material.STONE_BRICK_WALL,
+-                Material.GLASS_PANE
++                /*
++                 * Un bloc de verre plein s'encastre dans la ma√ßonnerie et ne
++                 * d√©pend pas des connexions lat√©rales des vitres fines. Cela
++                 * √©vite les baies visuellement ouvertes avec certains packs.
++                 */
++                Material.GLASS
+         );
+     }
+ 
+diff --git a/src/main/java/org/example/village/WallBuilder.java b/src/main/java/org/example/village/WallBuilder.java
+index 155a986576a0bd4d40bcd1ebaba41f99f3e20761..0d76025505732975ac65baa2f1340f65bb37fc6c 100644
+--- a/src/main/java/org/example/village/WallBuilder.java
++++ b/src/main/java/org/example/village/WallBuilder.java
+@@ -12,46 +12,101 @@ import java.util.List;
+ import java.util.Queue;
+ 
+ /**
+- * Enceinte m√©di√©vale √† √©chelle de village.
++ * Enceinte fortifi√©e m√©di√©vale du village.
+  *
+- * <p>La muraille pr√©c√©dente formait un bloc de huit m√®tres sur trois, tr√®s
+- * massif pour un petit bourg, et le corps de garde rebouchait son propre
+- * passage. Cette version privil√©gie une enceinte de six blocs, un chemin de
+- * ronde lisible, des tours couvertes sur leurs quatre c√¥t√©s et un portail
+- * r√©ellement traversable.</p>
++ * <p>La muraille est con√ßue comme un ouvrage habitable et lisible depuis les
++ * rues : fondations, soubassement talut√©, courtines √©paisses, chemin de ronde,
++ * parapet int√©rieur, cr√©neaux, contreforts, tours d'angle et ch√¢telet. Les
++ * ouvertures ne traversent jamais toute l'√©paisseur et les toitures emploient
++ * le constructeur ferm√© de {@link VillageRoofBuilder}.</p>
+  */
+ public final class WallBuilder {
+-    private static final int WALL_HEIGHT = 6;
+-    private static final int WALL_THICKNESS = 2;
++
++    private static final int WALL_HEIGHT = 9;
++    private static final int WALL_THICKNESS = 3;
++    private static final int FOUNDATION_DEPTH = 3;
++    private static final int BUTTRESS_SPACING = 8;
++
+     private static final int GATE_HALF_WIDTH = 2;
+-    private static final int TOWER_RADIUS = 2;
+-    private static final int GATEHOUSE_HALF_WIDTH = 7;
+-    private static final int GATEHOUSE_HALF_DEPTH = 3;
++    private static final int APPROACH_HALF_WIDTH = 3;
++
++    private static final int TOWER_RADIUS = 3;
++    private static final int TOWER_HEIGHT = 13;
++
++    private static final int GATEHOUSE_HALF_WIDTH = 9;
++    private static final int GATEHOUSE_HALF_DEPTH = 4;
++    private static final int GATE_TOWER_HEIGHT = 15;
+ 
+     private WallBuilder() {}
+ 
+     /**
+-     * Renvoie l'emprise ext√©rieure compl√®te, tours d'angle comprises.
++     * Renvoie l'emprise ext√©rieure compl√®te, tours, talus et ch√¢telet compris.
+      * Ordre : minX, maxX, minZ, maxZ.
+      */
+     public static int[] outerBounds(Location center, int rx, int rz) {
++        if (center == null) {
++            return new int[]{0, 0, 0, 0};
++        }
++
+         int cx = center.getBlockX();
+         int cz = center.getBlockZ();
+-        int outerRx = Math.max(4, rx) + WALL_THICKNESS - 1 + TOWER_RADIUS;
+-        int outerRz = Math.max(4, rz) + WALL_THICKNESS - 1 + TOWER_RADIUS;
+-        return new int[]{cx - outerRx, cx + outerRx, cz - outerRz, cz + outerRz};
++        int safeRx = Math.max(4, rx);
++        int safeRz = Math.max(4, rz);
++
++        /*
++         * Le +1 final correspond au d√©bord de la premi√®re rang√©e de toiture.
++         * Sans lui, la pr√©paration du terrain omettait une couronne de blocs
++         * autour des tours et du ch√¢telet.
++         */
++        int wallAndTowerX = safeRx
++                + WALL_THICKNESS
++                - 1
++                + TOWER_RADIUS
++                + 1;
++        int wallAndTowerZ = safeRz
++                + WALL_THICKNESS
++                - 1
++                + TOWER_RADIUS
++                + 1;
++        int extentX = Math.max(
++                wallAndTowerX,
++                GATEHOUSE_HALF_WIDTH + 1
++        );
++        int extentZ = Math.max(
++                wallAndTowerZ,
++                safeRz + 1 + GATEHOUSE_HALF_DEPTH + 1
++        );
++
++        return new int[]{
++                cx - extentX,
++                cx + extentX,
++                cz - extentZ,
++                cz + extentZ
++        };
+     }
+ 
+     /**
+-     * Point s√ªr o√π placer les gardes, juste √† l'ext√©rieur du portail.
++     * Point s√ªr o√π placer les gardes, devant le ch√¢telet et hors de la herse.
+      */
+-    public static Location gateAnchor(Location center, int rx, int rz, int baseY) {
+-        int outerSouth = center.getBlockZ() + Math.max(4, rz) + WALL_THICKNESS - 1;
++    public static Location gateAnchor(Location center,
++                                      int rx,
++                                      int rz,
++                                      int baseY) {
++        if (center == null) {
++            return null;
++        }
++
++        int safeRz = Math.max(4, rz);
++        int innerSouthZ = center.getBlockZ() + safeRz;
++        int outerSouthZ = innerSouthZ + WALL_THICKNESS - 1;
++        int gateCenterZ = (innerSouthZ + outerSouthZ) / 2;
++        int gateFrontZ = gateCenterZ + GATEHOUSE_HALF_DEPTH;
++
+         return new Location(
+                 center.getWorld(),
+-                center.getBlockX() + 0.5,
++                center.getBlockX() + 0.5D,
+                 baseY,
+-                outerSouth + GATEHOUSE_HALF_DEPTH + 2.5
++                gateFrontZ + 3.5D
+         );
+     }
+ 
+@@ -72,39 +127,122 @@ public final class WallBuilder {
+         int safeRx = Math.max(4, rx);
+         int safeRz = Math.max(4, rz);
+ 
+-        // rx/rz pointent vers la face int√©rieure ; l'√©paisseur se d√©veloppe
+-        // vers l'ext√©rieur pour ne pas rogner les derniers jardins.
++        /*
++         * rx/rz d√©signent la face int√©rieure. Toute l'√©paisseur se d√©veloppe
++         * vers l'ext√©rieur afin de ne pas rogner les jardins p√©riph√©riques.
++         */
+         int minX = cx - safeRx - WALL_THICKNESS + 1;
+         int maxX = cx + safeRx + WALL_THICKNESS - 1;
+         int minZ = cz - safeRz - WALL_THICKNESS + 1;
+         int maxZ = cz + safeRz + WALL_THICKNESS - 1;
+         int innerSouthZ = cz + safeRz;
+ 
+-        buildWallRing(queue, setBlock, cx, cz, minX, maxX, minZ, maxZ,
+-                innerSouthZ, baseY, wallMaterial);
+-        addWallWalk(queue, world, setBlock, minX, maxX, minZ, maxZ, baseY);
+-        addCrenellations(queue, setBlock, minX, maxX, minZ, maxZ, baseY);
++        buildWallRing(
++                queue,
++                world,
++                setBlock,
++                cx,
++                minX,
++                maxX,
++                minZ,
++                maxZ,
++                innerSouthZ,
++                baseY,
++                wallMaterial
++        );
++        buildWallWalk(
++                queue,
++                setBlock,
++                cx,
++                minX,
++                maxX,
++                minZ,
++                maxZ,
++                innerSouthZ,
++                baseY
++        );
++        addCrenellations(
++                queue,
++                world,
++                setBlock,
++                cx,
++                minX,
++                maxX,
++                minZ,
++                maxZ,
++                innerSouthZ,
++                baseY
++        );
+ 
+-        buildTower(queue, world, setBlock, minX, minZ, baseY);
+-        buildTower(queue, world, setBlock, minX, maxZ, baseY);
+-        buildTower(queue, world, setBlock, maxX, minZ, baseY);
+-        buildTower(queue, world, setBlock, maxX, maxZ, baseY);
++        buildTower(
++                queue,
++                world,
++                setBlock,
++                minX,
++                minZ,
++                cx,
++                cz,
++                baseY
++        );
++        buildTower(
++                queue,
++                world,
++                setBlock,
++                minX,
++                maxZ,
++                cx,
++                cz,
++                baseY
++        );
++        buildTower(
++                queue,
++                world,
++                setBlock,
++                maxX,
++                minZ,
++                cx,
++                cz,
++                baseY
++        );
++        buildTower(
++                queue,
++                world,
++                setBlock,
++                maxX,
++                maxZ,
++                cx,
++                cz,
++                baseY
++        );
+ 
+         int gateCenterZ = (innerSouthZ + maxZ) / 2;
+-        buildGatehouse(queue, world, setBlock, cx, gateCenterZ, baseY);
++        buildGatehouse(
++                queue,
++                world,
++                setBlock,
++                cx,
++                gateCenterZ,
++                baseY
++        );
+ 
+-        // Le pavage raccorde la rue int√©rieure au chemin ext√©rieur. Il est
+-        // ajout√© apr√®s la muraille afin que le passage ne soit jamais rebouch√©.
+-        buildGateApproach(queue, setBlock, cx,
+-                innerSouthZ - 7,
+-                maxZ + GATEHOUSE_HALF_DEPTH + 7,
+-                baseY);
++        /*
++         * Le pavage est programm√© en dernier : la route reste continue m√™me si
++         * une fondation ou une tour a √©t√© pos√©e sur le m√™me axe auparavant.
++         */
++        buildGateApproach(
++                queue,
++                setBlock,
++                cx,
++                innerSouthZ - 8,
++                gateCenterZ + GATEHOUSE_HALF_DEPTH + 9,
++                baseY
++        );
+     }
+ 
+     private static void buildWallRing(Queue<Runnable> queue,
++                                      World world,
+                                       TerrainManager.SetBlock setBlock,
+-                                      int cx,
+-                                      int cz,
++                                      int centerX,
+                                       int minX,
+                                       int maxX,
+                                       int minZ,
+@@ -122,114 +260,459 @@ public final class WallBuilder {
+                     continue;
+                 }
+ 
+-                // R√©serve le passage sur toute l'√©paisseur sud, et non
+-                // seulement sur sa moiti√© ext√©rieure.
+                 boolean gatePassage = z >= innerSouthZ
+-                        && Math.abs(x - cx) <= GATE_HALF_WIDTH;
++                        && Math.abs(x - centerX) <= GATE_HALF_WIDTH;
+                 if (gatePassage) {
+                     continue;
+                 }
+ 
+                 int fx = x;
+                 int fz = z;
+-                queue.add(() -> setBlock.set(fx, baseY, fz,
+-                        patternedStone(primary, fx, baseY, fz)));
+ 
+-                for (int y = baseY + 1; y <= baseY + WALL_HEIGHT; y++) {
++                // Fondations profondes, visibles m√™me sur un terrain accident√©.
++                for (int y = baseY - FOUNDATION_DEPTH; y <= baseY; y++) {
+                     int fy = y;
+-                    Material material = patternedStone(primary, x, y, z);
++                    Material foundation = foundationStone(fx, fy, fz);
++                    place(queue, setBlock, fx, fy, fz, foundation);
++                }
++
++                boolean outerFace = isOuterFace(
++                        x,
++                        z,
++                        minX,
++                        maxX,
++                        minZ,
++                        maxZ
++                );
++                boolean slit = outerFace
++                        && isSlitCoordinate(x, z, minX, maxX)
++                        && !(z == maxZ
++                        && Math.abs(x - centerX)
++                        <= GATEHOUSE_HALF_WIDTH + 1);
+ 
+-                    // Une meurtri√®re sur la seule face ext√©rieure all√®ge les
+-                    // longues courtines sans cr√©er un tunnel d'air traversant.
+-                    if (isOuterFace(x, z, minX, maxX, minZ, maxZ)
+-                            && y == baseY + 3
+-                            && Math.floorMod(axisCoordinate(x, z, minX, maxX), 9) == 4) {
++                for (int y = baseY + 1;
++                     y <= baseY + WALL_HEIGHT;
++                     y++) {
++                    int fy = y;
++                    Material material;
++
++                    if (slit && y == baseY + 4) {
++                        /*
++                         * Les barreaux occupent uniquement la peau ext√©rieure ;
++                         * les deux blocs internes restent pleins. On obtient une
++                         * meurtri√®re sombre, pas un tunnel √† travers la muraille.
++                         */
+                         material = Material.IRON_BARS;
++                    } else if (y == baseY + 3 || y == baseY + 7) {
++                        material = Material.POLISHED_ANDESITE;
++                    } else if (slit
++                            && (y == baseY + 3 || y == baseY + 5)) {
++                        material = Material.CHISELED_STONE_BRICKS;
++                    } else {
++                        material = patternedStone(primary, x, y, z);
+                     }
++
+                     Material finalMaterial = material;
+-                    queue.add(() -> setBlock.set(fx, fy, fz, finalMaterial));
++                    place(queue, setBlock,
++                            fx,
++                            fy,
++                            fz,
++                            finalMaterial
++                    );
+                 }
+ 
+-                if (isOuterFace(x, z, minX, maxX, minZ, maxZ)
+-                        && Math.floorMod(axisCoordinate(x, z, minX, maxX), 8) == 0) {
+-                    addButtress(queue, setBlock, x, z, cx, cz, baseY);
++                if (outerFace) {
++                    BlockFace outward = outwardFace(
++                            x,
++                            z,
++                            minX,
++                            maxX,
++                            minZ,
++                            maxZ
++                    );
++                    addBatteredBase(
++                            queue,
++                            setBlock,
++                            x,
++                            z,
++                            baseY,
++                            outward
++                    );
++
++                    int axis = axisCoordinate(
++                            x,
++                            z,
++                            minX,
++                            maxX
++                    );
++                    boolean gateZone = z == maxZ
++                            && Math.abs(x - centerX)
++                            <= GATEHOUSE_HALF_WIDTH + 2;
++                    if (!gateZone
++                            && Math.floorMod(axis, BUTTRESS_SPACING) == 0) {
++                        addButtress(
++                                queue,
++                                world,
++                                setBlock,
++                                x,
++                                z,
++                                baseY,
++                                outward
++                        );
++                    }
+                 }
+             }
+         }
+     }
+ 
++    /**
++     * Talus continu au pied de la courtine : il donne de la masse sans √©paissir
++     * tout le mur jusqu'au chemin de ronde.
++     */
++    private static void addBatteredBase(Queue<Runnable> queue,
++                                        TerrainManager.SetBlock setBlock,
++                                        int x,
++                                        int z,
++                                        int baseY,
++                                        BlockFace outward) {
++        if (!cardinal(outward)) {
++            return;
++        }
++
++        int firstX = x + outward.getModX();
++        int firstZ = z + outward.getModZ();
++        for (int y = baseY - 1; y <= baseY + 1; y++) {
++            int fy = y;
++            Material material = y <= baseY
++                    ? Material.COBBLED_DEEPSLATE
++                    : Material.COBBLESTONE;
++            place(queue, setBlock,
++                    firstX,
++                    fy,
++                    firstZ,
++                    material
++            );
++        }
++
++        int secondX = x + outward.getModX() * 2;
++        int secondZ = z + outward.getModZ() * 2;
++        for (int y = baseY - 1; y <= baseY; y++) {
++            int fy = y;
++            place(queue, setBlock,
++                    secondX,
++                    fy,
++                    secondZ,
++                    Material.COBBLED_DEEPSLATE
++            );
++        }
++    }
++
+     private static void addButtress(Queue<Runnable> queue,
++                                    World world,
+                                     TerrainManager.SetBlock setBlock,
+                                     int x,
+                                     int z,
+-                                    int cx,
+-                                    int cz,
+-                                    int baseY) {
+-        int dx = x < cx ? -1 : x > cx ? 1 : 0;
+-        int dz = z < cz ? -1 : z > cz ? 1 : 0;
+-
+-        // Une face de courtine n'a qu'une normale. Lorsque les deux
+-        // composantes sont pr√©sentes, nous sommes dans la zone d'une tour.
+-        if (dx != 0 && dz != 0) {
++                                    int baseY,
++                                    BlockFace outward) {
++        if (!cardinal(outward)) {
+             return;
+         }
+-        int bx = x + dx;
+-        int bz = z + dz;
+-        queue.add(() -> setBlock.set(bx, baseY, bz, Material.COBBLESTONE));
+-        queue.add(() -> setBlock.set(bx, baseY + 1, bz, Material.STONE_BRICK_WALL));
+-        queue.add(() -> setBlock.set(bx, baseY + 2, bz, Material.STONE_BRICK_WALL));
++
++        for (int depth = 1; depth <= 2; depth++) {
++            int bx = x + outward.getModX() * depth;
++            int bz = z + outward.getModZ() * depth;
++            int topY = baseY + (depth == 1 ? 6 : 3);
++
++            for (int y = baseY - 2; y <= topY; y++) {
++                int fy = y;
++                Material material = y <= baseY
++                        ? Material.COBBLED_DEEPSLATE
++                        : patternedStone(
++                        Material.STONE_BRICKS,
++                        bx,
++                        y,
++                        bz
++                );
++                place(queue, setBlock,
++                        bx,
++                        fy,
++                        bz,
++                        material
++                );
++            }
++
++            slab(
++                    queue,
++                    world,
++                    setBlock,
++                    bx,
++                    topY + 1,
++                    bz,
++                    Material.STONE_BRICK_SLAB,
++                    Slab.Type.BOTTOM
++            );
++        }
+     }
+ 
+-    private static void addWallWalk(Queue<Runnable> queue,
+-                                    World world,
+-                                    TerrainManager.SetBlock setBlock,
+-                                    int minX,
+-                                    int maxX,
+-                                    int minZ,
+-                                    int maxZ,
+-                                    int baseY) {
++    private static void buildWallWalk(Queue<Runnable> queue,
++                                      TerrainManager.SetBlock setBlock,
++                                      int centerX,
++                                      int minX,
++                                      int maxX,
++                                      int minZ,
++                                      int maxZ,
++                                      int innerSouthZ,
++                                      int baseY) {
+         int walkY = baseY + WALL_HEIGHT;
+-        for (int x = minX + 1; x <= maxX - 1; x++) {
+-            addTopSlab(queue, world, setBlock, x, walkY, minZ + 1);
+-            addTopSlab(queue, world, setBlock, x, walkY, maxZ - 1);
++
++        for (int x = minX; x <= maxX; x++) {
++            for (int offset = 0; offset < WALL_THICKNESS; offset++) {
++                int northZ = minZ + offset;
++                int southZ = maxZ - offset;
++                Material material = walkwayStone(x, northZ);
++                place(queue, setBlock,
++                        x,
++                        walkY,
++                        northZ,
++                        material
++                );
++
++                if (!(southZ >= innerSouthZ
++                        && Math.abs(x - centerX)
++                        <= GATE_HALF_WIDTH)) {
++                    Material southMaterial = walkwayStone(x, southZ);
++                    place(queue, setBlock,
++                            x,
++                            walkY,
++                            southZ,
++                            southMaterial
++                    );
++                }
++            }
+         }
+-        for (int z = minZ + 2; z <= maxZ - 2; z++) {
+-            addTopSlab(queue, world, setBlock, minX + 1, walkY, z);
+-            addTopSlab(queue, world, setBlock, maxX - 1, walkY, z);
++
++        for (int z = minZ + WALL_THICKNESS;
++             z <= maxZ - WALL_THICKNESS;
++             z++) {
++            for (int offset = 0; offset < WALL_THICKNESS; offset++) {
++                int westX = minX + offset;
++                int eastX = maxX - offset;
++                Material westMaterial = walkwayStone(westX, z);
++                Material eastMaterial = walkwayStone(eastX, z);
++                place(queue, setBlock,
++                        westX,
++                        walkY,
++                        z,
++                        westMaterial
++                );
++                place(queue, setBlock,
++                        eastX,
++                        walkY,
++                        z,
++                        eastMaterial
++                );
++            }
++        }
++
++        /*
++         * Parapet int√©rieur continu : le chemin central reste praticable et le
++         * joueur ne peut pas tomber directement dans les rues du village.
++         */
++        int parapetY = walkY + 1;
++        for (int x = minX + 2; x <= maxX - 2; x++) {
++            place(queue, setBlock,
++                    x,
++                    parapetY,
++                    minZ + WALL_THICKNESS - 1,
++                    Material.STONE_BRICK_WALL
++            );
++            if (!(Math.abs(x - centerX) <= GATE_HALF_WIDTH + 1)) {
++                place(queue, setBlock,
++                        x,
++                        parapetY,
++                        maxZ - WALL_THICKNESS + 1,
++                        Material.STONE_BRICK_WALL
++                );
++            }
++        }
++        for (int z = minZ + WALL_THICKNESS;
++             z <= maxZ - WALL_THICKNESS;
++             z++) {
++            place(queue, setBlock,
++                    minX + WALL_THICKNESS - 1,
++                    parapetY,
++                    z,
++                    Material.STONE_BRICK_WALL
++            );
++            place(queue, setBlock,
++                    maxX - WALL_THICKNESS + 1,
++                    parapetY,
++                    z,
++                    Material.STONE_BRICK_WALL
++            );
+         }
+     }
+ 
+     private static void addCrenellations(Queue<Runnable> queue,
++                                         World world,
+                                          TerrainManager.SetBlock setBlock,
++                                         int centerX,
+                                          int minX,
+                                          int maxX,
+                                          int minZ,
+                                          int maxZ,
++                                         int innerSouthZ,
+                                          int baseY) {
+-        int topY = baseY + WALL_HEIGHT + 1;
++        int merlonY = baseY + WALL_HEIGHT + 1;
++
+         for (int x = minX; x <= maxX; x++) {
++            if (merlonAt(x)) {
++                addMerlon(
++                        queue,
++                        world,
++                        setBlock,
++                        x,
++                        merlonY,
++                        minZ
++                );
++                if (!(maxZ >= innerSouthZ
++                        && Math.abs(x - centerX)
++                        <= GATEHOUSE_HALF_WIDTH + 1)) {
++                    addMerlon(
++                            queue,
++                            world,
++                            setBlock,
++                            x,
++                            merlonY,
++                            maxZ
++                    );
++                }
++            }
++
+             if (Math.floorMod(x, 2) == 0) {
+-                int fx = x;
+-                queue.add(() -> setBlock.set(fx, topY, minZ, Material.STONE_BRICKS));
+-                queue.add(() -> setBlock.set(fx, topY, maxZ, Material.STONE_BRICKS));
++                addMachicolation(
++                        queue,
++                        world,
++                        setBlock,
++                        x,
++                        baseY + WALL_HEIGHT,
++                        minZ - 1,
++                        BlockFace.NORTH
++                );
++                if (!(Math.abs(x - centerX)
++                        <= GATEHOUSE_HALF_WIDTH + 1)) {
++                    addMachicolation(
++                            queue,
++                            world,
++                            setBlock,
++                            x,
++                            baseY + WALL_HEIGHT,
++                            maxZ + 1,
++                            BlockFace.SOUTH
++                    );
++                }
+             }
+         }
++
+         for (int z = minZ + 1; z <= maxZ - 1; z++) {
++            if (merlonAt(z)) {
++                addMerlon(
++                        queue,
++                        world,
++                        setBlock,
++                        minX,
++                        merlonY,
++                        z
++                );
++                addMerlon(
++                        queue,
++                        world,
++                        setBlock,
++                        maxX,
++                        merlonY,
++                        z
++                );
++            }
++
+             if (Math.floorMod(z, 2) == 0) {
+-                int fz = z;
+-                queue.add(() -> setBlock.set(minX, topY, fz, Material.STONE_BRICKS));
+-                queue.add(() -> setBlock.set(maxX, topY, fz, Material.STONE_BRICKS));
++                addMachicolation(
++                        queue,
++                        world,
++                        setBlock,
++                        minX - 1,
++                        baseY + WALL_HEIGHT,
++                        z,
++                        BlockFace.WEST
++                );
++                addMachicolation(
++                        queue,
++                        world,
++                        setBlock,
++                        maxX + 1,
++                        baseY + WALL_HEIGHT,
++                        z,
++                        BlockFace.EAST
++                );
+             }
+         }
+     }
+ 
++    private static void addMerlon(Queue<Runnable> queue,
++                                  World world,
++                                  TerrainManager.SetBlock setBlock,
++                                  int x,
++                                  int y,
++                                  int z) {
++        place(queue, setBlock,
++                x,
++                y,
++                z,
++                Material.STONE_BRICKS
++        );
++        slab(
++                queue,
++                world,
++                setBlock,
++                x,
++                y + 1,
++                z,
++                Material.STONE_BRICK_SLAB,
++                Slab.Type.BOTTOM
++        );
++    }
++
++    private static void addMachicolation(Queue<Runnable> queue,
++                                         World world,
++                                         TerrainManager.SetBlock setBlock,
++                                         int x,
++                                         int y,
++                                         int z,
++                                         BlockFace outward) {
++        stair(
++                queue,
++                world,
++                setBlock,
++                x,
++                y,
++                z,
++                Material.STONE_BRICK_STAIRS,
++                VillageStyle.opposite(outward),
++                Stairs.Half.TOP,
++                Stairs.Shape.STRAIGHT
++        );
++    }
++
+     private static void buildTower(Queue<Runnable> queue,
+                                    World world,
+                                    TerrainManager.SetBlock setBlock,
+                                    int centerX,
+                                    int centerZ,
++                                   int villageCenterX,
++                                   int villageCenterZ,
+                                    int baseY) {
+-        int topY = baseY + WALL_HEIGHT + 2;
++        int topY = baseY + TOWER_HEIGHT;
++        int walkY = baseY + WALL_HEIGHT;
++
+         for (int dx = -TOWER_RADIUS; dx <= TOWER_RADIUS; dx++) {
+             for (int dz = -TOWER_RADIUS; dz <= TOWER_RADIUS; dz++) {
+                 int x = centerX + dx;
+@@ -237,24 +720,108 @@ public final class WallBuilder {
+                 boolean shell = Math.abs(dx) == TOWER_RADIUS
+                         || Math.abs(dz) == TOWER_RADIUS;
+ 
+-                queue.add(() -> setBlock.set(x, baseY, z,
+-                        patternedStone(Material.STONE_BRICKS, x, baseY, z)));
+-                if (!shell) {
+-                    queue.add(() -> setBlock.set(x, baseY + 1, z, Material.SPRUCE_PLANKS));
+-                    continue;
++                for (int y = baseY - FOUNDATION_DEPTH;
++                     y <= baseY;
++                     y++) {
++                    int fy = y;
++                    Material material = foundationStone(x, y, z);
++                    place(queue, setBlock,
++                            x,
++                            fy,
++                            z,
++                            material
++                    );
+                 }
+ 
+-                for (int y = baseY + 1; y <= topY; y++) {
+-                    int fy = y;
+-                    Material material = y == baseY + 3
+-                            && (dx == 0 || dz == 0)
+-                            ? Material.IRON_BARS
+-                            : patternedStone(Material.STONE_BRICKS, x, y, z);
+-                    queue.add(() -> setBlock.set(x, fy, z, material));
++                if (shell) {
++                    for (int y = baseY + 1; y <= topY; y++) {
++                        int fy = y;
++                        boolean cardinalOpening =
++                                (dx == 0
++                                        && Math.abs(dz) == TOWER_RADIUS)
++                                || (dz == 0
++                                        && Math.abs(dx) == TOWER_RADIUS);
++                        boolean arrowSlit = cardinalOpening
++                                && (y == baseY + 4
++                                || y == baseY + 8);
++                        Material material;
++
++                        if (arrowSlit) {
++                            material = Material.IRON_BARS;
++                        } else if (y == baseY + 5
++                                || y == baseY + 10
++                                || y == topY) {
++                            material = Material.POLISHED_ANDESITE;
++                        } else {
++                            material = patternedStone(
++                                    Material.STONE_BRICKS,
++                                    x,
++                                    y,
++                                    z
++                            );
++                        }
++
++                        Material finalMaterial = material;
++                        place(queue, setBlock,
++                                x,
++                                fy,
++                                z,
++                                finalMaterial
++                        );
++                    }
++                } else {
++                    /*
++                     * Les tours sont r√©ellement creuses. Les blocs de la
++                     * courtine qui les traversent sont explicitement retir√©s.
++                     */
++                    for (int y = baseY + 1; y < topY; y++) {
++                        int fy = y;
++                        Material material;
++                        if (y == baseY + 6
++                                || y == walkY
++                                || y == baseY + 12) {
++                            material = Material.SPRUCE_PLANKS;
++                        } else {
++                            material = Material.AIR;
++                        }
++                        Material finalMaterial = material;
++                        place(queue, setBlock,
++                                x,
++                                fy,
++                                z,
++                                finalMaterial
++                        );
++                    }
++                    place(queue, setBlock,
++                            x,
++                            topY,
++                            z,
++                            Material.DARK_OAK_PLANKS
++                    );
+                 }
+             }
+         }
+ 
++        openTowerWalkway(
++                queue,
++                setBlock,
++                centerX,
++                centerZ,
++                villageCenterX,
++                villageCenterZ,
++                walkY
++        );
++        addTowerExteriorDetails(
++                queue,
++                world,
++                setBlock,
++                centerX,
++                centerZ,
++                villageCenterX,
++                villageCenterZ,
++                baseY
++        );
++
+         List<Runnable> roof = new ArrayList<>();
+         VillageRoofBuilder.buildHip(
+                 roof,
+@@ -265,13 +832,141 @@ public final class WallBuilder {
+                 centerZ - TOWER_RADIUS,
+                 centerZ + TOWER_RADIUS,
+                 topY + 1,
++                Material.DARK_OAK_PLANKS,
+                 Material.DARK_OAK_STAIRS,
+                 Material.DARK_OAK_SLAB
+         );
+         queue.addAll(roof);
+ 
+-        queue.add(() -> setBlock.set(centerX, baseY + 2,
+-                centerZ - TOWER_RADIUS, Material.LANTERN));
++        int finialBaseY = topY + 7;
++        place(queue, setBlock,
++                centerX,
++                finialBaseY,
++                centerZ,
++                Material.DARK_OAK_FENCE
++        );
++        place(queue, setBlock,
++                centerX,
++                finialBaseY + 1,
++                centerZ,
++                Material.LIGHTNING_ROD
++        );
++    }
++
++    private static void openTowerWalkway(Queue<Runnable> queue,
++                                         TerrainManager.SetBlock setBlock,
++                                         int centerX,
++                                         int centerZ,
++                                         int villageCenterX,
++                                         int villageCenterZ,
++                                         int walkY) {
++        int inwardX = Integer.compare(villageCenterX, centerX);
++        int inwardZ = Integer.compare(villageCenterZ, centerZ);
++
++        /*
++         * Chaque tour d'angle re√ßoit deux portes : une vers chaque courtine.
++         * Le niveau du plancher correspond exactement au chemin de ronde.
++         */
++        if (inwardX != 0) {
++            int doorX = centerX + inwardX * TOWER_RADIUS;
++            for (int dz = -1; dz <= 1; dz++) {
++                for (int y = walkY + 1; y <= walkY + 3; y++) {
++                    int fy = y;
++                    int z = centerZ + dz;
++                    place(queue, setBlock,
++                            doorX,
++                            fy,
++                            z,
++                            Material.AIR
++                    );
++                }
++            }
++        }
++        if (inwardZ != 0) {
++            int doorZ = centerZ + inwardZ * TOWER_RADIUS;
++            for (int dx = -1; dx <= 1; dx++) {
++                for (int y = walkY + 1; y <= walkY + 3; y++) {
++                    int fy = y;
++                    int x = centerX + dx;
++                    place(queue, setBlock,
++                            x,
++                            fy,
++                            doorZ,
++                            Material.AIR
++                    );
++                }
++            }
++        }
++    }
++
++    private static void addTowerExteriorDetails(
++            Queue<Runnable> queue,
++            World world,
++            TerrainManager.SetBlock setBlock,
++            int centerX,
++            int centerZ,
++            int villageCenterX,
++            int villageCenterZ,
++            int baseY) {
++        int outwardX = -Integer.compare(villageCenterX, centerX);
++        int outwardZ = -Integer.compare(villageCenterZ, centerZ);
++
++        if (outwardX != 0) {
++            int wallX = centerX + outwardX * TOWER_RADIUS;
++            int bannerX = wallX + outwardX;
++            place(queue, setBlock,
++                    bannerX,
++                    baseY + 7,
++                    centerZ,
++                    Material.RED_WALL_BANNER
++            );
++            queue.add(() -> VillageStyle.setDirectional(
++                    world,
++                    bannerX,
++                    baseY + 7,
++                    centerZ,
++                    Material.RED_WALL_BANNER,
++                    outwardX < 0 ? BlockFace.WEST : BlockFace.EAST
++            ));
++        }
++        if (outwardZ != 0) {
++            int wallZ = centerZ + outwardZ * TOWER_RADIUS;
++            int bannerZ = wallZ + outwardZ;
++            place(queue, setBlock,
++                    centerX,
++                    baseY + 7,
++                    bannerZ,
++                    Material.RED_WALL_BANNER
++            );
++            queue.add(() -> VillageStyle.setDirectional(
++                    world,
++                    centerX,
++                    baseY + 7,
++                    bannerZ,
++                    Material.RED_WALL_BANNER,
++                    outwardZ < 0 ? BlockFace.NORTH : BlockFace.SOUTH
++            ));
++        }
++
++        // Lanterne suspendue sous une potence, √† l'int√©rieur de la tour.
++        place(queue, setBlock,
++                centerX,
++                baseY + 11,
++                centerZ,
++                Material.DARK_OAK_FENCE
++        );
++        place(queue, setBlock,
++                centerX,
++                baseY + 10,
++                centerZ,
++                Material.CHAIN
++        );
++        place(queue, setBlock,
++                centerX,
++                baseY + 9,
++                centerZ,
++                Material.LANTERN
++        );
+     }
+ 
+     private static void buildGatehouse(Queue<Runnable> queue,
+@@ -282,87 +977,97 @@ public final class WallBuilder {
+                                        int baseY) {
+         int minZ = centerZ - GATEHOUSE_HALF_DEPTH;
+         int maxZ = centerZ + GATEHOUSE_HALF_DEPTH;
++
+         int leftMinX = centerX - GATEHOUSE_HALF_WIDTH;
+         int leftMaxX = centerX - GATE_HALF_WIDTH - 1;
+         int rightMinX = centerX + GATE_HALF_WIDTH + 1;
+         int rightMaxX = centerX + GATEHOUSE_HALF_WIDTH;
+-        int towerTop = baseY + WALL_HEIGHT + 3;
+-
+-        buildGateTower(queue, world, setBlock,
+-                leftMinX, leftMaxX, minZ, maxZ, baseY, towerTop);
+-        buildGateTower(queue, world, setBlock,
+-                rightMinX, rightMaxX, minZ, maxZ, baseY, towerTop);
++        int towerTopY = baseY + GATE_TOWER_HEIGHT;
+ 
+-        // Galerie haute au-dessus de l'arche.
+-        for (int x = centerX - GATE_HALF_WIDTH; x <= centerX + GATE_HALF_WIDTH; x++) {
+-            for (int z = minZ; z <= maxZ; z++) {
+-                int fx = x;
+-                int fz = z;
+-                for (int y = baseY + 5; y <= baseY + WALL_HEIGHT + 2; y++) {
+-                    int fy = y;
+-                    boolean shell = y == baseY + 5
+-                            || y == baseY + WALL_HEIGHT + 2
+-                            || z == minZ
+-                            || z == maxZ;
+-                    if (shell) {
+-                        queue.add(() -> setBlock.set(fx, fy, fz,
+-                                patternedStone(Material.STONE_BRICKS, fx, fy, fz)));
+-                    }
+-                }
+-            }
+-        }
+-
+-        // Arche en escalier sur les deux fa√ßades.
+-        for (int z : new int[]{minZ, maxZ}) {
+-            for (int x = centerX - GATE_HALF_WIDTH; x <= centerX + GATE_HALF_WIDTH; x++) {
+-                int fx = x;
+-                queue.add(() -> setBlock.set(fx, baseY + 5, z, Material.STONE_BRICK_STAIRS));
+-                queue.add(() -> VillageStyle.setStair(
+-                        world, fx, baseY + 5, z,
+-                        Material.STONE_BRICK_STAIRS,
+-                        z == minZ ? BlockFace.NORTH : BlockFace.SOUTH,
+-                        Stairs.Half.BOTTOM,
+-                        Stairs.Shape.STRAIGHT
+-                ));
+-            }
+-        }
++        buildGateTower(
++                queue,
++                world,
++                setBlock,
++                leftMinX,
++                leftMaxX,
++                minZ,
++                maxZ,
++                baseY,
++                towerTopY,
++                BlockFace.EAST
++        );
++        buildGateTower(
++                queue,
++                world,
++                setBlock,
++                rightMinX,
++                rightMaxX,
++                minZ,
++                maxZ,
++                baseY,
++                towerTopY,
++                BlockFace.WEST
++        );
+ 
+-        // La herse est relev√©e dans la galerie : elle reste visible sans
+-        // rendre l'entr√©e impossible √† franchir.
+-        for (int x = centerX - GATE_HALF_WIDTH; x <= centerX + GATE_HALF_WIDTH; x++) {
+-            int fx = x;
+-            queue.add(() -> setBlock.set(fx, baseY + 5, maxZ - 1, Material.IRON_BARS));
+-            queue.add(() -> setBlock.set(fx, baseY + 6, maxZ - 1, Material.IRON_BARS));
+-        }
++        buildGateGallery(
++                queue,
++                world,
++                setBlock,
++                centerX,
++                minZ,
++                maxZ,
++                baseY
++        );
+ 
+-        // Nettoyage final du corridor sur toute la profondeur, indispensable
+-        // car la courtine et la galerie ont √©t√© programm√©es avant le portail.
+-        for (int x = centerX - GATE_HALF_WIDTH; x <= centerX + GATE_HALF_WIDTH; x++) {
++        /*
++         * Nettoyage final du corridor. Les tours, la courtine et la galerie
++         * ont √©t√© programm√©es avant ; cette passe garantit cinq blocs libres
++         * sur toute la profondeur du ch√¢telet.
++         */
++        for (int x = centerX - GATE_HALF_WIDTH;
++             x <= centerX + GATE_HALF_WIDTH;
++             x++) {
+             for (int z = minZ - 1; z <= maxZ + 1; z++) {
+-                int fx = x;
+-                int fz = z;
+-                for (int y = baseY + 1; y <= baseY + 4; y++) {
++                for (int y = baseY + 1; y <= baseY + 5; y++) {
++                    int fx = x;
+                     int fy = y;
+-                    queue.add(() -> setBlock.set(fx, fy, fz, Material.AIR));
++                    int fz = z;
++                    place(queue, setBlock,
++                            fx,
++                            fy,
++                            fz,
++                            Material.AIR
++                    );
+                 }
+             }
+         }
+ 
+-        // √âclairage et identit√© du bourg. Les lanternes sont suspendues √†
+-        // de vrais bras de potence : aucun bloc ne flotte devant la fa√ßade.
+-        for (int x : new int[]{leftMaxX, rightMinX}) {
+-            queue.add(() -> setBlock.set(x, baseY + 6, maxZ + 1, Material.DARK_OAK_FENCE));
+-            queue.add(() -> setBlock.set(x, baseY + 5, maxZ + 1, Material.CHAIN));
+-            queue.add(() -> setBlock.set(x, baseY + 4, maxZ + 1, Material.LANTERN));
+-        }
+-        queue.add(() -> setBlock.set(leftMaxX, baseY + 5, maxZ, Material.RED_WALL_BANNER));
+-        queue.add(() -> VillageStyle.setDirectional(
+-                world, leftMaxX, baseY + 5, maxZ,
+-                Material.RED_WALL_BANNER, BlockFace.SOUTH));
+-        queue.add(() -> setBlock.set(rightMinX, baseY + 5, maxZ, Material.RED_WALL_BANNER));
+-        queue.add(() -> VillageStyle.setDirectional(
+-                world, rightMinX, baseY + 5, maxZ,
+-                Material.RED_WALL_BANNER, BlockFace.SOUTH));
++        buildGateArches(
++                queue,
++                world,
++                setBlock,
++                centerX,
++                minZ,
++                maxZ,
++                baseY
++        );
++        addRaisedPortcullis(
++                queue,
++                setBlock,
++                centerX,
++                maxZ - 1,
++                baseY
++        );
++        addGatehouseIdentity(
++                queue,
++                world,
++                setBlock,
++                centerX,
++                leftMaxX,
++                rightMinX,
++                maxZ,
++                baseY
++        );
+     }
+ 
+     private static void buildGateTower(Queue<Runnable> queue,
+@@ -373,25 +1078,110 @@ public final class WallBuilder {
+                                        int minZ,
+                                        int maxZ,
+                                        int baseY,
+-                                       int topY) {
++                                       int topY,
++                                       BlockFace galleryFace) {
++        int centerX = (minX + maxX) / 2;
++        int centerZ = (minZ + maxZ) / 2;
++
+         for (int x = minX; x <= maxX; x++) {
+             for (int z = minZ; z <= maxZ; z++) {
+-                boolean shell = x == minX || x == maxX || z == minZ || z == maxZ;
+-                int fx = x;
+-                int fz = z;
+-                queue.add(() -> setBlock.set(fx, baseY, fz, Material.STONE_BRICKS));
+-                if (!shell) {
+-                    queue.add(() -> setBlock.set(fx, baseY + 1, fz, Material.SPRUCE_PLANKS));
+-                    continue;
+-                }
+-                for (int y = baseY + 1; y <= topY; y++) {
++                boolean shell = x == minX
++                        || x == maxX
++                        || z == minZ
++                        || z == maxZ;
++
++                for (int y = baseY - FOUNDATION_DEPTH;
++                     y <= baseY;
++                     y++) {
+                     int fy = y;
+-                    Material material = y == baseY + 4
+-                            && ((x == minX || x == maxX) && z == (minZ + maxZ) / 2)
+-                            ? Material.IRON_BARS
+-                            : patternedStone(Material.STONE_BRICKS, x, y, z);
+-                    queue.add(() -> setBlock.set(fx, fy, fz, material));
++                    Material material = foundationStone(x, y, z);
++                    place(queue, setBlock,
++                            x,
++                            fy,
++                            z,
++                            material
++                    );
+                 }
++
++                if (shell) {
++                    for (int y = baseY + 1; y <= topY; y++) {
++                        int fy = y;
++                        boolean southWindow = z == maxZ
++                                && x == centerX
++                                && (y == baseY + 8
++                                || y == baseY + 9);
++                        boolean slit = ((x == minX || x == maxX)
++                                && z == centerZ
++                                && (y == baseY + 4
++                                || y == baseY + 11))
++                                || (z == minZ
++                                && x == centerX
++                                && y == baseY + 5);
++                        Material material;
++
++                        if (southWindow) {
++                            material = Material.GRAY_STAINED_GLASS;
++                        } else if (slit) {
++                            material = Material.IRON_BARS;
++                        } else if (y == baseY + 6
++                                || y == baseY + 12
++                                || y == topY) {
++                            material = Material.POLISHED_ANDESITE;
++                        } else {
++                            material = patternedStone(
++                                    Material.STONE_BRICKS,
++                                    x,
++                                    y,
++                                    z
++                            );
++                        }
++
++                        Material finalMaterial = material;
++                        place(queue, setBlock,
++                                x,
++                                fy,
++                                z,
++                                finalMaterial
++                        );
++                    }
++                } else {
++                    for (int y = baseY + 1; y < topY; y++) {
++                        int fy = y;
++                        Material material =
++                                y == baseY + 6
++                                        || y == baseY + 12
++                                        ? Material.SPRUCE_PLANKS
++                                        : Material.AIR;
++                        Material finalMaterial = material;
++                        place(queue, setBlock,
++                                x,
++                                fy,
++                                z,
++                                finalMaterial
++                        );
++                    }
++                    place(queue, setBlock,
++                            x,
++                            topY,
++                            z,
++                            Material.DARK_OAK_PLANKS
++                    );
++                }
++            }
++        }
++
++        // Porte de communication avec la galerie haute.
++        int galleryX = galleryFace == BlockFace.EAST ? maxX : minX;
++        for (int z = centerZ - 1; z <= centerZ + 1; z++) {
++            for (int y = baseY + 7; y <= baseY + 9; y++) {
++                int fy = y;
++                int fz = z;
++                place(queue, setBlock,
++                        galleryX,
++                        fy,
++                        fz,
++                        Material.AIR
++                );
+             }
+         }
+ 
+@@ -405,10 +1195,307 @@ public final class WallBuilder {
+                 minZ,
+                 maxZ,
+                 topY + 1,
++                Material.DARK_OAK_PLANKS,
+                 Material.DARK_OAK_STAIRS,
+                 Material.DARK_OAK_SLAB
+         );
+         queue.addAll(roof);
++
++        int roofSpan = Math.min(
++                maxX - minX + 3,
++                maxZ - minZ + 3
++        );
++        int roofLayers = Math.max(1, (roofSpan + 1) / 2);
++        int finialY = topY + roofLayers + 2;
++        place(queue, setBlock,
++                centerX,
++                finialY,
++                centerZ,
++                Material.DARK_OAK_FENCE
++        );
++        place(queue, setBlock,
++                centerX,
++                finialY + 1,
++                centerZ,
++                Material.LIGHTNING_ROD
++        );
++    }
++
++    private static void buildGateGallery(Queue<Runnable> queue,
++                                         World world,
++                                         TerrainManager.SetBlock setBlock,
++                                         int centerX,
++                                         int minZ,
++                                         int maxZ,
++                                         int baseY) {
++        int floorY = baseY + 6;
++        int roofY = baseY + 12;
++
++        for (int x = centerX - GATE_HALF_WIDTH;
++             x <= centerX + GATE_HALF_WIDTH;
++             x++) {
++            for (int z = minZ; z <= maxZ; z++) {
++                int fx = x;
++                int fz = z;
++
++                place(queue, setBlock,
++                        fx,
++                        floorY,
++                        fz,
++                        Math.floorMod(fx + fz, 2) == 0
++                                ? Material.SPRUCE_PLANKS
++                                : Material.DARK_OAK_PLANKS
++                );
++                place(queue, setBlock,
++                        fx,
++                        roofY,
++                        fz,
++                        Material.STONE_BRICKS
++                );
++
++                boolean facade = z == minZ || z == maxZ;
++                if (facade) {
++                    for (int y = floorY + 1; y < roofY; y++) {
++                        int fy = y;
++                        boolean glazed = Math.abs(x - centerX) <= 1
++                                && (y == baseY + 9
++                                || y == baseY + 10);
++                        Material material = glazed
++                                ? Material.GRAY_STAINED_GLASS
++                                : patternedStone(
++                                Material.STONE_BRICKS,
++                                x,
++                                y,
++                                z
++                        );
++                        place(queue, setBlock,
++                                fx,
++                                fy,
++                                fz,
++                                material
++                        );
++                    }
++                } else {
++                    for (int y = floorY + 1; y < roofY; y++) {
++                        int fy = y;
++                        place(queue, setBlock,
++                                fx,
++                                fy,
++                                fz,
++                                Material.AIR
++                        );
++                    }
++                }
++            }
++        }
++
++        // Cr√©neaux du pont sup√©rieur, plus massifs que l'ancienne galerie.
++        int merlonY = roofY + 1;
++        for (int x = centerX - GATE_HALF_WIDTH;
++             x <= centerX + GATE_HALF_WIDTH;
++             x++) {
++            if (merlonAt(x)) {
++                addMerlon(
++                        queue,
++                        world,
++                        setBlock,
++                        x,
++                        merlonY,
++                        minZ
++                );
++                addMerlon(
++                        queue,
++                        world,
++                        setBlock,
++                        x,
++                        merlonY,
++                        maxZ
++                );
++            }
++        }
++        for (int z = minZ + 1; z <= maxZ - 1; z++) {
++            place(queue, setBlock,
++                    centerX - GATE_HALF_WIDTH,
++                    merlonY,
++                    z,
++                    Material.STONE_BRICK_WALL
++            );
++            place(queue, setBlock,
++                    centerX + GATE_HALF_WIDTH,
++                    merlonY,
++                    z,
++                    Material.STONE_BRICK_WALL
++            );
++        }
++    }
++
++    private static void buildGateArches(Queue<Runnable> queue,
++                                        World world,
++                                        TerrainManager.SetBlock setBlock,
++                                        int centerX,
++                                        int minZ,
++                                        int maxZ,
++                                        int baseY) {
++        for (int z : new int[]{minZ, maxZ}) {
++            // Jambages √©pais de part et d'autre du passage.
++            for (int y = baseY + 1; y <= baseY + 6; y++) {
++                int fy = y;
++                place(queue, setBlock,
++                        centerX - GATE_HALF_WIDTH - 1,
++                        fy,
++                        z,
++                        Material.POLISHED_ANDESITE
++                );
++                place(queue, setBlock,
++                        centerX + GATE_HALF_WIDTH + 1,
++                        fy,
++                        z,
++                        Material.POLISHED_ANDESITE
++                );
++            }
++
++            // √âpaules de l'arche : le centre reste libre jusqu'√† cinq blocs.
++            stair(
++                    queue,
++                    world,
++                    setBlock,
++                    centerX - GATE_HALF_WIDTH,
++                    baseY + 5,
++                    z,
++                    Material.STONE_BRICK_STAIRS,
++                    BlockFace.EAST,
++                    Stairs.Half.TOP,
++                    Stairs.Shape.STRAIGHT
++            );
++            stair(
++                    queue,
++                    world,
++                    setBlock,
++                    centerX + GATE_HALF_WIDTH,
++                    baseY + 5,
++                    z,
++                    Material.STONE_BRICK_STAIRS,
++                    BlockFace.WEST,
++                    Stairs.Half.TOP,
++                    Stairs.Shape.STRAIGHT
++            );
++
++            for (int x = centerX - GATE_HALF_WIDTH;
++                 x <= centerX + GATE_HALF_WIDTH;
++                 x++) {
++                int fx = x;
++                place(queue, setBlock,
++                        fx,
++                        baseY + 6,
++                        z,
++                        Material.CHISELED_STONE_BRICKS
++                );
++            }
++        }
++    }
++
++    private static void addRaisedPortcullis(Queue<Runnable> queue,
++                                            TerrainManager.SetBlock setBlock,
++                                            int centerX,
++                                            int z,
++                                            int baseY) {
++        /*
++         * La herse est stock√©e au-dessus de l'arche. Elle reste visible depuis
++         * la rue mais aucun barreau ne descend dans les cinq blocs de passage.
++         */
++        for (int x = centerX - GATE_HALF_WIDTH;
++             x <= centerX + GATE_HALF_WIDTH;
++             x++) {
++            int fx = x;
++            for (int y = baseY + 7; y <= baseY + 9; y++) {
++                int fy = y;
++                place(queue, setBlock,
++                        fx,
++                        fy,
++                        z,
++                        Material.IRON_BARS
++                );
++            }
++        }
++
++        // Glissi√®res lat√©rales de la herse.
++        for (int y = baseY + 1; y <= baseY + 6; y++) {
++            int fy = y;
++            place(queue, setBlock,
++                    centerX - GATE_HALF_WIDTH - 1,
++                    fy,
++                    z,
++                    Material.IRON_BARS
++            );
++            place(queue, setBlock,
++                    centerX + GATE_HALF_WIDTH + 1,
++                    fy,
++                    z,
++                    Material.IRON_BARS
++            );
++        }
++    }
++
++    private static void addGatehouseIdentity(
++            Queue<Runnable> queue,
++            World world,
++            TerrainManager.SetBlock setBlock,
++            int centerX,
++            int leftInnerX,
++            int rightInnerX,
++            int frontZ,
++            int baseY) {
++        for (int x : new int[]{leftInnerX, rightInnerX}) {
++            place(queue, setBlock,
++                    x,
++                    baseY + 8,
++                    frontZ + 1,
++                    Material.DARK_OAK_FENCE
++            );
++            place(queue, setBlock,
++                    x,
++                    baseY + 7,
++                    frontZ + 1,
++                    Material.CHAIN
++            );
++            place(queue, setBlock,
++                    x,
++                    baseY + 6,
++                    frontZ + 1,
++                    Material.LANTERN
++            );
++
++            place(queue, setBlock,
++                    x,
++                    baseY + 9,
++                    frontZ + 1,
++                    Material.RED_WALL_BANNER
++            );
++            queue.add(() -> VillageStyle.setDirectional(
++                    world,
++                    x,
++                    baseY + 9,
++                    frontZ + 1,
++                    Material.RED_WALL_BANNER,
++                    BlockFace.SOUTH
++            ));
++        }
++
++        // Blason central au-dessus de l'arche.
++        place(queue, setBlock,
++                centerX,
++                baseY + 11,
++                frontZ + 1,
++                Material.YELLOW_WALL_BANNER
++        );
++        queue.add(() -> VillageStyle.setDirectional(
++                world,
++                centerX,
++                baseY + 11,
++                frontZ + 1,
++                Material.YELLOW_WALL_BANNER,
++                BlockFace.SOUTH
++        ));
+     }
+ 
+     private static void buildGateApproach(Queue<Runnable> queue,
+@@ -418,54 +1505,169 @@ public final class WallBuilder {
+                                           int endZ,
+                                           int baseY) {
+         for (int z = startZ; z <= endZ; z++) {
+-            for (int dx = -GATE_HALF_WIDTH; dx <= GATE_HALF_WIDTH; dx++) {
++            for (int dx = -APPROACH_HALF_WIDTH;
++                 dx <= APPROACH_HALF_WIDTH;
++                 dx++) {
+                 int x = centerX + dx;
+                 int fz = z;
++
++                place(queue, setBlock,
++                        x,
++                        baseY - 1,
++                        fz,
++                        Math.abs(dx) == APPROACH_HALF_WIDTH
++                                ? Material.STONE_BRICKS
++                                : Material.COBBLESTONE
++                );
++
+                 Material material;
+-                if (Math.abs(dx) == GATE_HALF_WIDTH) {
+-                    material = Math.floorMod(x + z, 2) == 0
+-                            ? Material.COBBLESTONE
++                if (Math.abs(dx) == APPROACH_HALF_WIDTH) {
++                    material = Math.floorMod(x + z, 3) == 0
++                            ? Material.POLISHED_ANDESITE
+                             : Material.STONE_BRICKS;
+                 } else {
+-                    material = Math.floorMod(x * 17 + z * 31, 5) == 0
+-                            ? Material.POLISHED_ANDESITE
+-                            : Material.GRAVEL;
++                    int selector = Math.floorMod(
++                            x * 17 + z * 31,
++                            7
++                    );
++                    material = switch (selector) {
++                        case 0 -> Material.POLISHED_ANDESITE;
++                        case 1 -> Material.COBBLESTONE;
++                        case 2 -> Material.ANDESITE;
++                        default -> Material.GRAVEL;
++                    };
+                 }
++
+                 Material finalMaterial = material;
+-                queue.add(() -> setBlock.set(x, baseY, fz, finalMaterial));
++                place(queue, setBlock,
++                        x,
++                        baseY,
++                        fz,
++                        finalMaterial
++                );
+             }
+         }
++
++        // Bornes basses qui cadrent l'entr√©e sans g√™ner les joueurs.
++        for (int dx : new int[]{
++                -APPROACH_HALF_WIDTH,
++                APPROACH_HALF_WIDTH
++        }) {
++            int x = centerX + dx;
++            place(queue, setBlock,
++                    x,
++                    baseY + 1,
++                    endZ - 2,
++                    Material.STONE_BRICK_WALL
++            );
++            place(queue, setBlock,
++                    x,
++                    baseY + 2,
++                    endZ - 2,
++                    Material.LANTERN
++            );
++        }
+     }
+ 
+-    private static void addTopSlab(Queue<Runnable> queue,
+-                                   World world,
+-                                   TerrainManager.SetBlock setBlock,
+-                                   int x,
+-                                   int y,
+-                                   int z) {
+-        queue.add(() -> setBlock.set(x, y, z, Material.STONE_BRICK_SLAB));
++    private static void place(Queue<Runnable> queue,
++                              TerrainManager.SetBlock setBlock,
++                              int x,
++                              int y,
++                              int z,
++                              Material material) {
++        queue.add(() -> setBlock.set(x, y, z, material));
++    }
++
++    private static void stair(Queue<Runnable> queue,
++                              World world,
++                              TerrainManager.SetBlock setBlock,
++                              int x,
++                              int y,
++                              int z,
++                              Material material,
++                              BlockFace facing,
++                              Stairs.Half half,
++                              Stairs.Shape shape) {
++        place(queue, setBlock, x, y, z, material);
++        queue.add(() -> VillageStyle.setStair(
++                world,
++                x,
++                y,
++                z,
++                material,
++                facing,
++                half,
++                shape
++        ));
++    }
++
++    private static void slab(Queue<Runnable> queue,
++                             World world,
++                             TerrainManager.SetBlock setBlock,
++                             int x,
++                             int y,
++                             int z,
++                             Material material,
++                             Slab.Type type) {
++        place(queue, setBlock, x, y, z, material);
+         queue.add(() -> VillageStyle.setSlab(
+-                world, x, y, z,
+-                Material.STONE_BRICK_SLAB,
+-                Slab.Type.TOP
++                world,
++                x,
++                y,
++                z,
++                material,
++                type
+         ));
+     }
+ 
++    private static boolean merlonAt(int coordinate) {
++        return Math.floorMod(coordinate, 4) <= 1;
++    }
++
++    private static boolean isSlitCoordinate(int x,
++                                            int z,
++                                            int minX,
++                                            int maxX) {
++        return Math.floorMod(
++                axisCoordinate(x, z, minX, maxX),
++                9
++        ) == 4;
++    }
++
++    private static Material walkwayStone(int x, int z) {
++        return Math.floorMod(x * 13 + z * 7, 9) == 0
++                ? Material.MOSSY_STONE_BRICKS
++                : Material.POLISHED_ANDESITE;
++    }
++
++    private static Material foundationStone(int x, int y, int z) {
++        int selector = Math.floorMod(
++                x * 19 + y * 11 + z * 23,
++                7
++        );
++        return selector <= 1
++                ? Material.DEEPSLATE_BRICKS
++                : Material.COBBLED_DEEPSLATE;
++    }
++
+     private static Material patternedStone(Material primary,
+                                            int x,
+                                            int y,
+                                            int z) {
+-        int selector = Math.floorMod(x * 31 + y * 13 + z * 17, 23);
+-        if (selector == 0 || selector == 7) {
+-            return Material.MOSSY_STONE_BRICKS;
+-        }
+-        if (selector == 3) {
+-            return Material.CRACKED_STONE_BRICKS;
+-        }
+-        if (selector == 11) {
+-            return Material.COBBLESTONE;
+-        }
+-        return primary == null ? Material.STONE_BRICKS : primary;
++        int selector = Math.floorMod(
++                x * 31 + y * 13 + z * 17,
++                29
++        );
++        return switch (selector) {
++            case 0, 7 -> Material.MOSSY_STONE_BRICKS;
++            case 3 -> Material.CRACKED_STONE_BRICKS;
++            case 11 -> Material.COBBLESTONE;
++            case 17 -> Material.ANDESITE;
++            case 23 -> Material.DEEPSLATE_BRICKS;
++            default -> primary == null
++                    ? Material.STONE_BRICKS
++                    : primary;
++        };
+     }
+ 
+     private static boolean isOuterFace(int x,
+@@ -474,7 +1676,31 @@ public final class WallBuilder {
+                                        int maxX,
+                                        int minZ,
+                                        int maxZ) {
+-        return x == minX || x == maxX || z == minZ || z == maxZ;
++        return x == minX
++                || x == maxX
++                || z == minZ
++                || z == maxZ;
++    }
++
++    private static BlockFace outwardFace(int x,
++                                         int z,
++                                         int minX,
++                                         int maxX,
++                                         int minZ,
++                                         int maxZ) {
++        if (x == minX) {
++            return BlockFace.WEST;
++        }
++        if (x == maxX) {
++            return BlockFace.EAST;
++        }
++        if (z == minZ) {
++            return BlockFace.NORTH;
++        }
++        if (z == maxZ) {
++            return BlockFace.SOUTH;
++        }
++        return BlockFace.SELF;
+     }
+ 
+     private static int axisCoordinate(int x,
+@@ -483,4 +1709,11 @@ public final class WallBuilder {
+                                       int maxX) {
+         return x == minX || x == maxX ? z : x;
+     }
++
++    private static boolean cardinal(BlockFace face) {
++        return face == BlockFace.NORTH
++                || face == BlockFace.SOUTH
++                || face == BlockFace.EAST
++                || face == BlockFace.WEST;
++    }
+ }
+diff --git a/src/test/java/org/example/village/VillageStructureTest.java b/src/test/java/org/example/village/VillageStructureTest.java
+index d22038d8df73caae756e757ffbe50f229202c409..54bace029628d2c2d8ae1fa6c9c44feb0fb65074 100644
+--- a/src/test/java/org/example/village/VillageStructureTest.java
++++ b/src/test/java/org/example/village/VillageStructureTest.java
+@@ -38,6 +38,18 @@ class VillageStructureTest {
+         );
+         queue.forEach(Runnable::run);
+ 
++        int[] bounds = WallBuilder.outerBounds(
++                new Location(null, 0, 64, 0),
++                10,
++                10
++        );
++        assertEquals(-16, bounds[0]);
++        assertEquals(16, bounds[1]);
++        assertEquals(-16, bounds[2]);
++        assertEquals(16, bounds[3]);
++        assertEquals(Material.DARK_OAK_STAIRS,
++                blocks.get(key(-16, 78, -16)));
++
+         assertTrue(blocks.values().contains(Material.LANTERN));
+         assertTrue(blocks.values().contains(Material.CHAIN));
+         assertTrue(blocks.values().contains(Material.DARK_OAK_FENCE));
+@@ -46,14 +58,24 @@ class VillageStructureTest {
+         assertTrue(blocks.values().contains(Material.STONE_BRICK_SLAB));
+         assertTrue(blocks.values().contains(Material.IRON_BARS));
+ 
+-        // Le passage reste libre sur toute la hauteur utile.
+-        for (int y = 65; y <= 68; y++) {
+-            assertEquals(Material.AIR, blocks.get(key(0, y, 10)));
++        /*
++         * Avec rz=10 et une √©paisseur de trois blocs, le ch√¢telet est centr√©
++         * sur z=11. Le passage conserve cinq blocs libres sur toute sa
++         * profondeur et la herse reste enti√®rement relev√©e.
++         */
++        for (int y = 65; y <= 69; y++) {
++            assertEquals(Material.AIR, blocks.get(key(0, y, 11)));
+         }
+-        // La herse est visible dans la galerie, mais ne bloque pas l'arche.
+-        assertEquals(Material.IRON_BARS, blocks.get(key(0, 69, 12)));
++        assertEquals(Material.CHISELED_STONE_BRICKS,
++                blocks.get(key(0, 70, 15)));
++        assertEquals(Material.IRON_BARS,
++                blocks.get(key(0, 71, 14)));
++
++        // Les tours et leurs √©pis dominent nettement les courtines.
+         assertTrue(blocks.keySet().stream()
+-                .anyMatch(position -> yOf(position) >= 73));
++                .anyMatch(position -> yOf(position) >= 86));
++        assertTrue(blocks.values().contains(Material.DEEPSLATE_BRICKS));
++        assertTrue(blocks.values().contains(Material.GRAY_STAINED_GLASS));
+     }
+ 
+     @Test
+@@ -75,6 +97,8 @@ class VillageStructureTest {
+         assertEquals(Material.SPRUCE_TRAPDOOR, sprucePalette.shutter());
+         assertEquals(Material.SPRUCE_FENCE, sprucePalette.fence());
+         assertEquals(Material.OAK_PLANKS, sprucePalette.floor());
++        assertEquals(Material.GLASS, sprucePalette.window());
++        assertEquals(Material.GLASS, darkOakPalette.window());
+     }
+ 
+     @Test
+@@ -98,14 +122,65 @@ class VillageStructureTest {
+                 Material.SPRUCE_SLAB,
+                 Material.WHITE_TERRACOTTA,
+                 Material.STRIPPED_SPRUCE_LOG,
+-                Material.GLASS_PANE
++                Material.GLASS
+         );
+         tasks.forEach(Runnable::run);
+ 
+-        assertEquals(Material.SPRUCE_SLAB, blocks.get(key(0, 73, 0)));
+-        assertEquals(Material.GLASS_PANE, blocks.get(key(0, 71, -4)));
+-        assertEquals(Material.GLASS_PANE, blocks.get(key(0, 71, 4)));
+-        assertFalse(blocks.keySet().stream().anyMatch(position -> yOf(position) > 73));
++        assertEquals(Material.SPRUCE_SLAB, blocks.get(key(0, 75, 0)));
++        assertEquals(Material.SPRUCE_PLANKS, blocks.get(key(0, 74, 0)));
++        assertEquals(Material.GLASS, blocks.get(key(0, 71, -4)));
++        assertEquals(Material.GLASS, blocks.get(key(0, 71, 4)));
++        assertFalse(blocks.keySet().stream()
++                .anyMatch(position -> yOf(position) > 75));
++
++        /*
++         * Chaque niveau du noyau est plein entre ses deux rampants. Ces blocs
++         * emp√™chent le ciel d'appara√Ætre entre deux rang√©es d'escaliers.
++         */
++        for (int layer = 0; layer <= 4; layer++) {
++            assertTrue(blocks.containsKey(key(0, 70 + layer, 0)));
++        }
++    }
++
++    @Test
++    void hipRoofUsesSolidShrinkingCoreAndSupportedCap() {
++        Map<String, Material> blocks = new HashMap<>();
++        List<Runnable> tasks = new ArrayList<>();
++        TerrainManager.SetBlock setBlock =
++                (x, y, z, material) -> blocks.put(key(x, y, z), material);
++
++        VillageRoofBuilder.buildHip(
++                tasks,
++                null,
++                setBlock,
++                -2,
++                2,
++                -2,
++                2,
++                70,
++                Material.DARK_OAK_PLANKS,
++                Material.DARK_OAK_STAIRS,
++                Material.DARK_OAK_SLAB
++        );
++        tasks.forEach(Runnable::run);
++
++        for (int layer = 0; layer <= 3; layer++) {
++            int min = -3 + layer;
++            int max = 3 - layer;
++            for (int x = min; x <= max; x++) {
++                for (int z = min; z <= max; z++) {
++                    assertTrue(
++                            blocks.containsKey(key(x, 70 + layer, z)),
++                            "Trou d√©tect√© dans le noyau de toiture en croupe"
++                    );
++                }
++            }
++        }
++
++        assertEquals(Material.DARK_OAK_PLANKS,
++                blocks.get(key(0, 73, 0)));
++        assertEquals(Material.DARK_OAK_SLAB,
++                blocks.get(key(0, 74, 0)));
+     }
+ 
+     @Test
+@@ -136,7 +211,9 @@ class VillageStructureTest {
+         SpecialBuildings.buildChurch(null, lot, 64, setBlock)
+                 .forEach(Runnable::run);
+ 
+-        assertTrue(blocks.values().contains(Material.BLUE_STAINED_GLASS_PANE));
++        assertTrue(blocks.values().contains(Material.BLUE_STAINED_GLASS));
++        assertFalse(blocks.values().stream()
++                .anyMatch(material -> material.name().endsWith("_GLASS_PANE")));
+         assertTrue(blocks.values().contains(Material.QUARTZ_BLOCK));
+         assertTrue(blocks.values().contains(Material.SPRUCE_STAIRS));
+         assertTrue(blocks.values().contains(Material.DARK_OAK_STAIRS));
+@@ -230,7 +307,9 @@ class VillageStructureTest {
+ 
+         assertTrue(values.contains(Material.SPRUCE_STAIRS));
+         assertTrue(values.contains(Material.SPRUCE_SLAB));
+-        assertTrue(values.contains(Material.GLASS_PANE));
++        assertTrue(values.contains(Material.GLASS));
++        assertFalse(values.stream()
++                .anyMatch(material -> material.name().endsWith("_GLASS_PANE")));
+         assertTrue(values.contains(Material.SPRUCE_DOOR));
+         assertTrue(values.contains(Material.LANTERN));
+         assertTrue(values.contains(Material.RED_WALL_BANNER)

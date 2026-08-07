@@ -3,9 +3,14 @@ package org.example;
 import be.seeseemelk.mockbukkit.MockBukkit;
 import be.seeseemelk.mockbukkit.ServerMock;
 import org.bukkit.ChatColor;
+import org.bukkit.Difficulty;
 import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.World;
+import org.bukkit.attribute.Attribute;
+import org.bukkit.attribute.AttributeInstance;
+import org.bukkit.attribute.AttributeModifier;
+import org.bukkit.block.Block;
 import org.bukkit.damage.DamageSource;
 import org.bukkit.entity.ComplexEntityPart;
 import org.bukkit.entity.ComplexLivingEntity;
@@ -16,13 +21,20 @@ import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Mob;
 import org.bukkit.entity.Player;
 import org.bukkit.entity.Projectile;
+import org.bukkit.entity.Snowman;
 import org.bukkit.entity.Wolf;
+import org.bukkit.entity.Zombie;
+import org.bukkit.event.Event;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
+import org.bukkit.event.entity.EntityChangeBlockEvent;
 import org.bukkit.event.entity.EntityDamageByEntityEvent;
 import org.bukkit.event.entity.EntityDeathEvent;
+import org.bukkit.event.entity.EntityInteractEvent;
 import org.bukkit.event.entity.EntityTargetEvent;
 import org.bukkit.event.entity.EntityTargetLivingEntityEvent;
+import org.bukkit.event.entity.EntityTransformEvent;
+import org.bukkit.event.player.PlayerBedEnterEvent;
 import org.bukkit.event.player.PlayerChangedWorldEvent;
 import org.bukkit.event.player.PlayerQuitEvent;
 import org.bukkit.event.world.EntitiesLoadEvent;
@@ -45,6 +57,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.clearInvocations;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
@@ -109,6 +122,13 @@ class RoyalGuardManagerTest {
         assertEquals(5, RoyalGuardManager.SWORD_SHARPNESS_LEVEL);
         assertEquals(3, RoyalGuardManager.SWORD_UNBREAKING_LEVEL);
         assertEquals(1, RoyalGuardManager.SWORD_MENDING_LEVEL);
+
+        ItemStack armor = RoyalGuardManager.createRoyalArmor(Material.NETHERITE_CHESTPLATE);
+        ItemStack sword = RoyalGuardManager.createRoyalSword();
+        assertNotNull(armor.getItemMeta());
+        assertNotNull(sword.getItemMeta());
+        assertTrue(armor.getItemMeta().isUnbreakable());
+        assertTrue(sword.getItemMeta().isUnbreakable());
     }
 
     @Test
@@ -166,17 +186,52 @@ class RoyalGuardManagerTest {
 
     @Test
     void golemProtectionHandlersRunLastAndObserveAlreadyCancelledEvents() throws NoSuchMethodException {
-        EventHandler targetHandler = RoyalGuardManager.class
+        EventHandler ironTargetHandler = RoyalGuardManager.class
                 .getMethod("onIronGolemTargetsGuard", EntityTargetLivingEntityEvent.class)
                 .getAnnotation(EventHandler.class);
-        EventHandler damageHandler = RoyalGuardManager.class
+        EventHandler ironDamageHandler = RoyalGuardManager.class
                 .getMethod("onIronGolemDamagesGuard", EntityDamageByEntityEvent.class)
                 .getAnnotation(EventHandler.class);
+        EventHandler snowTargetHandler = RoyalGuardManager.class
+                .getMethod("onSnowGolemTargetsGuard", EntityTargetLivingEntityEvent.class)
+                .getAnnotation(EventHandler.class);
+        EventHandler snowDamageHandler = RoyalGuardManager.class
+                .getMethod("onSnowGolemDamagesGuard", EntityDamageByEntityEvent.class)
+                .getAnnotation(EventHandler.class);
 
-        assertEquals(EventPriority.HIGHEST, targetHandler.priority());
-        assertFalse(targetHandler.ignoreCancelled());
-        assertEquals(EventPriority.HIGHEST, damageHandler.priority());
-        assertFalse(damageHandler.ignoreCancelled());
+        assertEquals(EventPriority.HIGHEST, ironTargetHandler.priority());
+        assertFalse(ironTargetHandler.ignoreCancelled());
+        assertEquals(EventPriority.HIGHEST, ironDamageHandler.priority());
+        assertFalse(ironDamageHandler.ignoreCancelled());
+        assertEquals(EventPriority.HIGHEST, snowTargetHandler.priority());
+        assertFalse(snowTargetHandler.ignoreCancelled());
+        assertEquals(EventPriority.HIGHEST, snowDamageHandler.priority());
+        assertFalse(snowDamageHandler.ignoreCancelled());
+    }
+
+    @Test
+    void vanillaSafetyHandlersRunLastAndObserveAlreadyCancelledEvents() throws NoSuchMethodException {
+        EventHandler transformHandler = RoyalGuardManager.class
+                .getMethod("onGuardTransform", EntityTransformEvent.class)
+                .getAnnotation(EventHandler.class);
+        EventHandler blockHandler = RoyalGuardManager.class
+                .getMethod("onGuardChangesBlock", EntityChangeBlockEvent.class)
+                .getAnnotation(EventHandler.class);
+        EventHandler interactionHandler = RoyalGuardManager.class
+                .getMethod("onGuardInteractsWithFragileBlock", EntityInteractEvent.class)
+                .getAnnotation(EventHandler.class);
+        EventHandler sleepHandler = RoyalGuardManager.class
+                .getMethod("onPlayerBedEnter", PlayerBedEnterEvent.class)
+                .getAnnotation(EventHandler.class);
+
+        assertEquals(EventPriority.HIGHEST, transformHandler.priority());
+        assertFalse(transformHandler.ignoreCancelled());
+        assertEquals(EventPriority.HIGHEST, blockHandler.priority());
+        assertFalse(blockHandler.ignoreCancelled());
+        assertEquals(EventPriority.HIGHEST, interactionHandler.priority());
+        assertFalse(interactionHandler.ignoreCancelled());
+        assertEquals(EventPriority.HIGHEST, sleepHandler.priority());
+        assertFalse(sleepHandler.ignoreCancelled());
     }
 
     @Test
@@ -1338,6 +1393,243 @@ class RoyalGuardManagerTest {
         assertFalse(manager.isRoyalGuard(invalidSlot));
     }
 
+
+    @Test
+    void peacefulWorldRefusesSummonWithoutCreatingAPartialSquad() {
+        GuardFixture fixture = new GuardFixture();
+        when(fixture.world.getDifficulty()).thenReturn(Difficulty.PEACEFUL);
+
+        manager.onCommand(fixture.owner, null, "garde", new String[]{"invoquer"});
+
+        assertFalse(manager.hasActiveSquad(fixture.ownerId));
+        assertEquals(0, guardFactory.requests.size());
+        verify(fixture.owner).sendMessage(ChatColor.RED
+                + "Les gardes royaux ne peuvent pas rester dans un monde en difficulté Paisible.");
+    }
+
+    @Test
+    void activeSquadIsDismissedWhenItsWorldBecomesPeaceful() {
+        GuardFixture fixture = new GuardFixture();
+        manager.onCommand(fixture.owner, null, "garde", new String[0]);
+        when(fixture.world.getDifficulty()).thenReturn(Difficulty.PEACEFUL);
+
+        manager.followActiveSquads();
+
+        assertFalse(manager.hasActiveSquad(fixture.ownerId));
+        verify(fixture.first.guard).remove();
+        verify(fixture.second.guard).remove();
+        verify(fixture.owner).sendMessage(ChatColor.RED
+                + "Tes gardes royaux ont été renvoyés : les Husks ne persistent pas en difficulté Paisible.");
+    }
+
+    @Test
+    void maintenanceStopsConversionReinforcementsAndVehicleEntrapment() {
+        GuardFixture fixture = new GuardFixture();
+        manager.onCommand(fixture.owner, null, "garde", new String[0]);
+
+        AttributeInstance reinforcementChance = mock(AttributeInstance.class);
+        AttributeModifier modifier = mock(AttributeModifier.class);
+        when(fixture.first.guard.getAttribute(Attribute.SPAWN_REINFORCEMENTS))
+                .thenReturn(reinforcementChance);
+        when(reinforcementChance.getBaseValue()).thenReturn(0.25D);
+        when(reinforcementChance.getModifiers()).thenReturn(List.of(modifier));
+        when(fixture.first.guard.isConverting()).thenReturn(true);
+        when(fixture.first.guard.isInsideVehicle()).thenReturn(true);
+
+        manager.followActiveSquads();
+
+        verify(reinforcementChance).setBaseValue(0.0D);
+        verify(reinforcementChance).removeModifier(modifier);
+        verify(fixture.first.guard).setConversionTime(-1);
+        verify(fixture.first.guard).stopDrowning();
+        verify(fixture.first.guard).leaveVehicle();
+    }
+
+    @Test
+    void guardTransformationIsCancelledAndItsConversionStateIsReset() {
+        GuardFixture fixture = new GuardFixture();
+        when(fixture.first.guard.isConverting()).thenReturn(true);
+        EntityTransformEvent event = mock(EntityTransformEvent.class);
+        when(event.getEntity()).thenReturn(fixture.first.guard);
+
+        manager.onGuardTransform(event);
+
+        verify(event).setCancelled(true);
+        verify(fixture.first.guard).setConversionTime(-1);
+        verify(fixture.first.guard).stopDrowning();
+    }
+
+    @Test
+    void transformedMarkedEntityIsRemovedEvenWhenItIsNoLongerAHusk() {
+        Zombie transformedGuard = mock(Zombie.class);
+        PersistentDataContainer pdc = mock(PersistentDataContainer.class);
+        when(transformedGuard.getUniqueId()).thenReturn(UUID.randomUUID());
+        when(transformedGuard.getPersistentDataContainer()).thenReturn(pdc);
+        when(pdc.get(Keys.royalGuardType(), PersistentDataType.STRING))
+                .thenReturn(RoyalGuardManager.GUARD_TYPE);
+        when(transformedGuard.isDead()).thenReturn(false);
+
+        EntitiesLoadEvent event = mock(EntitiesLoadEvent.class);
+        when(event.getEntities()).thenReturn(List.<Entity>of(transformedGuard));
+
+        manager.onEntitiesLoad(event);
+
+        verify(transformedGuard).remove();
+    }
+
+    @Test
+    void guardsCannotChangeBlocksOrTrampleFragileBlocks() {
+        GuardFixture fixture = new GuardFixture();
+
+        EntityChangeBlockEvent blockChange = mock(EntityChangeBlockEvent.class);
+        when(blockChange.getEntity()).thenReturn(fixture.first.guard);
+        manager.onGuardChangesBlock(blockChange);
+        verify(blockChange).setCancelled(true);
+
+        Block turtleEgg = mock(Block.class);
+        when(turtleEgg.getType()).thenReturn(Material.TURTLE_EGG);
+        EntityInteractEvent turtleInteraction = mock(EntityInteractEvent.class);
+        when(turtleInteraction.getEntity()).thenReturn(fixture.first.guard);
+        when(turtleInteraction.getBlock()).thenReturn(turtleEgg);
+        manager.onGuardInteractsWithFragileBlock(turtleInteraction);
+        verify(turtleInteraction).setCancelled(true);
+
+        Block farmland = mock(Block.class);
+        when(farmland.getType()).thenReturn(Material.FARMLAND);
+        EntityInteractEvent farmlandInteraction = mock(EntityInteractEvent.class);
+        when(farmlandInteraction.getEntity()).thenReturn(fixture.first.guard);
+        when(farmlandInteraction.getBlock()).thenReturn(farmland);
+        manager.onGuardInteractsWithFragileBlock(farmlandInteraction);
+        verify(farmlandInteraction).setCancelled(true);
+
+        Block pressurePlate = mock(Block.class);
+        when(pressurePlate.getType()).thenReturn(Material.STONE_PRESSURE_PLATE);
+        EntityInteractEvent pressurePlateInteraction = mock(EntityInteractEvent.class);
+        when(pressurePlateInteraction.getEntity()).thenReturn(fixture.first.guard);
+        when(pressurePlateInteraction.getBlock()).thenReturn(pressurePlate);
+        manager.onGuardInteractsWithFragileBlock(pressurePlateInteraction);
+        verify(pressurePlateInteraction, never()).setCancelled(true);
+    }
+
+    @Test
+    void blockProtectionCanBeDisabledExplicitly() {
+        GuardFixture fixture = new GuardFixture();
+        plugin.getConfig().set("garde.prevent-block-damage", false);
+        EntityChangeBlockEvent blockChange = mock(EntityChangeBlockEvent.class);
+        when(blockChange.getEntity()).thenReturn(fixture.first.guard);
+
+        manager.onGuardChangesBlock(blockChange);
+
+        verify(blockChange, never()).setCancelled(true);
+    }
+
+    @Test
+    void harmlessRoyalGuardsAloneDoNotBlockTheirOwnersBed() {
+        GuardFixture fixture = new GuardFixture();
+        manager.onCommand(fixture.owner, null, "garde", new String[0]);
+
+        Block bed = mock(Block.class);
+        when(bed.getWorld()).thenReturn(fixture.world);
+        when(bed.getLocation()).thenReturn(new Location(fixture.world, 0.0D, 64.0D, 0.0D));
+        when(fixture.world.getNearbyEntities(
+                any(Location.class), eq(8.5D), eq(5.5D), eq(8.5D)))
+                .thenReturn(List.<Entity>of(fixture.first.guard, fixture.second.guard));
+
+        PlayerBedEnterEvent event = mock(PlayerBedEnterEvent.class);
+        when(event.getPlayer()).thenReturn(fixture.owner);
+        when(event.getBed()).thenReturn(bed);
+        when(event.getBedEnterResult()).thenReturn(PlayerBedEnterEvent.BedEnterResult.NOT_SAFE);
+        when(event.useBed()).thenReturn(Event.Result.DEFAULT);
+
+        manager.onPlayerBedEnter(event);
+
+        verify(event).setUseBed(Event.Result.ALLOW);
+    }
+
+    @Test
+    void aRealMonsterStillBlocksTheBedNearRoyalGuards() {
+        GuardFixture fixture = new GuardFixture();
+        manager.onCommand(fixture.owner, null, "garde", new String[0]);
+
+        Block bed = mock(Block.class);
+        when(bed.getWorld()).thenReturn(fixture.world);
+        when(bed.getLocation()).thenReturn(new Location(fixture.world, 0.0D, 64.0D, 0.0D));
+        Husk monster = unmarkedHusk(fixture.world);
+        when(fixture.world.getNearbyEntities(
+                any(Location.class), eq(8.5D), eq(5.5D), eq(8.5D)))
+                .thenReturn(List.<Entity>of(fixture.first.guard, fixture.second.guard, monster));
+
+        PlayerBedEnterEvent event = mock(PlayerBedEnterEvent.class);
+        when(event.getPlayer()).thenReturn(fixture.owner);
+        when(event.getBed()).thenReturn(bed);
+        when(event.getBedEnterResult()).thenReturn(PlayerBedEnterEvent.BedEnterResult.NOT_SAFE);
+        when(event.useBed()).thenReturn(Event.Result.DEFAULT);
+
+        manager.onPlayerBedEnter(event);
+
+        verify(event, never()).setUseBed(Event.Result.ALLOW);
+    }
+
+    @Test
+    void anExplicitBedDenialFromAnotherPluginIsPreserved() {
+        GuardFixture fixture = new GuardFixture();
+        manager.onCommand(fixture.owner, null, "garde", new String[0]);
+
+        PlayerBedEnterEvent event = mock(PlayerBedEnterEvent.class);
+        when(event.getBedEnterResult()).thenReturn(PlayerBedEnterEvent.BedEnterResult.NOT_SAFE);
+        when(event.useBed()).thenReturn(Event.Result.DENY);
+
+        manager.onPlayerBedEnter(event);
+
+        verify(event, never()).setUseBed(Event.Result.ALLOW);
+    }
+
+    @Test
+    void snowGolemsCannotTargetOrDamageRoyalGuardsAndNeverTriggerRetaliation() {
+        GuardFixture fixture = new GuardFixture();
+        manager.onCommand(fixture.owner, null, "garde", new String[0]);
+        Snowman golem = snowGolem(fixture.world);
+        when(golem.getTarget()).thenReturn(fixture.first.guard);
+
+        EntityTargetLivingEntityEvent targetEvent = mock(EntityTargetLivingEntityEvent.class);
+        when(targetEvent.getEntity()).thenReturn(golem);
+        when(targetEvent.getTarget()).thenReturn(fixture.first.guard);
+
+        manager.onSnowGolemTargetsGuard(targetEvent);
+
+        verify(targetEvent).setTarget(null);
+        verify(targetEvent).setCancelled(true);
+        verify(golem).setTarget((LivingEntity) null);
+
+        clearInvocations(fixture.first.guard, fixture.second.guard);
+        EntityDamageByEntityEvent damageEvent = mock(EntityDamageByEntityEvent.class);
+        when(damageEvent.getEntity()).thenReturn(fixture.first.guard);
+        when(damageEvent.getDamager()).thenReturn(golem);
+
+        manager.onSnowGolemDamagesGuard(damageEvent);
+
+        verify(damageEvent).setCancelled(true);
+        verify(fixture.first.guard, never()).setTarget(golem);
+        verify(fixture.second.guard, never()).setTarget(golem);
+    }
+
+    @Test
+    void fallbackSweepAlsoPurgesASnowGolemTargetInjectedWithoutEvent() {
+        GuardFixture fixture = new GuardFixture();
+        manager.onCommand(fixture.owner, null, "garde", new String[0]);
+        Snowman golem = snowGolem(fixture.world);
+        when(golem.getTarget()).thenReturn(fixture.first.guard);
+        when(fixture.owner.getNearbyEntities(32.0D, 32.0D, 32.0D))
+                .thenReturn(List.<Entity>of(golem));
+
+        manager.followActiveSquads();
+
+        verify(golem).setTarget((LivingEntity) null);
+        verify(golem).setAggressive(false);
+        verify(fixture.first.guard, never()).setTarget(golem);
+        verify(fixture.second.guard, never()).setTarget(golem);
+    }
+
     private void assertSpawnRequest(SpawnRequest request, UUID ownerId, int slot) {
         assertEquals(ownerId, request.ownerId());
         assertEquals(slot, request.slot());
@@ -1357,6 +1649,28 @@ class RoyalGuardManagerTest {
         when(death.getEntity()).thenReturn(guard);
         when(death.getDrops()).thenReturn(drops);
         return death;
+    }
+
+    private Snowman snowGolem(World world) {
+        Snowman golem = mock(Snowman.class);
+        when(golem.getUniqueId()).thenReturn(UUID.randomUUID());
+        when(golem.getWorld()).thenReturn(world);
+        when(golem.getLocation()).thenReturn(new Location(world, 1.0D, 64.0D, 0.0D));
+        when(golem.isValid()).thenReturn(true);
+        when(golem.isDead()).thenReturn(false);
+        return golem;
+    }
+
+    private Husk unmarkedHusk(World world) {
+        Husk husk = mock(Husk.class);
+        PersistentDataContainer pdc = mock(PersistentDataContainer.class);
+        when(husk.getUniqueId()).thenReturn(UUID.randomUUID());
+        when(husk.getWorld()).thenReturn(world);
+        when(husk.getLocation()).thenReturn(new Location(world, 1.0D, 64.0D, 0.0D));
+        when(husk.isValid()).thenReturn(true);
+        when(husk.isDead()).thenReturn(false);
+        when(husk.getPersistentDataContainer()).thenReturn(pdc);
+        return husk;
     }
 
     private IronGolem ironGolem(World world) {

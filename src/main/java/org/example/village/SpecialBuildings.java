@@ -315,7 +315,61 @@ public final class SpecialBuildings {
 
         LocalPoint sign = localPoint(lot, -3, frontRadius + 1);
         place(tasks, sb, sign.x(), baseY + 3, sign.z(), Material.OAK_WALL_SIGN);
-        tasks.add(()˜çÌ¢Gß≤⁄Óù∆≠y€ery(World world,
+        tasks.add(() -> VillageStyle.setDirectional(
+                world, sign.x(), baseY + 3, sign.z(),
+                Material.OAK_WALL_SIGN, front));
+
+        LocalPoint banner = localPoint(lot, 3, frontRadius + 1);
+        place(tasks, sb, banner.x(), baseY + 3, banner.z(), Material.RED_WALL_BANNER);
+        tasks.add(() -> VillageStyle.setDirectional(
+                world, banner.x(), baseY + 3, banner.z(),
+                Material.RED_WALL_BANNER, front));
+
+        // Marquise continue, assez haute pour ne pas couper l'entr√©e.
+        for (int lateral = -2; lateral <= 2; lateral++) {
+            for (int forward = frontRadius + 1; forward <= frontRadius + 2; forward++) {
+                LocalPoint point = localPoint(lot, lateral, forward);
+                slab(tasks, world, sb, point.x(), baseY + 4, point.z(),
+                        Material.DARK_OAK_SLAB, Slab.Type.TOP);
+            }
+        }
+        LocalPoint lantern = localPoint(lot, 0, frontRadius + 2);
+        place(tasks, sb, lantern.x(), baseY + 3, lantern.z(), Material.LANTERN);
+
+        // Terrasse de trois blocs sur le c√¥t√© le plus √©loign√© des autres
+        // volumes. Le lot poss√®de d√©j√† une r√©serve de jardin suffisante.
+        int terraceSide = lot.wingSide() == VillageStyle.rightOf(front) ? -1 : 1;
+        int terraceLateral = terraceSide * (sideRadius + 2);
+        for (int lateral = terraceLateral - 1; lateral <= terraceLateral + 1; lateral++) {
+            for (int forward = -1; forward <= 1; forward++) {
+                LocalPoint point = localPoint(lot, lateral, forward);
+                place(tasks, sb, point.x(), baseY, point.z(),
+                        Math.floorMod(lateral + forward, 2) == 0
+                                ? Material.GRAVEL
+                                : Material.PACKED_MUD);
+            }
+        }
+
+        LocalPoint table = localPoint(lot, terraceLateral, 0);
+        place(tasks, sb, table.x(), baseY + 1, table.z(), Material.SPRUCE_FENCE);
+        place(tasks, sb, table.x(), baseY + 2, table.z(), Material.SPRUCE_PRESSURE_PLATE);
+        for (int forward : new int[]{-1, 1}) {
+            LocalPoint chair = localPoint(lot, terraceLateral, forward);
+            stair(tasks, world, sb, chair.x(), baseY + 1, chair.z(),
+                    Material.SPRUCE_STAIRS,
+                    forward < 0 ? front : front.getOppositeFace());
+        }
+        LocalPoint barrel = localPoint(lot, terraceLateral + terraceSide, 1);
+        place(tasks, sb, barrel.x(), baseY + 1, barrel.z(), Material.BARREL);
+
+        return tasks;
+    }
+
+    /**
+     * Identit√© de boulangerie : auvent clair, √©tal de pain et four de briques
+     * lat√©ral. Les d√©tails restent dans la r√©serve de cour du lot.
+     */
+    public static List<Runnable> decorateBakery(World world,
                                                 LotPlan lot,
                                                 int baseY,
                                                 TerrainManager.SetBlock sb) {
