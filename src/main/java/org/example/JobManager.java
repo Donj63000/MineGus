@@ -28,6 +28,7 @@ import org.bukkit.inventory.ItemStack;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.bukkit.scheduler.BukkitRunnable;
 import org.bukkit.scheduler.BukkitTask;
+import org.example.mineur.AutomatedMiningContext;
 
 import java.io.File;
 import java.io.IOException;
@@ -223,6 +224,11 @@ public final class JobManager implements Listener, CommandExecutor {
 
     @EventHandler(ignoreCancelled = true)
     public void onBlockBreak(BlockBreakEvent event) {
+        // Un événement synthétique du PNJ sert uniquement aux protections.
+        // Il ne doit jamais être compté comme une casse manuelle du joueur.
+        if (AutomatedMiningContext.isActive()) {
+            return;
+        }
         grantMiningXp(event.getPlayer(), event.getBlock().getType());
     }
 

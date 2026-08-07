@@ -6,10 +6,8 @@ import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.World;
 import org.bukkit.block.Block;
-import org.bukkit.block.BlockFace;
 import org.bukkit.block.CreatureSpawner;
 import org.bukkit.block.data.BlockData;
-import org.bukkit.block.data.type.Stairs;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandExecutor;
 import org.bukkit.command.CommandSender;
@@ -20,6 +18,7 @@ import org.bukkit.entity.Player;
 import org.bukkit.entity.Villager;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.bukkit.scheduler.BukkitRunnable;
+import org.bukkit.scheduler.BukkitTask;
 import org.example.village.Disposition;
 import org.example.village.GateGuardManager;
 import org.example.village.VillageEntityManager;
@@ -32,7 +31,7 @@ import org.example.village.WallBuilder;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.EnumMap;
-import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
@@ -41,31 +40,50 @@ import java.util.Queue;
 import java.util.Random;
 import java.util.Set;
 import java.util.UUID;
+import java.util.logging.Level;
 
 /**
- * Commande:
- *   /village      genere un village medieval semi-organique
- *   /village undo supprime la derniere generation.
+ * Commande de génération du village médiéval.
+ *
+ * <p>La génération est préparée intégralement avant d'être exécutée par lots.
+ * Chaque tâche capture sa propre session : une seconde commande ne peut donc
+ * jamais détourner les écritures ou les entités de la génération en cours.</p>
+ *
+ * <p>Commandes :</p>
+ * <ul>
+ *     <li>{@code /village} : construit un village semi-organique ;</li>
+ *     <li>{@code /village undo} : restaure l'état antérieur à la génération.</li>
+ * </ul>
  */
 public final class Village implements CommandExecutor {
 
-    private static final int VIL_SPAWNERS = 4;
+    private static final int VILLAGER_SPAWNERS = 4;
     private static final int GOLEM_SPAWNERS = 2;
-    private static final int DEFAULT_WALL_GAP = 6;
+    private static final int DEFAULT_WALL_GAP = 7;
+    private static final int TERRAIN_FEATHER = 4;
+    private static final int MAX_ACTIONS_PER_TICK = 320;
+    private static final long MAX_BATCH_NANOS = 8_000_000L;
 
     private final Random rng = new Random();
     private final JavaPlugin plugin;
-    private final int plazaSize;
     private final int wallGap;
     private final VillageLayoutSettings layoutSettings;
 
+    /*
+     * Ces deux champs sont conservés pour la compatibilité avec les tests et
+     * intégrations historiques qui interrogeaient la distribution de spawners.
+     */
     private Set<Integer> villagerSpawnerIdx = Collections.emptySet();
-    private int currentHouseIdx = 0;
+    private int currentHouseIdx;
+
     private VillageGenerationSession currentSession;
+    private BukkitTask activeBuildTask;
 
     public Village(JavaPlugin plugin) {
-        this.plugin = plugin;
-        Objects.requireNonNull(plugin.getCommand("village")).setExecutor(this);
+        this.plugin = Objects.requireNonNull(plugin, "plugin");
+        Objects.requireNonNull(plugin.getCommand("village"),
+                "La commande 'village' doit être déclarée dans plugin.yml")
+                .setExecutor(this);
 
         FileConfiguration cfg = plugin.getConfig();
         int rows = cfg.getInt("village.rows", 4);
@@ -74,11 +92,10 @@ public final class Village implements CommandExecutor {
         int houseBig = cfg.getInt("village.houseBig", 11);
         int roadHalf = cfg.getInt("village.roadHalf", 2);
         int spacing = cfg.getInt("village.spacing", 20);
-        this.plazaSize = cfg.getInt("village.plazaSize", 9);
-        // Cette marge existait déjà dans la configuration mais n'était pas
-        // réellement utilisée partout. On la branche ici pour pouvoir régler
-        // proprement la respiration entre les maisons et la muraille.
-        this.wallGap = cfg.getInt("village.wallGap", DEFAULT_WALL_GAP);
+        int configuredPlazaSize = cfg.getInt("village.plazaSize", 13);
+
+        this.wallGap = Math.max(5,
+                cfg.getInt("village.wallGap", DEFAULT_WALL_GAP));
         this.layoutSettings = new VillageLayoutSettings(
                 cfg.getString("village.layout-style", "semi_organic"),
                 rows,
@@ -87,28 +104,34 @@ public final class Village implements CommandExecutor {
                 houseBig,
                 spacing,
                 roadHalf,
-                plazaSize,
-                cfg.getInt("village.houseCountMin", 10),
+                configuredPlazaSize,
+                cfg.getInt("village.houseCountMin", 12),
                 cfg.getInt("village.houseCountMax", 16),
                 cfg.getInt("village.mainStreetHalf", 2),
                 cfg.getInt("village.sideStreetHalf", 1),
                 cfg.getInt("village.terrainMaxStep", 2),
-                cfg.getString("village.decorDensity", "medium")
+                cfg.getString("village.decorDensity", "high")
         );
     }
 
+    /**
+     * API historique : sélectionne jusqu'à quatre maisons réparties de façon
+     * homogène. Le générateur moderne applique le même principe aux vrais lots
+     * résidentiels, après planification.
+     */
     public void prepareVillagerSpawnerDistribution(int totalHouses) {
-        Set<Integer> chosen = new HashSet<>();
-        if (totalHouses == 0) {
+        Set<Integer> chosen = new LinkedHashSet<>();
+        if (totalHouses <= 0) {
             villagerSpawnerIdx = chosen;
+            currentHouseIdx = 0;
             return;
         }
 
-        double step = (double) totalHouses / VIL_SPAWNERS;
-        for (int i = 0; i < VIL_SPAWNERS; i++) {
-            int idx = (int) Math.round(i * step + step / 2 - 0.5);
-            idx = Math.min(idx, totalHouses - 1);
-            chosen.add(idx);
+        int desired = Math.min(VILLAGER_SPAWNERS, totalHouses);
+        double step = (double) totalHouses / desired;
+        for (int i = 0; i < desired; i++) {
+            int idx = (int) Math.floor(i * step + step / 2.0D);
+            chosen.add(Math.min(idx, totalHouses - 1));
         }
         villagerSpawnerIdx = chosen;
         currentHouseIdx = 0;
@@ -119,30 +142,142 @@ public final class Village implements CommandExecutor {
     }
 
     @Override
-    public boolean onCommand(CommandSender sender, Command cmd, String label, String[] args) {
+    public boolean onCommand(CommandSender sender,
+                             Command command,
+                             String label,
+                             String[] args) {
         if (!(sender instanceof Player player)) {
-            sender.sendMessage("Commande reservee aux joueurs.");
+            sender.sendMessage("Commande réservée aux joueurs.");
             return true;
         }
 
         if (args.length > 0 && args[0].equalsIgnoreCase("undo")) {
-            undoVillage();
-            player.sendMessage(ChatColor.YELLOW + "Village supprime.");
+            boolean restored = undoVillage();
+            player.sendMessage(restored
+                    ? ChatColor.YELLOW + "Le village a été annulé et le terrain restauré."
+                    : ChatColor.GRAY + "Aucun village généré n'est actuellement enregistré.");
             return true;
         }
 
-        generateVillageAsync(player.getLocation());
-        player.sendMessage(ChatColor.GREEN + "Construction du village en cours...");
+        if (currentSession != null) {
+            player.sendMessage(ChatColor.YELLOW
+                    + "Un village est déjà présent ou en construction. "
+                    + "Utilisez /village undo avant d'en générer un autre.");
+            return true;
+        }
+
+        if (generateVillageAsync(player.getLocation())) {
+            player.sendMessage(ChatColor.GREEN
+                    + "Construction du village lancée autour de votre position.");
+        } else {
+            player.sendMessage(ChatColor.RED
+                    + "Le village ne peut pas être construit à cet emplacement.");
+        }
         return true;
     }
 
-    private void generateVillageAsync(Location center) {
-        World world = center.getWorld();
+    /**
+     * Prépare puis lance une génération isolée.
+     *
+     * @return {@code true} lorsque la génération a pu être planifiée.
+     */
+    private boolean generateVillageAsync(Location requestedCenter) {
+        World world = requestedCenter.getWorld();
         if (world == null) {
-            return;
+            return false;
         }
 
-        int baseY = center.getBlockY();
+        int centerX = requestedCenter.getBlockX();
+        int centerZ = requestedCenter.getBlockZ();
+        int baseY = resolveBaseY(
+                world,
+                centerX,
+                centerZ,
+                requestedCenter.getBlockY() - 1
+        );
+        if (baseY < world.getMinHeight() + 3
+                || baseY > world.getMaxHeight() - 24) {
+            plugin.getLogger().warning(
+                    "Altitude incompatible avec un village : y=" + baseY);
+            return false;
+        }
+
+        /*
+         * Le centre de composition reste exactement le point de commande. Le
+         * centre géométrique des bornes peut être décalé par un quartier plus
+         * large ; l'utiliser décalait auparavant la rue principale du portail.
+         */
+        Location villageCenter = new Location(
+                world,
+                centerX,
+                baseY,
+                centerZ
+        );
+        VillageLayoutPlan layout = VillageLayoutPlanner.plan(
+                villageCenter,
+                layoutSettings,
+                rng
+        );
+        VillageLayoutPlan.Bounds bounds = layout.bounds();
+
+        int rx = Math.max(
+                Math.abs(bounds.minX() - centerX),
+                Math.abs(bounds.maxX() - centerX)
+        ) + wallGap;
+        int rz = Math.max(
+                Math.abs(bounds.minZ() - centerZ),
+                Math.abs(bounds.maxZ() - centerZ)
+        ) + wallGap;
+
+        int villageId;
+        boolean villageEntitiesEnabled = true;
+        try {
+            villageId = VillageEntityManager.computeVillageId(villageCenter);
+        } catch (Throwable throwable) {
+            villageId = Math.abs(Objects.hash(centerX, baseY, centerZ));
+            villageEntitiesEnabled = false;
+            plugin.getLogger().warning(
+                    "VillageEntityManager indisponible : "
+                            + throwable.getClass().getSimpleName());
+        }
+
+        VillageGenerationSession session =
+                new VillageGenerationSession(villageId);
+        session.getAnchors().putAll(layout.anchors());
+
+        Location gateAnchor = WallBuilder.gateAnchor(
+                villageCenter,
+                rx,
+                rz,
+                baseY
+        );
+        session.getAnchors().put("gate", gateAnchor.clone());
+        currentSession = session;
+        logLayoutSummary(layout);
+
+        Queue<Runnable> todo = new LinkedList<>();
+
+        /*
+         * L'emprise est calculée depuis la muraille réelle, tours comprises.
+         * Le sud est prolongé pour accueillir le parvis et la route extérieure
+         * du corps de garde.
+         */
+        int[] wallBounds = WallBuilder.outerBounds(villageCenter, rx, rz);
+        int flatMinX = wallBounds[0] - 2;
+        int flatMaxX = wallBounds[1] + 2;
+        int flatMinZ = wallBounds[2] - 2;
+        int flatMaxZ = wallBounds[3] + 12;
+        todo.addAll(prepareGroundActions(
+                session,
+                world,
+                flatMinX,
+                flatMaxX,
+                flatMinZ,
+                flatMaxZ,
+                baseY,
+                TERRAIN_FEATHER
+        ));
+
         List<Material> cropPalette = List.of(
                 Material.WHEAT_SEEDS,
                 Material.CARROT,
@@ -150,175 +285,441 @@ public final class Village implements CommandExecutor {
                 Material.BEETROOT_SEEDS
         );
 
-        prepareVillagerSpawnerDistribution(0);
-
-        VillageLayoutPlan layout = VillageLayoutPlanner.plan(center, layoutSettings, rng);
-        VillageLayoutPlan.Bounds bounds = layout.bounds();
-        int villageCenterX = bounds.centerX();
-        int villageCenterZ = bounds.centerZ();
-        Location villageCenter = new Location(world, villageCenterX, baseY, villageCenterZ);
-
-        int villageId;
-        boolean villageEntitiesEnabled = true;
-        try {
-            villageId = VillageEntityManager.computeVillageId(villageCenter);
-        } catch (Throwable throwable) {
-            villageId = Math.abs(Objects.hash(villageCenterX, baseY, villageCenterZ));
-            villageEntitiesEnabled = false;
-            plugin.getLogger().warning("VillageEntityManager indisponible dans cet environnement: "
-                    + throwable.getClass().getSimpleName());
-        }
-
-        currentSession = new VillageGenerationSession(villageId);
-        final int resolvedVillageId = villageId;
-        currentSession.getAnchors().putAll(layout.anchors());
-        logLayoutSummary(layout);
-
-        Queue<Runnable> todo = new LinkedList<>();
-
-        int rx = (bounds.maxX() - bounds.minX()) / 2 + wallGap;
-        int rz = (bounds.maxZ() - bounds.minZ()) / 2 + wallGap;
-        int southWallZ = villageCenterZ + rz + 1;
-        Location gateAnchor = new Location(world, villageCenterX, baseY + 1, southWallZ - 2);
-        currentSession.getAnchors().put("gate", gateAnchor.clone());
-
-        todo.addAll(prepareGroundActions(world,
-                bounds.minX() - layoutSettings.mainStreetHalf() - 5 - wallGap,
-                bounds.maxX() + layoutSettings.mainStreetHalf() + 5 + wallGap,
-                bounds.minZ() - layoutSettings.mainStreetHalf() - 5 - wallGap,
-                bounds.maxZ() + layoutSettings.mainStreetHalf() + 5 + wallGap,
-                baseY));
-
-        Disposition.buildVillage(plugin,
-                center,
+        Disposition.buildVillage(
+                plugin,
+                villageCenter,
                 baseY,
                 layoutSettings,
                 cropPalette,
                 todo,
-                (x, y, z, m) -> setBlockTracked(currentSession, world, x, y, z, m),
+                (x, y, z, material) ->
+                        setBlockTracked(session, world, x, y, z, material),
                 rng,
                 villageId,
-                layout);
+                layout
+        );
 
-        todo.add(spawnMerchantNpc(world, layout.anchors().get("market"), villageId));
-        todo.addAll(buildQuarterVillagerSpawners(world, new int[]{bounds.minX(), bounds.maxX(), bounds.minZ(), bounds.maxZ()}, baseY));
+        /*
+         * Le mur est symétrique autour du centre alors que l'église étire le
+         * plan vers le nord. Sans ce raccord, il pouvait rester une bande
+         * d'herbe entre l'extrémité sud de la grand-rue et le corps de garde.
+         */
+        todo.addAll(buildGateRoadConnector(
+                session,
+                world,
+                layout,
+                centerZ + rz,
+                baseY
+        ));
 
-        todo.add(() -> WallBuilder.build(villageCenter, rx, rz, baseY,
-                Material.STONE_BRICKS, todo,
-                (x, y, z, m) -> setBlockTracked(currentSession, world, x, y, z, m)));
+        /*
+         * Les spawners sont placés sous les maisons réellement retenues par le
+         * planificateur, et non sur quatre coordonnées arbitraires susceptibles
+         * de tomber dans une route ou un bâtiment.
+         */
+        todo.addAll(buildResidentialVillagerSpawners(
+                session,
+                world,
+                layout,
+                baseY
+        ));
+        todo.addAll(buildGolemSpawners(
+                session,
+                world,
+                layout,
+                baseY
+        ));
+
+        Location marketAnchor = layout.anchors()
+                .getOrDefault("market", villageCenter);
+        todo.add(spawnMerchantNpc(
+                session,
+                world,
+                marketAnchor,
+                villageId
+        ));
+
+        /*
+         * WallBuilder ne modifie pas immédiatement le monde : il ajoute ses
+         * tâches à la file. L'appeler ici évite de muter la file depuis une
+         * tâche déjà en cours d'itération.
+         */
+        WallBuilder.build(
+                villageCenter,
+                rx,
+                rz,
+                baseY,
+                Material.STONE_BRICKS,
+                todo,
+                (x, y, z, material) ->
+                        setBlockTracked(session, world, x, y, z, material)
+        );
+
+        final int resolvedVillageId = villageId;
         if (villageEntitiesEnabled) {
-            todo.add(() -> GateGuardManager.ensureGuards(plugin, gateAnchor, resolvedVillageId));
+            todo.add(() -> GateGuardManager.ensureGuards(
+                    plugin,
+                    gateAnchor,
+                    resolvedVillageId
+            ));
         }
 
         final int ttlTicks = 20 * 60 * 30;
         if (villageEntitiesEnabled) {
-            todo.add(() -> VillageEntityManager.spawnInitial(plugin, villageCenter,
-                    currentSession != null ? currentSession.getAnchors() : Map.of(), resolvedVillageId, ttlTicks));
+            todo.add(() -> VillageEntityManager.spawnInitial(
+                    plugin,
+                    villageCenter,
+                    session.getAnchors(),
+                    resolvedVillageId,
+                    ttlTicks
+            ));
         }
 
-        Location plazaAnchor = layout.anchors().getOrDefault("plaza", center);
-        todo.add(() -> spawnVillager(world, plazaAnchor.clone().add(1, 1, 1), "Maire"));
+        Location mayorAnchor = layout.anchors()
+                .getOrDefault("mayor", marketAnchor);
+        todo.add(() -> spawnVillager(
+                session,
+                world,
+                mayorAnchor.clone().add(0.5D, 1.0D, 0.5D),
+                "Maire"
+        ));
 
-        // Les spawners visibles au milieu de la place faisaient très "plugin".
-        // On les enterre sous le dallage afin de conserver la mécanique tout
-        // en gardant une place crédible visuellement.
-        for (int i = 0; i < GOLEM_SPAWNERS; i++) {
-            int sign = i % 2 == 0 ? 1 : -1;
-            int gx = plazaAnchor.getBlockX() + sign * (plazaSize / 2 + 2);
-            int gz = plazaAnchor.getBlockZ();
-            todo.add(createSpawnerAction(currentSession, world, gx, baseY - 1, gz, EntityType.IRON_GOLEM));
-            int finalGx = gx;
-            int finalGz = gz;
-            todo.add(() -> setBlockTracked(currentSession, world, finalGx, baseY, finalGz, Material.POLISHED_ANDESITE));
-        }
-
-        buildActionsInBatches(todo, 250);
+        buildActionsInBatches(todo, session);
+        return true;
     }
 
-    public void setBlockTracked(VillageGenerationSession session, World world, int x, int y, int z, Material material) {
+    /**
+     * Écrit un matériau en conservant le premier état rencontré.
+     */
+    public void setBlockTracked(VillageGenerationSession session,
+                                World world,
+                                int x,
+                                int y,
+                                int z,
+                                Material material) {
+        if (world == null || material == null
+                || y < world.getMinHeight()
+                || y >= world.getMaxHeight()) {
+            return;
+        }
+
         Block block = world.getBlockAt(x, y, z);
+        if (block.getType() == material) {
+            return;
+        }
+        if (session != null) {
+            session.rememberOriginal(
+                    block.getLocation(),
+                    block.getBlockData()
+            );
+        }
         block.setType(material, false);
-        if (session != null) {
-            session.trackBlock(block.getLocation());
-        }
     }
 
-    public void setBlockTracked(VillageGenerationSession session, World world, int x, int y, int z, BlockData data) {
+    /**
+     * Écrit des données de bloc orientées en conservant l'état initial.
+     */
+    public void setBlockTracked(VillageGenerationSession session,
+                                World world,
+                                int x,
+                                int y,
+                                int z,
+                                BlockData data) {
+        if (world == null || data == null
+                || y < world.getMinHeight()
+                || y >= world.getMaxHeight()) {
+            return;
+        }
+
         Block block = world.getBlockAt(x, y, z);
-        block.setBlockData(data, false);
-        if (session != null) {
-            session.trackBlock(block.getLocation());
+        if (block.getBlockData().equals(data)) {
+            return;
         }
+        if (session != null) {
+            session.rememberOriginal(
+                    block.getLocation(),
+                    block.getBlockData()
+            );
+        }
+        block.setBlockData(data, false);
     }
 
-    public void setBlockTracked(World world, int x, int y, int z, Material material) {
+    /**
+     * Surcharge de compatibilité. Les nouvelles tâches doivent toujours
+     * capturer explicitement leur session.
+     */
+    public void setBlockTracked(World world,
+                                int x,
+                                int y,
+                                int z,
+                                Material material) {
         setBlockTracked(currentSession, world, x, y, z, material);
     }
 
-    public void setBlockTracked(World world, int x, int y, int z, BlockData data) {
+    /**
+     * Surcharge de compatibilité. Les nouvelles tâches doivent toujours
+     * capturer explicitement leur session.
+     */
+    public void setBlockTracked(World world,
+                                int x,
+                                int y,
+                                int z,
+                                BlockData data) {
         setBlockTracked(currentSession, world, x, y, z, data);
     }
 
-    public Runnable createSpawnerAction(VillageGenerationSession session, World world, int x, int y, int z, EntityType type) {
+    public Runnable createSpawnerAction(VillageGenerationSession session,
+                                        World world,
+                                        int x,
+                                        int y,
+                                        int z,
+                                        EntityType type) {
         return () -> {
             setBlockTracked(session, world, x, y, z, Material.SPAWNER);
             if (session != null) {
                 session.trackSpawner(new Location(world, x, y, z));
             }
+
             Block block = world.getBlockAt(x, y, z);
             if (block.getState() instanceof CreatureSpawner spawner) {
                 spawner.setSpawnedType(type);
-                spawner.update();
+                spawner.update(true, false);
             }
         };
     }
 
-    public Runnable createSpawnerAction(World world, int x, int y, int z, EntityType type) {
-        return createSpawnerAction(currentSession, world, x, y, z, type);
+    public Runnable createSpawnerAction(World world,
+                                        int x,
+                                        int y,
+                                        int z,
+                                        EntityType type) {
+        return createSpawnerAction(
+                currentSession,
+                world,
+                x,
+                y,
+                z,
+                type
+        );
     }
 
-    private Runnable spawnMerchantNpc(World world, Location anchor, int villageId) {
+    private Runnable spawnMerchantNpc(VillageGenerationSession session,
+                                      World world,
+                                      Location anchor,
+                                      int villageId) {
         return () -> {
-            if (!(plugin instanceof MinePlugin minePlugin) || minePlugin.getMerchantManager() == null) {
+            if (!(plugin instanceof MinePlugin minePlugin)
+                    || minePlugin.getMerchantManager() == null) {
                 return;
             }
-            Location spawnLoc = anchor != null ? anchor.clone().add(0.5, 1, 0.5) : new Location(world, 0.5, world.getHighestBlockYAt(0, 0) + 1, 0.5);
+
+            Location spawnLocation = anchor != null
+                    ? anchor.clone().add(0.5D, 1.0D, 0.5D)
+                    : new Location(
+                            world,
+                            0.5D,
+                            world.getHighestBlockYAt(0, 0) + 1.0D,
+                            0.5D
+                    );
             try {
-                Villager villager = (Villager) world.spawnEntity(spawnLoc, EntityType.VILLAGER);
+                Villager villager = (Villager) world.spawnEntity(
+                        spawnLocation,
+                        EntityType.VILLAGER
+                );
+                session.trackEntity(villager.getUniqueId());
                 try {
-                    VillageEntityManager.tagEntity(villager, plugin, villageId);
+                    VillageEntityManager.tagEntity(
+                            villager,
+                            plugin,
+                            villageId
+                    );
                 } catch (Throwable ignored) {
-                    // Ignore les environnements de test qui ne supportent pas completement les metadonnees.
+                    /*
+                     * Certains environnements de test ne fournissent pas le
+                     * conteneur de données persistantes de Paper.
+                     */
                 }
-                if (currentSession != null) {
-                    currentSession.trackEntity(villager.getUniqueId());
-                }
-                minePlugin.getMerchantManager().prepareMerchantNpc(villager);
+                minePlugin.getMerchantManager()
+                        .prepareMerchantNpc(villager);
             } catch (Throwable throwable) {
-                plugin.getLogger().warning("Spawn du marchand ignore dans cet environnement: "
-                        + throwable.getClass().getSimpleName());
+                plugin.getLogger().warning(
+                        "Apparition du marchand ignorée : "
+                                + throwable.getClass().getSimpleName());
             }
         };
     }
 
-    private void spawnVillager(World world, Location location, String name) {
+    private void spawnVillager(VillageGenerationSession session,
+                               World world,
+                               Location location,
+                               String name) {
         try {
             world.getChunkAt(location).load();
-            Villager villager = (Villager) world.spawnEntity(location, EntityType.VILLAGER);
-            if (currentSession != null) {
-                currentSession.trackEntity(villager.getUniqueId());
-            }
+            Villager villager = (Villager) world.spawnEntity(
+                    location,
+                    EntityType.VILLAGER
+            );
+            session.trackEntity(villager.getUniqueId());
             villager.setCustomName(name);
             villager.setCustomNameVisible(true);
             villager.setProfession(Villager.Profession.NONE);
         } catch (Throwable throwable) {
-            plugin.getLogger().warning("Spawn du villageois ignore dans cet environnement: "
-                    + throwable.getClass().getSimpleName());
+            plugin.getLogger().warning(
+                    "Apparition du villageois ignorée : "
+                            + throwable.getClass().getSimpleName());
         }
     }
 
+    /**
+     * Prolonge la grand-rue jusqu'à la face intérieure du portail.
+     *
+     * <p>La longueur est dérivée du plan réel et de la muraille calculée :
+     * aucune constante liée à la configuration par défaut n'est utilisée.</p>
+     */
+    private List<Runnable> buildGateRoadConnector(
+            VillageGenerationSession session,
+            World world,
+            VillageLayoutPlan layout,
+            int innerGateZ,
+            int baseY) {
+        List<Runnable> actions = new ArrayList<>();
+        VillageLayoutPlan.StreetPlan mainStreet = layout.streets().stream()
+                .filter(street -> street.type()
+                        == VillageLayoutPlan.StreetType.MAIN)
+                .filter(street -> !street.horizontal())
+                .findFirst()
+                .orElse(null);
+        if (mainStreet == null) {
+            return actions;
+        }
+
+        int roadCenterX = mainStreet.startX();
+        int roadEndZ = mainStreet.maxZ();
+        if (innerGateZ <= roadEndZ) {
+            return actions;
+        }
+
+        int halfWidth = Math.max(1, mainStreet.halfWidth());
+        for (int z = roadEndZ + 1; z <= innerGateZ; z++) {
+            int currentZ = z;
+            for (int dx = -halfWidth; dx <= halfWidth; dx++) {
+                int x = roadCenterX + dx;
+                Material paving;
+                if (Math.abs(dx) == halfWidth) {
+                    paving = Math.floorMod(x + currentZ, 3) == 0
+                            ? Material.STONE_BRICKS
+                            : Material.COBBLESTONE;
+                } else {
+                    paving = Math.floorMod(x * 17 + currentZ * 31, 6) == 0
+                            ? Material.POLISHED_ANDESITE
+                            : Material.GRAVEL;
+                }
+
+                Material finalPaving = paving;
+                actions.add(() -> setBlockTracked(
+                        session,
+                        world,
+                        x,
+                        baseY - 1,
+                        currentZ,
+                        Material.COBBLESTONE
+                ));
+                actions.add(() -> setBlockTracked(
+                        session,
+                        world,
+                        x,
+                        baseY,
+                        currentZ,
+                        finalPaving
+                ));
+            }
+
+            // Deux accotements en terre battue adoucissent la jonction avec
+            // le terrain et évitent l'effet de ruban minéral parfaitement net.
+            for (int side : new int[]{-1, 1}) {
+                int shoulderX = roadCenterX
+                        + side * (halfWidth + 1);
+                Material shoulder = Math.floorMod(
+                        shoulderX * 13 + currentZ * 7,
+                        5
+                ) == 0
+                        ? Material.COARSE_DIRT
+                        : Material.DIRT_PATH;
+                actions.add(() -> setBlockTracked(
+                        session,
+                        world,
+                        shoulderX,
+                        baseY,
+                        currentZ,
+                        shoulder
+                ));
+            }
+        }
+        return actions;
+    }
+
+    private List<Runnable> buildResidentialVillagerSpawners(
+            VillageGenerationSession session,
+            World world,
+            VillageLayoutPlan layout,
+            int baseY) {
+        List<VillageLayoutPlan.LotPlan> houses = layout.lots().stream()
+                .filter(VillageLayoutPlan.LotPlan::isHouse)
+                .toList();
+        prepareVillagerSpawnerDistribution(houses.size());
+
+        List<Runnable> actions = new ArrayList<>();
+        for (int index = 0; index < houses.size(); index++) {
+            if (!villagerSpawnerIdx.contains(index)) {
+                continue;
+            }
+
+            VillageLayoutPlan.LotPlan lot = houses.get(index);
+            int spawnerY = baseY + lot.terraceY() - 1;
+            actions.add(createSpawnerAction(
+                    session,
+                    world,
+                    lot.centerX(),
+                    spawnerY,
+                    lot.centerZ(),
+                    EntityType.VILLAGER
+            ));
+        }
+        return actions;
+    }
+
+    private List<Runnable> buildGolemSpawners(
+            VillageGenerationSession session,
+            World world,
+            VillageLayoutPlan layout,
+            int baseY) {
+        List<Runnable> actions = new ArrayList<>();
+        Location plaza = layout.anchors().get("plaza");
+        if (plaza == null) {
+            return actions;
+        }
+
+        int offset = Math.max(
+                3,
+                layoutSettings.effectivePlazaSize() / 2 - 2
+        );
+        for (int i = 0; i < GOLEM_SPAWNERS; i++) {
+            int sign = i == 0 ? -1 : 1;
+            actions.add(createSpawnerAction(
+                    session,
+                    world,
+                    plaza.getBlockX() + sign * offset,
+                    baseY - 2,
+                    plaza.getBlockZ(),
+                    EntityType.IRON_GOLEM
+            ));
+        }
+        return actions;
+    }
+
     private void logLayoutSummary(VillageLayoutPlan layout) {
-        EnumMap<VillageLayoutPlan.LotRole, Integer> counts = new EnumMap<>(VillageLayoutPlan.LotRole.class);
+        EnumMap<VillageLayoutPlan.LotRole, Integer> counts =
+                new EnumMap<>(VillageLayoutPlan.LotRole.class);
         int terracedLots = 0;
         for (VillageLayoutPlan.LotPlan lot : layout.lots()) {
             counts.merge(lot.role(), 1, Integer::sum);
@@ -326,130 +727,389 @@ public final class Village implements CommandExecutor {
                 terracedLots++;
             }
         }
-        plugin.getLogger().info("Village plan genere: maisons=" + layout.houseCount()
-                + ", rues=" + layout.streets().size()
-                + ", terrasses=" + terracedLots
-                + ", ancres=" + layout.anchors().keySet());
-        plugin.getLogger().info("Repartition des lots: " + counts);
+
+        plugin.getLogger().info(
+                "Plan du village : maisons=" + layout.houseCount()
+                        + ", rues=" + layout.streets().size()
+                        + ", terrasses=" + terracedLots
+                        + ", dimensions=" + layout.bounds().width()
+                        + "x" + layout.bounds().depth()
+        );
+        plugin.getLogger().info("Répartition des lots : " + counts);
     }
 
-    private void buildActionsInBatches(Queue<Runnable> queue, int perTick) {
-        new BukkitRunnable() {
+    /**
+     * Exécute la file avec une double limite (nombre d'actions et temps CPU)
+     * afin que les colonnes de terrassement ne figent pas le serveur.
+     */
+    private void buildActionsInBatches(
+            Queue<Runnable> queue,
+            VillageGenerationSession session) {
+        BukkitRunnable runner = new BukkitRunnable() {
             @Override
             public void run() {
-                for (int i = 0; i < perTick && !queue.isEmpty(); i++) {
-                    queue.poll().run();
+                if (currentSession != session) {
+                    clearActiveTask();
+                    cancel();
+                    return;
                 }
+
+                long startedAt = System.nanoTime();
+                int processed = 0;
+                try {
+                    while (processed < MAX_ACTIONS_PER_TICK
+                            && !queue.isEmpty()
+                            && System.nanoTime() - startedAt
+                            < MAX_BATCH_NANOS) {
+                        Runnable action = queue.poll();
+                        if (action != null) {
+                            action.run();
+                            processed++;
+                        }
+                    }
+                } catch (Throwable throwable) {
+                    plugin.getLogger().log(
+                            Level.SEVERE,
+                            "La génération du village a échoué ; "
+                                    + "les modifications vont être restaurées.",
+                            throwable
+                    );
+                    clearActiveTask();
+                    cancel();
+                    rollbackSession(session);
+                    return;
+                }
+
                 if (queue.isEmpty()) {
+                    plugin.getLogger().info(
+                            "Village " + session.getVillageId()
+                                    + " construit avec succès."
+                    );
+                    clearActiveTask();
                     cancel();
                 }
             }
-        }.runTaskTimer(plugin, 1L, 1L);
+        };
+
+        activeBuildTask = runner.runTaskTimer(plugin, 1L, 1L);
     }
 
-    private List<Runnable> prepareGroundActions(World world, int minX, int maxX, int minZ, int maxZ, int y) {
+    private void clearActiveTask() {
+        activeBuildTask = null;
+    }
+
+    /**
+     * Prépare une terrasse principale et une transition graduelle vers le
+     * relief naturel. Chaque colonne est une seule tâche pour maîtriser la
+     * taille de la file, mais chaque bloc modifié reste individuellement suivi.
+     */
+    private List<Runnable> prepareGroundActions(
+            VillageGenerationSession session,
+            World world,
+            int flatMinX,
+            int flatMaxX,
+            int flatMinZ,
+            int flatMaxZ,
+            int baseY,
+            int feather) {
         List<Runnable> actions = new ArrayList<>();
-        int centerX = (minX + maxX) / 2;
-        int centerZ = (minZ + maxZ) / 2;
-        int radiusX = Math.max(1, (maxX - minX) / 2);
-        int radiusZ = Math.max(1, (maxZ - minZ) / 2);
+        int safeFeather = Math.max(0, feather);
+        int minX = flatMinX - safeFeather;
+        int maxX = flatMaxX + safeFeather;
+        int minZ = flatMinZ - safeFeather;
+        int maxZ = flatMaxZ + safeFeather;
 
         for (int x = minX; x <= maxX; x++) {
             for (int z = minZ; z <= maxZ; z++) {
-                final int fx = x;
-                final int fz = z;
-                actions.add(() -> {
-                    // On conserve un terrain lisible pour les rues/terrasses tout en
-                    // évitant l'effet "moquette verte parfaite" sur toute la zone.
-                    int topY = world.getHighestBlockYAt(fx, fz);
-                    for (int clearY = y + 1; clearY <= Math.max(topY, y + 12); clearY++) {
-                        world.getBlockAt(fx, clearY, fz).setType(Material.AIR, false);
-                    }
-                    for (int fillY = Math.min(topY + 1, y - 2); fillY <= y - 1; fillY++) {
-                        if (fillY <= y - 2) {
-                            setBlockTracked(world, fx, fillY, fz, (fx + fillY + fz) % 5 == 0 ? Material.STONE : Material.DIRT);
-                        }
-                    }
-
-                    double edgeFactor = Math.max(Math.abs(fx - centerX) / (double) radiusX,
-                            Math.abs(fz - centerZ) / (double) radiusZ);
-                    Material topMaterial;
-                    if (edgeFactor > 0.9D) {
-                        topMaterial = Math.floorMod(fx * 17 + fz * 31, 3) == 0 ? Material.COARSE_DIRT : Material.MOSS_BLOCK;
-                    } else if (edgeFactor > 0.72D) {
-                        topMaterial = Math.floorMod(fx * 13 + fz * 19, 4) == 0 ? Material.PACKED_MUD : Material.GRASS_BLOCK;
-                    } else {
-                        topMaterial = Material.GRASS_BLOCK;
-                    }
-
-                    setBlockTracked(world, fx, y - 1, fz, (fx + fz) % 7 == 0 ? Material.COARSE_DIRT : Material.DIRT);
-                    setBlockTracked(world, fx, y, fz, topMaterial);
-                });
+                final int columnX = x;
+                final int columnZ = z;
+                actions.add(() -> prepareGroundColumn(
+                        session,
+                        world,
+                        columnX,
+                        columnZ,
+                        flatMinX,
+                        flatMaxX,
+                        flatMinZ,
+                        flatMaxZ,
+                        baseY,
+                        safeFeather
+                ));
             }
         }
         return actions;
     }
 
-    private List<Runnable> buildQuarterVillagerSpawners(World world, int[] bounds, int y) {
-        List<Runnable> actions = new ArrayList<>();
-        int cx = (bounds[0] + bounds[1]) / 2;
-        int cz = (bounds[2] + bounds[3]) / 2;
-        int x1 = (bounds[0] + cx) / 2;
-        int x2 = (bounds[1] + cx) / 2;
-        int z1 = (bounds[2] + cz) / 2;
-        int z2 = (bounds[3] + cz) / 2;
+    private void prepareGroundColumn(
+            VillageGenerationSession session,
+            World world,
+            int x,
+            int z,
+            int flatMinX,
+            int flatMaxX,
+            int flatMinZ,
+            int flatMaxZ,
+            int baseY,
+            int feather) {
+        int highestY = world.getHighestBlockYAt(x, z);
+        int naturalY = findNaturalGroundY(world, x, z, baseY);
+        int distance = distanceOutside(
+                x,
+                z,
+                flatMinX,
+                flatMaxX,
+                flatMinZ,
+                flatMaxZ
+        );
 
-        int[][] points = {{x1, z1}, {x2, z1}, {x1, z2}, {x2, z2}};
-        for (int[] point : points) {
-            int px = point[0];
-            int pz = point[1];
-
-            // Spawner enterré : le village conserve sa vie sans exposer des
-            // blocs techniques au milieu des rues.
-            actions.add(createSpawnerAction(currentSession, world, px, y - 1, pz, EntityType.VILLAGER));
-
-            // Petit nœud de quartier : potelet, lanterne et sol varié.
-            actions.add(() -> setBlockTracked(world, px, y, pz, Material.COBBLESTONE));
-            actions.add(() -> setBlockTracked(world, px, y + 1, pz, Material.COBBLESTONE_WALL));
-            actions.add(() -> setBlockTracked(world, px, y + 2, pz, Material.LANTERN));
-
-            int[][] ring = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}, {1, 1}, {1, -1}, {-1, 1}, {-1, -1}};
-            for (int[] offset : ring) {
-                int fx = px + offset[0];
-                int fz = pz + offset[1];
-                Material ground = Math.abs(offset[0]) + Math.abs(offset[1]) == 1
-                        ? Material.GRAVEL
-                        : Material.COARSE_DIRT;
-                actions.add(() -> setBlockTracked(world, fx, y, fz, ground));
-            }
-
-            // Deux petits bancs pour suggérer une placette de quartier.
-            int benchAX = px - 1;
-            int benchAZ = pz + 2;
-            int benchBX = px + 1;
-            int benchBZ = pz - 2;
-            actions.add(() -> setBlockTracked(world, benchAX, y + 1, benchAZ, Material.SPRUCE_STAIRS));
-            actions.add(() -> org.example.village.VillageStyle.setStair(world, benchAX, y + 1, benchAZ,
-                    Material.SPRUCE_STAIRS, BlockFace.NORTH, Stairs.Half.BOTTOM, Stairs.Shape.STRAIGHT));
-            actions.add(() -> setBlockTracked(world, benchBX, y + 1, benchBZ, Material.SPRUCE_STAIRS));
-            actions.add(() -> org.example.village.VillageStyle.setStair(world, benchBX, y + 1, benchBZ,
-                    Material.SPRUCE_STAIRS, BlockFace.SOUTH, Stairs.Half.BOTTOM, Stairs.Shape.STRAIGHT));
+        int targetY;
+        if (distance <= 0 || feather == 0) {
+            targetY = baseY;
+        } else {
+            /*
+             * La dernière couronne préparée rejoint exactement le relief
+             * naturel. Avec {@code feather + 1}, il restait encore 20 % de
+             * terrassement au bord, puis une marche brutale hors de la zone.
+             */
+            double ratio = Math.min(
+                    1.0D,
+                    distance / (double) Math.max(1, feather)
+            );
+            targetY = (int) Math.round(
+                    baseY + (naturalY - baseY) * ratio
+            );
         }
-        return actions;
+        targetY = Math.max(
+                world.getMinHeight() + 2,
+                Math.min(world.getMaxHeight() - 2, targetY)
+        );
+
+        /*
+         * On retire aussi les troncs et feuillages au-dessus du sol cible.
+         * Contrairement à l'ancienne version, chaque bloc d'air est mémorisé
+         * et pourra donc être restauré par /village undo.
+         */
+        int clearTop = Math.min(
+                world.getMaxHeight() - 1,
+                Math.max(highestY, targetY + 14)
+        );
+        for (int y = targetY + 1; y <= clearTop; y++) {
+            Block block = world.getBlockAt(x, y, z);
+            if (!block.getType().isAir()) {
+                setBlockTracked(
+                        session,
+                        world,
+                        x,
+                        y,
+                        z,
+                        Material.AIR
+                );
+            }
+        }
+
+        if (naturalY < targetY) {
+            for (int y = naturalY + 1; y < targetY; y++) {
+                Material fill = y < targetY - 3
+                        ? Material.STONE
+                        : Material.DIRT;
+                setBlockTracked(session, world, x, y, z, fill);
+            }
+        }
+
+        setBlockTracked(
+                session,
+                world,
+                x,
+                targetY - 1,
+                z,
+                Math.floorMod(x * 17 + z * 31, 7) == 0
+                        ? Material.COARSE_DIRT
+                        : Material.DIRT
+        );
+        setBlockTracked(
+                session,
+                world,
+                x,
+                targetY,
+                z,
+                terrainTopMaterial(x, z, distance, feather)
+        );
     }
 
-    private void undoVillage() {
-        if (currentSession == null) {
+    private int resolveBaseY(
+            World world,
+            int centerX,
+            int centerZ,
+            int fallbackY) {
+        List<Integer> samples = new ArrayList<>();
+        int[] offsets = {-4, 0, 4};
+        for (int dx : offsets) {
+            for (int dz : offsets) {
+                samples.add(findNaturalGroundY(
+                        world,
+                        centerX + dx,
+                        centerZ + dz,
+                        fallbackY
+                ));
+            }
+        }
+        Collections.sort(samples);
+        int median = samples.get(samples.size() / 2);
+
+        /*
+         * Dans une grotte ou sur une très haute construction, le niveau le
+         * plus proche du joueur est plus prévisible que la surface distante.
+         */
+        if (Math.abs(median - fallbackY) > 18) {
+            return fallbackY;
+        }
+        return median;
+    }
+
+    private int findNaturalGroundY(
+            World world,
+            int x,
+            int z,
+            int fallbackY) {
+        int highest = Math.min(
+                world.getMaxHeight() - 1,
+                world.getHighestBlockYAt(x, z)
+        );
+        int lowerBound = Math.max(
+                world.getMinHeight(),
+                highest - 96
+        );
+
+        for (int y = highest; y >= lowerBound; y--) {
+            Material material = world.getBlockAt(x, y, z).getType();
+            if (isNaturalGround(material)) {
+                return y;
+            }
+        }
+        return Math.max(
+                world.getMinHeight() + 2,
+                Math.min(world.getMaxHeight() - 2, fallbackY)
+        );
+    }
+
+    private boolean isNaturalGround(Material material) {
+        if (material == null || material.isAir() || !material.isSolid()) {
+            return false;
+        }
+
+        String name = material.name();
+        return !name.endsWith("_LEAVES")
+                && !name.endsWith("_LOG")
+                && !name.endsWith("_WOOD")
+                && !name.endsWith("_STEM")
+                && !name.endsWith("_HYPHAE")
+                && material != Material.BAMBOO_BLOCK
+                && material != Material.CACTUS
+                && material != Material.MUSHROOM_STEM;
+    }
+
+    private int distanceOutside(
+            int x,
+            int z,
+            int minX,
+            int maxX,
+            int minZ,
+            int maxZ) {
+        int dx = x < minX
+                ? minX - x
+                : Math.max(0, x - maxX);
+        int dz = z < minZ
+                ? minZ - z
+                : Math.max(0, z - maxZ);
+        return Math.max(dx, dz);
+    }
+
+    private Material terrainTopMaterial(
+            int x,
+            int z,
+            int distance,
+            int feather) {
+        int selector = Math.floorMod(x * 31 + z * 17, 11);
+        if (distance > 0 && distance >= Math.max(1, feather - 1)) {
+            return selector % 3 == 0
+                    ? Material.MOSS_BLOCK
+                    : Material.GRASS_BLOCK;
+        }
+        if (selector == 0) {
+            return Material.COARSE_DIRT;
+        }
+        if (selector == 1) {
+            return Material.MOSS_BLOCK;
+        }
+        return Material.GRASS_BLOCK;
+    }
+
+    /**
+     * Annule la génération active ou terminée et restaure les blocs dans
+     * l'ordre inverse de leur première modification.
+     */
+    private boolean undoVillage() {
+        VillageGenerationSession session = currentSession;
+        if (session == null) {
+            return false;
+        }
+
+        cancelActiveBuild();
+        rollbackSession(session);
+        return true;
+    }
+
+    private void cancelActiveBuild() {
+        if (activeBuildTask != null) {
+            activeBuildTask.cancel();
+            activeBuildTask = null;
+        }
+    }
+
+    private void rollbackSession(VillageGenerationSession session) {
+        if (session == null) {
             return;
         }
-        currentSession.getPlacedBlocks().forEach(location -> location.getBlock().setType(Material.AIR, false));
-        for (UUID id : currentSession.getGeneratedEntities()) {
+
+        /*
+         * On détache la session avant la restauration : aucune commande ou
+         * tâche résiduelle ne peut alors enregistrer les blocs restaurés.
+         */
+        if (currentSession == session) {
+            currentSession = null;
+        }
+
+        for (UUID id : session.getGeneratedEntities()) {
             Entity entity = Bukkit.getEntity(id);
             if (entity != null) {
                 entity.remove();
             }
         }
-        VillageEntityManager.cleanup(plugin, currentSession.getVillageId());
-        currentSession = null;
+
+        List<Map.Entry<Location, BlockData>> originals =
+                new ArrayList<>(session.getOriginalBlocks().entrySet());
+        Collections.reverse(originals);
+        for (Map.Entry<Location, BlockData> entry : originals) {
+            Location location = entry.getKey();
+            if (location.getWorld() == null) {
+                continue;
+            }
+            location.getBlock().setBlockData(
+                    entry.getValue().clone(),
+                    false
+            );
+        }
+
+        try {
+            VillageEntityManager.cleanup(
+                    plugin,
+                    session.getVillageId()
+            );
+        } catch (Throwable throwable) {
+            plugin.getLogger().warning(
+                    "Nettoyage des entités du village incomplet : "
+                            + throwable.getClass().getSimpleName()
+            );
+        }
     }
 }

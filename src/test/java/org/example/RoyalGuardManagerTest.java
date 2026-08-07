@@ -7,16 +7,21 @@ import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.World;
 import org.bukkit.damage.DamageSource;
+import org.bukkit.entity.ComplexEntityPart;
+import org.bukkit.entity.ComplexLivingEntity;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.Husk;
 import org.bukkit.entity.IronGolem;
 import org.bukkit.entity.LivingEntity;
+import org.bukkit.entity.Mob;
 import org.bukkit.entity.Player;
 import org.bukkit.entity.Projectile;
+import org.bukkit.entity.Wolf;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
 import org.bukkit.event.entity.EntityDamageByEntityEvent;
 import org.bukkit.event.entity.EntityDeathEvent;
+import org.bukkit.event.entity.EntityTargetEvent;
 import org.bukkit.event.entity.EntityTargetLivingEntityEvent;
 import org.bukkit.event.player.PlayerChangedWorldEvent;
 import org.bukkit.event.player.PlayerQuitEvent;
@@ -37,6 +42,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.clearInvocations;
@@ -123,13 +129,14 @@ class RoyalGuardManagerTest {
     }
 
     @Test
-    void followRangeCannotBeLowerThanTheConfiguredProtectionRadius() {
+    void followRangeCannotBeLowerThanProtectionOrTheCombatLeash() {
         plugin.getConfig().set("garde.protection-radius", 64.0D);
+        plugin.getConfig().set("garde.combat-leash-radius", 72.0D);
         plugin.getConfig().set("garde.attributes.follow-range", 20.0D);
 
         RoyalGuardManager.GuardSettings settings = RoyalGuardManager.GuardSettings.from(plugin);
 
-        assertEquals(64.0D, settings.followRange());
+        assertEquals(72.0D, settings.followRange());
     }
 
     @Test
@@ -140,6 +147,21 @@ class RoyalGuardManagerTest {
 
         assertEquals(EventPriority.MONITOR, handler.priority());
         assertTrue(handler.ignoreCancelled());
+    }
+
+    @Test
+    void offensiveAssistAndProactiveDetectionObserveTheFinalEventState() throws NoSuchMethodException {
+        EventHandler attackHandler = RoyalGuardManager.class
+                .getMethod("onOwnerAttacks", EntityDamageByEntityEvent.class)
+                .getAnnotation(EventHandler.class);
+        EventHandler targetHandler = RoyalGuardManager.class
+                .getMethod("onEntityTargetsOwner", EntityTargetLivingEntityEvent.class)
+                .getAnnotation(EventHandler.class);
+
+        assertEquals(EventPriority.MONITOR, attackHandler.priority());
+        assertTrue(attackHandler.ignoreCancelled());
+        assertEquals(EventPriority.MONITOR, targetHandler.priority());
+        assertTrue(targetHandler.ignoreCancelled());
     }
 
     @Test
@@ -218,6 +240,277 @@ class RoyalGuardManagerTest {
     }
 
     @Test
+    void everyValidOwnerHitIncludingAProjectileCommandsBothGuards() {
+        GuardFixture fixture = new GuardFixture();
+        manager.onCommand(fixture.owner, null, "garde", new String[0]);
+
+        LivingEntity target = livingEntity(fixture.world);
+        when(target.getLocation()).thenReturn(new Location(fixture.world, 40.0D, 64.0D, 0.0D));
+        Projectile projectile = mock(Projectile.class);
+        DamageSource damageSource = mock(DamageSource.class);
+        when(damageSource.getCausingEntity()).thenReturn(fixture.owner);
+
+        EntityDamageByEntityEvent ownerAttack = mock(EntityDamageByEntityEvent.class);
+        when(ownerAttack.getEntity()).thenReturn(target);
+        when(ownerAttack.getDamager()).thenReturn(projectile);
+        when(ownerAttack.getDamageSource()).thenReturn(damageSource);
+
+        manager.onOwnerAttacks(ownerAttack);
+
+        verify(fixture.first.guard).setTarget(target);
+        verify(fixture.second.guard).setTarget(target);
+    }
+
+    @Test
+    void hittingAnEnderDragonPartCommandsTheLivingParent() {
+        GuardFixture fixture = new GuardFixture();
+        manager.onCommand(fixture.owner, null, "garde", new String[0]);
+
+        ComplexLivingEntity dragon = mock(ComplexLivingEntity.class);
+        when(dragon.getUniqueId()).thenReturn(UUID.randomUUID());
+        when(dragon.getWorld()).thenReturn(fixture.world);
+        when(dragon.getLocation()).thenReturn(new Location(fixture.world, 20.0D, 70.0D, 0.0D));
+        when(dragon.isValid()).thenReturn(true);
+        when(dragon.isDead()).thenReturn(false);
+
+        ComplexEntityPart dragonPart = mock(ComplexEntityPart.class);
+        when(dragonPart.getParent()).thenReturn(dragon);
+
+        EntityDamageByEntityEvent ownerAttack = mock(EntityDamageByEntityEvent.class);
+        when(ownerAttack.getEntity()).thenReturn(dragonPart);
+        when(ownerAttack.getDamager()).thenReturn(fixture.owner);
+
+        manager.onOwnerAttacks(ownerAttack);
+
+        verify(fixture.first.guard).setTarget(dragon);
+        verify(fixture.second.guard).setTarget(dragon);
+
+        EntityDamageByEntityEvent guardHitOnPart = mock(EntityDamageByEntityEvent.class);
+        when(guardHitOnPart.getDamager()).thenReturn(fixture.first.guard);
+        when(guardHitOnPart.getEntity()).thenReturn(dragonPart);
+        manager.onGuardDamages(guardHitOnPart);
+
+        verify(guardHitOnPart, never()).setCancelled(true);
+    }
+
+    @Test
+    void aMobTargetingTheOwnerIsInterceptedBeforeItsFirstDamage() {
+        GuardFixture fixture = new GuardFixture();
+        manager.onCommand(fixture.owner, null, "garde", new String[0]);
+        Mob threat = mob(fixture.world);
+        // L'événement est gratuit : il peut couvrir toute la laisse, même au-delà du scan périodique.
+        when(threat.getLocation()).thenReturn(new Location(fixture.world, 40.0D, 64.0D, 0.0D));
+        when(threat.getTarget()).thenReturn(fixture.owner);
+
+        EntityTargetLivingEntityEvent targetEvent = mock(EntityTargetLivingEntityEvent.class);
+        when(targetEvent.getEntity()).thenReturn(threat);
+        when(targetEvent.getTarget()).thenReturn(fixture.owner);
+        when(targetEvent.getReason()).thenReturn(EntityTargetEvent.TargetReason.CLOSEST_PLAYER);
+
+        manager.onEntityTargetsOwner(targetEvent);
+
+        verify(fixture.first.guard).setTarget(threat);
+        verify(fixture.second.guard).setTarget(threat);
+    }
+
+    @Test
+    void aMobTargetingOneGuardIsInterceptedBeforeItsFirstDamage() {
+        GuardFixture fixture = new GuardFixture();
+        manager.onCommand(fixture.owner, null, "garde", new String[0]);
+        Mob threat = mob(fixture.world);
+
+        EntityTargetLivingEntityEvent targetEvent = mock(EntityTargetLivingEntityEvent.class);
+        when(targetEvent.getEntity()).thenReturn(threat);
+        when(targetEvent.getTarget()).thenReturn(fixture.first.guard);
+        when(targetEvent.getReason()).thenReturn(EntityTargetEvent.TargetReason.CLOSEST_ENTITY);
+
+        manager.onEntityTargetsOwner(targetEvent);
+
+        verify(fixture.first.guard).setTarget(threat);
+        verify(fixture.second.guard).setTarget(threat);
+    }
+
+    @Test
+    void aRaiderFollowingItsLeaderStillCountsAsAHostileTarget() {
+        GuardFixture fixture = new GuardFixture();
+        manager.onCommand(fixture.owner, null, "garde", new String[0]);
+        Mob raider = mob(fixture.world);
+
+        EntityTargetLivingEntityEvent targetEvent = mock(EntityTargetLivingEntityEvent.class);
+        when(targetEvent.getEntity()).thenReturn(raider);
+        when(targetEvent.getTarget()).thenReturn(fixture.owner);
+        when(targetEvent.getReason()).thenReturn(EntityTargetEvent.TargetReason.FOLLOW_LEADER);
+
+        manager.onEntityTargetsOwner(targetEvent);
+
+        verify(fixture.first.guard).setTarget(raider);
+        verify(fixture.second.guard).setTarget(raider);
+    }
+
+    @Test
+    void aNonHostileTemptTargetReasonNeverStartsACombat() {
+        GuardFixture fixture = new GuardFixture();
+        manager.onCommand(fixture.owner, null, "garde", new String[0]);
+        Mob attractedAnimal = mob(fixture.world);
+
+        EntityTargetLivingEntityEvent targetEvent = mock(EntityTargetLivingEntityEvent.class);
+        when(targetEvent.getEntity()).thenReturn(attractedAnimal);
+        when(targetEvent.getTarget()).thenReturn(fixture.owner);
+        when(targetEvent.getReason()).thenReturn(EntityTargetEvent.TargetReason.TEMPT);
+
+        manager.onEntityTargetsOwner(targetEvent);
+
+        verify(fixture.first.guard, never()).setTarget(any(LivingEntity.class));
+        verify(fixture.second.guard, never()).setTarget(any(LivingEntity.class));
+    }
+
+    @Test
+    void fallbackAwarenessScanDetectsAMobTargetInjectedWithoutTargetEvent() {
+        GuardFixture fixture = new GuardFixture();
+        manager.onCommand(fixture.owner, null, "garde", new String[0]);
+        Mob threat = mob(fixture.world);
+        when(threat.getTarget()).thenReturn(fixture.owner);
+        when(fixture.owner.getNearbyEntities(32.0D, 32.0D, 32.0D))
+                .thenReturn(List.of(threat));
+
+        manager.followActiveSquads();
+
+        verify(fixture.first.guard).setTarget(threat);
+        verify(fixture.second.guard).setTarget(threat);
+    }
+
+    @Test
+    void oneMalformedNearbyEntityCannotHideAValidProactiveThreat() {
+        GuardFixture fixture = new GuardFixture();
+        manager.onCommand(fixture.owner, null, "garde", new String[0]);
+
+        Entity malformed = mock(Entity.class);
+        when(malformed.getUniqueId()).thenReturn(UUID.randomUUID());
+        when(malformed.getWorld()).thenReturn(fixture.world);
+        when(malformed.getLocation()).thenThrow(new IllegalStateException("Entité déchargée"));
+
+        Mob validThreat = mob(fixture.world);
+        when(validThreat.getTarget()).thenReturn(fixture.owner);
+        when(fixture.owner.getNearbyEntities(32.0D, 32.0D, 32.0D))
+                .thenReturn(List.of(malformed, validThreat));
+
+        manager.followActiveSquads();
+
+        verify(fixture.first.guard).setTarget(validThreat);
+        verify(fixture.second.guard).setTarget(validThreat);
+    }
+
+    @Test
+    void immediateAggressorPreemptsButDoesNotEraseTheOwnersQueuedTarget() {
+        GuardFixture fixture = new GuardFixture();
+        manager.onCommand(fixture.owner, null, "garde", new String[0]);
+        LivingEntity commandedTarget = livingEntity(fixture.world);
+        LivingEntity immediateAggressor = livingEntity(fixture.world);
+
+        EntityDamageByEntityEvent ownerAttack = mock(EntityDamageByEntityEvent.class);
+        when(ownerAttack.getEntity()).thenReturn(commandedTarget);
+        when(ownerAttack.getDamager()).thenReturn(fixture.owner);
+        manager.onOwnerAttacks(ownerAttack);
+
+        EntityDamageByEntityEvent ownerDamaged = mock(EntityDamageByEntityEvent.class);
+        when(ownerDamaged.getEntity()).thenReturn(fixture.owner);
+        when(ownerDamaged.getDamager()).thenReturn(immediateAggressor);
+        manager.onOwnerDamaged(ownerDamaged);
+        verify(fixture.first.guard).setTarget(immediateAggressor);
+        verify(fixture.second.guard).setTarget(immediateAggressor);
+
+        when(immediateAggressor.isDead()).thenReturn(true);
+        clearInvocations(fixture.first.guard, fixture.second.guard);
+
+        manager.maintainActiveThreats();
+
+        verify(fixture.first.guard).setTarget(commandedTarget);
+        verify(fixture.second.guard).setTarget(commandedTarget);
+    }
+
+    @Test
+    void proactiveDangerPreemptsButDoesNotEraseTheOwnersOffensiveOrder() {
+        GuardFixture fixture = new GuardFixture();
+        manager.onCommand(fixture.owner, null, "garde", new String[0]);
+        LivingEntity commandedTarget = livingEntity(fixture.world);
+        Mob proactiveThreat = mob(fixture.world);
+
+        EntityDamageByEntityEvent ownerAttack = mock(EntityDamageByEntityEvent.class);
+        when(ownerAttack.getEntity()).thenReturn(commandedTarget);
+        when(ownerAttack.getDamager()).thenReturn(fixture.owner);
+        manager.onOwnerAttacks(ownerAttack);
+
+        EntityTargetLivingEntityEvent targetEvent = mock(EntityTargetLivingEntityEvent.class);
+        when(targetEvent.getEntity()).thenReturn(proactiveThreat);
+        when(targetEvent.getTarget()).thenReturn(fixture.owner);
+        when(targetEvent.getReason()).thenReturn(EntityTargetEvent.TargetReason.CLOSEST_PLAYER);
+        manager.onEntityTargetsOwner(targetEvent);
+
+        verify(fixture.first.guard).setTarget(proactiveThreat);
+        verify(fixture.second.guard).setTarget(proactiveThreat);
+
+        when(proactiveThreat.isDead()).thenReturn(true);
+        clearInvocations(fixture.first.guard, fixture.second.guard);
+
+        manager.maintainActiveThreats();
+
+        verify(fixture.first.guard).setTarget(commandedTarget);
+        verify(fixture.second.guard).setTarget(commandedTarget);
+    }
+
+    @Test
+    void successiveOwnerTargetsAreQueuedAndFinishedInsteadOfBeingForgotten() {
+        GuardFixture fixture = new GuardFixture();
+        manager.onCommand(fixture.owner, null, "garde", new String[0]);
+        LivingEntity firstTarget = livingEntity(fixture.world);
+        LivingEntity secondTarget = livingEntity(fixture.world);
+
+        EntityDamageByEntityEvent firstAttack = mock(EntityDamageByEntityEvent.class);
+        when(firstAttack.getEntity()).thenReturn(firstTarget);
+        when(firstAttack.getDamager()).thenReturn(fixture.owner);
+        manager.onOwnerAttacks(firstAttack);
+
+        EntityDamageByEntityEvent secondAttack = mock(EntityDamageByEntityEvent.class);
+        when(secondAttack.getEntity()).thenReturn(secondTarget);
+        when(secondAttack.getDamager()).thenReturn(fixture.owner);
+        manager.onOwnerAttacks(secondAttack);
+
+        verify(fixture.first.guard).setTarget(secondTarget);
+        verify(fixture.second.guard).setTarget(secondTarget);
+
+        when(secondTarget.isDead()).thenReturn(true);
+        clearInvocations(fixture.first.guard, fixture.second.guard);
+
+        manager.maintainActiveThreats();
+
+        verify(fixture.first.guard).setTarget(firstTarget);
+        verify(fixture.second.guard).setTarget(firstTarget);
+    }
+
+    @Test
+    void ownerTamedAnimalsAreNeverAddedAsGuardTargets() {
+        GuardFixture fixture = new GuardFixture();
+        manager.onCommand(fixture.owner, null, "garde", new String[0]);
+
+        Wolf pet = mock(Wolf.class);
+        when(pet.getUniqueId()).thenReturn(UUID.randomUUID());
+        when(pet.getWorld()).thenReturn(fixture.world);
+        when(pet.getLocation()).thenReturn(new Location(fixture.world, 1.0D, 64.0D, 0.0D));
+        when(pet.isValid()).thenReturn(true);
+        when(pet.isDead()).thenReturn(false);
+        when(pet.getOwner()).thenReturn(fixture.owner);
+
+        EntityDamageByEntityEvent accidentalHit = mock(EntityDamageByEntityEvent.class);
+        when(accidentalHit.getEntity()).thenReturn(pet);
+        when(accidentalHit.getDamager()).thenReturn(fixture.owner);
+
+        manager.onOwnerAttacks(accidentalHit);
+
+        verify(fixture.first.guard, never()).setTarget(pet);
+        verify(fixture.second.guard, never()).setTarget(pet);
+    }
+
+    @Test
     void damageTargetsOnlyTheActualUncancelledAttacker() {
         GuardFixture fixture = new GuardFixture();
         manager.onCommand(fixture.owner, null, "garde", new String[0]);
@@ -236,6 +529,10 @@ class RoyalGuardManagerTest {
 
         verify(fixture.first.guard).setTarget(attacker);
         verify(fixture.second.guard).setTarget(attacker);
+
+        // Une menace de même urgence reste stable tant qu'elle est vivante ; une fois éliminée,
+        // le prochain véritable agresseur devient immédiatement la cible active.
+        when(attacker.isDead()).thenReturn(true);
 
         Player projectileAttacker = mock(Player.class);
         when(projectileAttacker.getUniqueId()).thenReturn(UUID.randomUUID());
@@ -475,6 +772,8 @@ class RoyalGuardManagerTest {
 
         verify(golem).setTarget((LivingEntity) null);
         verify(golem).setAggressive(false);
+        verify(fixture.first.guard, never()).setTarget(golem);
+        verify(fixture.second.guard, never()).setTarget(golem);
     }
 
     @Test
@@ -714,6 +1013,146 @@ class RoyalGuardManagerTest {
     }
 
     @Test
+    void guardsNavigateToDistinctRearFormationAnchorsInsteadOfTheOwnerPosition() {
+        manager.shutdown();
+        NavigationRecorder navigator = new NavigationRecorder();
+        manager = new RoyalGuardManager(plugin, navigator, false, guardFactory,
+                (owner, slot) -> owner.getLocation().clone().add(slot == 0 ? 2.0D : -2.0D, 0.0D, 0.0D));
+
+        GuardFixture fixture = new GuardFixture();
+        manager.onCommand(fixture.owner, null, "garde", new String[0]);
+
+        manager.followActiveSquads();
+
+        Location firstTarget = navigator.lastTargetFor(fixture.first.guard);
+        Location secondTarget = navigator.lastTargetFor(fixture.second.guard);
+        assertNotNull(firstTarget);
+        assertNotNull(secondTarget);
+        assertTrue(firstTarget.getZ() < fixture.owner.getLocation().getZ());
+        assertTrue(secondTarget.getZ() < fixture.owner.getLocation().getZ());
+        assertTrue(firstTarget.getX() * secondTarget.getX() < 0.0D);
+        assertTrue(firstTarget.distanceSquared(fixture.owner.getLocation()) > 4.0D);
+        assertTrue(secondTarget.distanceSquared(fixture.owner.getLocation()) > 4.0D);
+    }
+
+    @Test
+    void unsafeFormationConfigurationIsAutomaticallyKeptOutsidePersonalSpace() {
+        GuardFixture fixture = new GuardFixture();
+        plugin.getConfig().set("garde.formation-side-distance", 0.1D);
+        plugin.getConfig().set("garde.formation-rear-distance", 0.1D);
+        plugin.getConfig().set("garde.personal-space-radius", 4.0D);
+
+        Location firstAnchor = manager.getFormationTarget(fixture.owner, 0);
+        Location secondAnchor = manager.getFormationTarget(fixture.owner, 1);
+        Location ownerLocation = fixture.owner.getLocation();
+
+        double firstHorizontalDistance = Math.hypot(
+                firstAnchor.getX() - ownerLocation.getX(),
+                firstAnchor.getZ() - ownerLocation.getZ());
+        double secondHorizontalDistance = Math.hypot(
+                secondAnchor.getX() - ownerLocation.getX(),
+                secondAnchor.getZ() - ownerLocation.getZ());
+
+        assertTrue(firstHorizontalDistance >= 4.75D - 1.0E-9D);
+        assertTrue(secondHorizontalDistance >= 4.75D - 1.0E-9D);
+        assertTrue(Math.abs(firstAnchor.getX() - secondAnchor.getX()) >= 1.8D);
+        assertTrue(firstAnchor.getZ() < ownerLocation.getZ());
+        assertTrue(secondAnchor.getZ() < ownerLocation.getZ());
+    }
+
+    @Test
+    void followRadiusIsAutomaticallyLargeEnoughForTheConfiguredFormation() {
+        GuardFixture fixture = new GuardFixture();
+        plugin.getConfig().set("garde.follow-radius", 2.0D);
+        plugin.getConfig().set("garde.formation-side-distance", 8.0D);
+        plugin.getConfig().set("garde.formation-rear-distance", 8.0D);
+        manager.onCommand(fixture.owner, null, "garde", new String[0]);
+
+        when(fixture.first.guard.getLocation()).thenReturn(manager.getFormationTarget(fixture.owner, 0));
+        when(fixture.second.guard.getLocation()).thenReturn(manager.getFormationTarget(fixture.owner, 1));
+        clearInvocations(fixture.first.guard, fixture.second.guard);
+
+        manager.followActiveSquads();
+
+        verify(fixture.first.guard, never()).teleport(any(Location.class));
+        verify(fixture.second.guard, never()).teleport(any(Location.class));
+    }
+
+    @Test
+    void aGuardAlreadyInFormationStopsItsObsoletePath() {
+        GuardFixture fixture = new GuardFixture();
+        NavigationRecorder recorder = new NavigationRecorder();
+        manager.shutdown();
+        manager = new RoyalGuardManager(plugin, recorder, false, guardFactory,
+                (owner, slot) -> owner.getLocation().clone().add(slot == 0 ? 2.0D : -2.0D, 0.0D, 0.0D));
+        manager.onCommand(fixture.owner, null, "garde", new String[0]);
+
+        when(fixture.first.guard.getLocation()).thenReturn(manager.getFormationTarget(fixture.owner, 0));
+        when(fixture.second.guard.getLocation()).thenReturn(manager.getFormationTarget(fixture.owner, 1));
+
+        manager.followActiveSquads();
+
+        assertEquals(2, recorder.stopCalls());
+        assertTrue(recorder.calls.isEmpty());
+    }
+
+    @Test
+    void aGuardInFrontOfTheCameraFirstReceivesALateralClearanceWaypoint() {
+        manager.shutdown();
+        NavigationRecorder navigator = new NavigationRecorder();
+        manager = new RoyalGuardManager(plugin, navigator, false, guardFactory,
+                (owner, slot) -> owner.getLocation().clone().add(slot == 0 ? 2.0D : -2.0D, 0.0D, 0.0D));
+
+        GuardFixture fixture = new GuardFixture();
+        manager.onCommand(fixture.owner, null, "garde", new String[0]);
+        when(fixture.first.guard.getLocation()).thenReturn(
+                new Location(fixture.world, 0.0D, 64.0D, 2.0D));
+
+        manager.followActiveSquads();
+
+        Location clearanceTarget = navigator.lastTargetFor(fixture.first.guard);
+        assertNotNull(clearanceTarget);
+        assertTrue(Math.abs(clearanceTarget.getX()) >= 3.0D);
+        assertTrue(clearanceTarget.getZ() >= 0.0D);
+        assertTrue(clearanceTarget.getZ() <= 1.25D);
+    }
+
+    @Test
+    void aGuardOverlappingTheOwnerIsImmediatelyRecalledToASafeSide() {
+        GuardFixture fixture = new GuardFixture();
+        manager.onCommand(fixture.owner, null, "garde", new String[0]);
+        when(fixture.first.guard.getLocation()).thenReturn(fixture.owner.getLocation().clone());
+
+        manager.followActiveSquads();
+
+        verify(fixture.first.guard).teleport(any(Location.class));
+    }
+
+    @Test
+    void combatUsesTheWiderLeashAndDoesNotRecallAGuardBeforeItFinishesItsTarget() {
+        GuardFixture fixture = new GuardFixture();
+        manager.onCommand(fixture.owner, null, "garde", new String[0]);
+        LivingEntity target = livingEntity(fixture.world);
+        when(target.getLocation()).thenReturn(new Location(fixture.world, 47.0D, 64.0D, 0.0D));
+
+        EntityDamageByEntityEvent ownerAttack = mock(EntityDamageByEntityEvent.class);
+        when(ownerAttack.getEntity()).thenReturn(target);
+        when(ownerAttack.getDamager()).thenReturn(fixture.owner);
+        manager.onOwnerAttacks(ownerAttack);
+
+        // Le garde a légèrement dépassé la cible pour la contourner : la marge de combat
+        // doit éviter un rappel/poursuite en boucle au bord exact des 48 blocs.
+        when(fixture.first.guard.getLocation()).thenReturn(
+                new Location(fixture.world, 51.0D, 64.0D, 0.0D));
+        clearInvocations(fixture.first.guard);
+
+        manager.followActiveSquads();
+
+        verify(fixture.first.guard, never()).teleport(any(Location.class));
+        verify(fixture.first.guard).setTarget(target);
+    }
+
+    @Test
     void aNavigationFailureOnOneGuardDoesNotStopTheOtherGuard() {
         manager.shutdown();
         AtomicInteger navigationAttempts = new AtomicInteger();
@@ -751,6 +1190,8 @@ class RoyalGuardManagerTest {
         verify(fixture.second.guard).teleport(any(Location.class));
         verify(fixture.first.guard).setFallDistance(0.0F);
         verify(fixture.second.guard).setFallDistance(0.0F);
+        verify(fixture.first.guard).setAggressive(false);
+        verify(fixture.second.guard).setAggressive(false);
     }
 
     @Test
@@ -790,7 +1231,7 @@ class RoyalGuardManagerTest {
         when(attack.getDamager()).thenReturn(attacker);
         manager.onOwnerDamaged(attack);
         when(fixture.first.guard.getTarget()).thenReturn(attacker);
-        when(fixture.first.guard.getLocation()).thenReturn(new Location(fixture.world, 30.0D, 64.0D, 0.0D));
+        when(fixture.first.guard.getLocation()).thenReturn(new Location(fixture.world, 60.0D, 64.0D, 0.0D));
 
         manager.followActiveSquads();
 
@@ -928,6 +1369,16 @@ class RoyalGuardManagerTest {
         return golem;
     }
 
+    private Mob mob(World world) {
+        Mob mob = mock(Mob.class);
+        when(mob.getUniqueId()).thenReturn(UUID.randomUUID());
+        when(mob.getWorld()).thenReturn(world);
+        when(mob.getLocation()).thenReturn(new Location(world, 1.0D, 64.0D, 0.0D));
+        when(mob.isValid()).thenReturn(true);
+        when(mob.isDead()).thenReturn(false);
+        return mob;
+    }
+
     private LivingEntity livingEntity(World world) {
         LivingEntity entity = mock(LivingEntity.class);
         when(entity.getUniqueId()).thenReturn(UUID.randomUUID());
@@ -974,6 +1425,39 @@ class RoyalGuardManagerTest {
         when(pdc.get(Keys.royalGuardOwner(), PersistentDataType.STRING)).thenReturn(ownerId.toString());
         when(pdc.get(Keys.royalGuardSlot(), PersistentDataType.INTEGER)).thenReturn(slot);
         return new GuardDouble(guard);
+    }
+
+    private static final class NavigationRecorder implements RoyalGuardManager.GuardNavigator {
+        private final List<NavigationCall> calls = new ArrayList<>();
+        private int stopCalls;
+
+        @Override
+        public boolean moveTo(Mob guard, Location target, double speed) {
+            calls.add(new NavigationCall(guard.getUniqueId(), target.clone(), speed));
+            return true;
+        }
+
+        @Override
+        public void stop(Mob guard) {
+            stopCalls++;
+        }
+
+        private int stopCalls() {
+            return stopCalls;
+        }
+
+        private Location lastTargetFor(Mob guard) {
+            for (int index = calls.size() - 1; index >= 0; index--) {
+                NavigationCall call = calls.get(index);
+                if (call.guardId().equals(guard.getUniqueId())) {
+                    return call.target().clone();
+                }
+            }
+            return null;
+        }
+    }
+
+    private record NavigationCall(UUID guardId, Location target, double speed) {
     }
 
     private static final class GuardFactoryStub implements RoyalGuardManager.GuardFactory {

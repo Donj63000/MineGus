@@ -1,7 +1,7 @@
 package org.example.mineur;
 
 /**
- * Controls the baseline speed of the mining loop.
+ * Définit la cadence de base de la boucle de minage.
  */
 public enum MiningSpeed {
     SLOW(10),
@@ -15,7 +15,9 @@ public enum MiningSpeed {
     }
 
     public double progressPerTick(double miningSpeedMultiplier) {
-        double safeMultiplier = Math.max(0.01D, miningSpeedMultiplier);
+        double safeMultiplier = Double.isFinite(miningSpeedMultiplier)
+                ? Math.max(0.01D, miningSpeedMultiplier)
+                : 1.0D;
         return safeMultiplier / ticksPerStage;
     }
 }

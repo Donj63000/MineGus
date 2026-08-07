@@ -91,7 +91,7 @@ public final class GateGuardManager {
                 return;
             }
             Vector offset = OFFSETS.get(index % OFFSETS.size());
-            Location spawnLoc = gateCenter.clone().add(offset);
+            Location spawnLoc = guardPosition(offset);
             IronGolem golem = (IronGolem) world.spawnEntity(spawnLoc, EntityType.IRON_GOLEM);
             VillageEntityManager.tagEntity(golem, plugin, villageId);
             applyGuardMetadata(golem);
@@ -162,10 +162,19 @@ public final class GateGuardManager {
         }
 
         private void keepNearGate(IronGolem golem, Vector offset) {
-            Location target = gateCenter.clone().add(offset);
+            Location target = guardPosition(offset);
             if (golem.getLocation().distanceSquared(target) > MAX_DISTANCE_SQ) {
                 golem.teleport(target);
             }
+        }
+
+        /**
+         * Les ancres du village désignent le bloc de sol. Centraliser ce
+         * décalage évite de faire apparaître ou téléporter les gardes dans le
+         * pavage du portail.
+         */
+        private Location guardPosition(Vector offset) {
+            return gateCenter.clone().add(offset).add(0.0D, 1.0D, 0.0D);
         }
 
         void despawn() {

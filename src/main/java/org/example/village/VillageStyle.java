@@ -1,10 +1,12 @@
 package org.example.village;
 
+import org.bukkit.Axis;
 import org.bukkit.Material;
 import org.bukkit.World;
 import org.bukkit.block.BlockFace;
 import org.bukkit.block.data.Bisected;
 import org.bukkit.block.data.Directional;
+import org.bukkit.block.data.Orientable;
 import org.bukkit.block.data.type.Bed;
 import org.bukkit.block.data.type.Door;
 import org.bukkit.block.data.type.Gate;
@@ -164,6 +166,27 @@ public final class VillageStyle {
         Directional directional = (Directional) material.createBlockData();
         directional.setFacing(facing);
         world.getBlockAt(x, y, z).setBlockData(directional, false);
+    }
+
+    /**
+     * Oriente les bûches et piliers couchés sans effectuer de cast vers
+     * Directional, incompatible avec les blocs qui implémentent Orientable.
+     */
+    public static void setLogAxis(World world,
+                                  int x,
+                                  int y,
+                                  int z,
+                                  Material material,
+                                  Axis axis) {
+        if (world == null) {
+            return;
+        }
+        var data = material.createBlockData();
+        if (!(data instanceof Orientable orientable)) {
+            return;
+        }
+        orientable.setAxis(axis);
+        world.getBlockAt(x, y, z).setBlockData(orientable, false);
     }
 
     /** Pose un lit correctement oriente (tete + pied geres separement). */

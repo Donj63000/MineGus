@@ -25,7 +25,7 @@ commands:
       /mineur select <n>
       /mineur speed <slow|normal|fast>
       /mineur pattern <quarry|branch|tunnel|vein_first>
-      /mineur pause|resume|stop|info|trust <joueur>
+      /mineur pause|resume|stop|info|trust|untrust <joueur>
     permission: mineplugin.mineur.use
   champ:
     description: Crée un champ automatisé (labour, plantation, récolte)

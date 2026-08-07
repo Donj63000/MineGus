@@ -5,7 +5,6 @@ import org.bukkit.Material;
 import org.bukkit.World;
 import org.bukkit.block.BlockFace;
 import org.bukkit.block.data.Bisected;
-import org.bukkit.block.data.type.Slab;
 import org.bukkit.block.data.type.Stairs;
 import org.bukkit.plugin.java.JavaPlugin;
 
@@ -62,51 +61,83 @@ public final class Disposition {
                                        VillageLayoutSettings settings,
                                        int villageId,
                                        List<Material> cropSeeds,
-                                       Queue<Runnable> q,
-                                       TerrainManager.SetBlock sb,
+                                       Queue<Runnable> queue,
+                                       TerrainManager.SetBlock setBlock,
                                        Random rng,
                                        VillageLayoutPlan layout) {
-
         World world = center.getWorld();
         if (world == null) {
             return;
         }
 
-        q.addAll(buildPlaza(world, center, settings.plazaSize(), baseY, sb));
+        int plazaSize = settings.effectivePlazaSize();
+        queue.addAll(buildPlaza(world, center, plazaSize, baseY, setBlock));
         for (StreetPlan street : layout.streets()) {
-            q.addAll(buildStreet(street, baseY, sb));
+            queue.addAll(buildStreet(street, baseY, setBlock));
         }
-        q.addAll(buildStreetLanterns(world, layout.streets(), baseY, sb));
-        q.addAll(buildCrossroadDetails(world, center, baseY, sb));
 
         int landmarkIndex = 0;
         for (LotPlan lot : layout.lots()) {
-            q.addAll(prepareLotBase(lot, baseY, sb));
-            q.addAll(connectLotToRoad(world, lot, baseY, sb));
+            queue.addAll(prepareLotBase(
+                    lot,
+                    layout.streets(),
+                    center,
+                    plazaSize,
+                    baseY,
+                    setBlock
+            ));
+            queue.addAll(connectLotToRoad(world, lot, baseY, setBlock));
 
-            int lotBaseY = baseY + 1 + lot.terraceY();
+            int surfaceY = baseY + lot.terraceY();
+            int lotBaseY = surfaceY + 1;
             switch (lot.role()) {
                 case CHURCH -> {
-                    q.addAll(SpecialBuildings.buildChurch(world, lot, lotBaseY, sb));
-                    q.addAll(buildFrontLanterns(world, lot, lotBaseY, sb));
+                    queue.addAll(SpecialBuildings.buildChurch(world, lot, lotBaseY, setBlock));
+                    queue.addAll(buildFrontLanterns(world, lot, lotBaseY, setBlock));
                 }
                 case FORGE -> {
-                    q.addAll(SpecialBuildings.buildForge(world, lot, lotBaseY, sb));
-                    q.addAll(buildFrontLanterns(world, lot, lotBaseY, sb));
+                    queue.addAll(SpecialBuildings.buildForge(world, lot, lotBaseY, setBlock));
+                    queue.addAll(buildFrontLanterns(world, lot, lotBaseY, setBlock));
                 }
-                case HOUSE_SINGLE, HOUSE_TWO_STORY -> q.addAll(HouseBuilder.buildHouse(world, lot, lotBaseY, sb, rng));
-                case FARM -> q.addAll(HouseBuilder.buildFarm(new Location(world, lot.buildX(), lotBaseY, lot.buildZ()), cropSeeds, sb, rng));
-                case PEN -> q.addAll(HouseBuilder.buildPen(plugin, new Location(world, lot.buildX(), lotBaseY, lot.buildZ()), villageId, sb));
-                case MARKET -> q.addAll(SpecialBuildings.buildMarketStall(world, lot, lotBaseY, sb, rng));
+                case INN -> {
+                    queue.addAll(HouseBuilder.buildHouse(world, lot, lotBaseY, setBlock, rng));
+                    queue.addAll(SpecialBuildings.decorateInn(world, lot, lotBaseY, setBlock));
+                }
+                case BAKERY -> {
+                    queue.addAll(HouseBuilder.buildHouse(world, lot, lotBaseY, setBlock, rng));
+                    queue.addAll(SpecialBuildings.decorateBakery(world, lot, lotBaseY, setBlock));
+                }
+                case HOUSE_SINGLE, HOUSE_TWO_STORY ->
+                        queue.addAll(HouseBuilder.buildHouse(world, lot, lotBaseY, setBlock, rng));
+                case FARM -> queue.addAll(HouseBuilder.buildFarm(
+                        world, lot, surfaceY, cropSeeds, setBlock, rng));
+                case PEN -> queue.addAll(HouseBuilder.buildPen(
+                        plugin, world, lot, surfaceY, villageId, setBlock));
+                case MARKET -> queue.addAll(SpecialBuildings.buildMarketStall(
+                        world, lot, lotBaseY, setBlock, rng));
                 case GREEN -> {
-                    LandmarkType type = layout.landmarks().get(landmarkIndex % layout.landmarks().size());
-                    q.addAll(SpecialBuildings.buildGreenLot(lot, lotBaseY, sb, type));
+                    LandmarkType type = layout.landmarks().get(
+                            landmarkIndex % layout.landmarks().size());
+                    queue.addAll(SpecialBuildings.buildGreenLot(
+                            lot, lotBaseY, setBlock, type));
                     landmarkIndex++;
                 }
-                case SERVICE_YARD -> q.addAll(SpecialBuildings.buildServiceYard(world, lot, lotBaseY, sb));
-                case DECOR -> q.addAll(SpecialBuildings.buildDecorLot(lot.buildX(), lotBaseY, lot.buildZ(), sb, rng));
+                case SERVICE_YARD -> queue.addAll(SpecialBuildings.buildServiceYard(
+                        world, lot, lotBaseY, setBlock));
+                case DECOR -> queue.addAll(SpecialBuildings.buildDecorLot(
+                        lot.buildX(), lotBaseY, lot.buildZ(), setBlock, rng));
             }
         }
+
+        // Les interstices sont traités après les lots : la carte d'occupation
+        // peut alors préserver toutes les emprises architecturales.
+        queue.addAll(VillageDecorationBuilder.build(
+                world, layout, settings, baseY, setBlock, rng));
+
+        // Le mobilier de rue vient en dernier afin que les terrassements de
+        // lots ne puissent plus écraser ses fondations.
+        queue.addAll(buildStreetLanterns(
+                world, layout, settings, center, baseY, setBlock));
     }
 
     private static List<Runnable> buildPlaza(World world, Location center, int size, int baseY, TerrainManager.SetBlock sb) {
@@ -157,9 +188,20 @@ public final class Disposition {
         buildPlanter(tasks, center.getBlockX() - half + 1, baseY + 1, center.getBlockZ() + half - 1, sb, false);
         buildPlanter(tasks, center.getBlockX() + half - 1, baseY + 1, center.getBlockZ() + half - 1, sb, true);
 
-        // Lampadaires de place.
-        tasks.addAll(HouseBuilder.buildLampPost(center.getBlockX() - half + 2, baseY + 1, center.getBlockZ(), sb));
-        tasks.addAll(HouseBuilder.buildLampPost(center.getBlockX() + half - 2, baseY + 1, center.getBlockZ(), sb));
+        // Deux lampadaires en limite de place, orientés vers l'extérieur du
+        // puits pour préserver sa silhouette.
+        tasks.addAll(HouseBuilder.buildLampPost(
+                center.getBlockX() - half + 1,
+                baseY + 1,
+                center.getBlockZ(),
+                BlockFace.WEST,
+                sb));
+        tasks.addAll(HouseBuilder.buildLampPost(
+                center.getBlockX() + half - 1,
+                baseY + 1,
+                center.getBlockZ(),
+                BlockFace.EAST,
+                sb));
         return tasks;
     }
 
@@ -184,23 +226,24 @@ public final class Disposition {
             }
         }
 
-        // Toit du puits.
-        for (int x = x0 - 3; x <= x0 + 3; x++) {
-            stair(tasks, world, sb, x, y + 4, z0 - 3, Material.SPRUCE_STAIRS, BlockFace.NORTH);
-            stair(tasks, world, sb, x, y + 4, z0 + 3, Material.SPRUCE_STAIRS, BlockFace.SOUTH);
-        }
-        for (int z = z0 - 2; z <= z0 + 2; z++) {
-            stair(tasks, world, sb, x0 - 3, y + 4, z, Material.SPRUCE_STAIRS, BlockFace.WEST);
-            stair(tasks, world, sb, x0 + 3, y + 4, z, Material.SPRUCE_STAIRS, BlockFace.EAST);
-        }
-        for (int x = x0 - 2; x <= x0 + 2; x++) {
-            slab(tasks, world, sb, x, y + 5, z0, Material.SPRUCE_SLAB, Slab.Type.TOP);
-        }
-        for (int z = z0 - 2; z <= z0 + 2; z++) {
-            slab(tasks, world, sb, x0, y + 5, z, Material.SPRUCE_SLAB, Slab.Type.TOP);
-        }
+        // Pavillon complet : l'ancien toit ne dessinait qu'un contour et une
+        // croix centrale, laissant de grands trous visibles depuis le sol.
+        VillageRoofBuilder.buildHip(
+                tasks,
+                world,
+                sb,
+                x0 - 2,
+                x0 + 2,
+                z0 - 2,
+                z0 + 2,
+                y + 4,
+                Material.SPRUCE_STAIRS,
+                Material.SPRUCE_SLAB
+        );
 
-        // Seau suspendu symbolique.
+        // Seau suspendu sous le sommet réel de la couverture.
+        place(tasks, sb, x0, y + 6, z0, Material.CHAIN);
+        place(tasks, sb, x0, y + 5, z0, Material.CHAIN);
         place(tasks, sb, x0, y + 4, z0, Material.CHAIN);
         place(tasks, sb, x0, y + 3, z0, Material.CAULDRON);
     }
@@ -298,73 +341,119 @@ public final class Disposition {
         return selector % 2 == 0 ? Material.GRASS_BLOCK : Material.COARSE_DIRT;
     }
 
-    private static List<Runnable> buildStreetLanterns(World world, List<StreetPlan> streets, int baseY, TerrainManager.SetBlock sb) {
+    private static List<Runnable> buildStreetLanterns(World world,
+                                                       VillageLayoutPlan layout,
+                                                       VillageLayoutSettings settings,
+                                                       Location center,
+                                                       int baseY,
+                                                       TerrainManager.SetBlock sb) {
         List<Runnable> tasks = new ArrayList<>();
-        for (StreetPlan street : streets) {
+        for (StreetPlan street : layout.streets()) {
             if (street.type() == StreetType.FOOTPATH) {
                 continue;
             }
-            int interval = street.type() == StreetType.MAIN ? 9 : 12;
+
+            int interval = street.type() == StreetType.MAIN ? 10 : 14;
             if (street.horizontal()) {
-                int start = Math.min(street.startX(), street.endX());
-                int end = Math.max(street.startX(), street.endX());
+                int start = street.minX();
+                int end = street.maxX();
                 int toggle = 0;
                 for (int x = start + interval / 2; x < end; x += interval) {
                     int side = toggle++ % 2 == 0 ? -1 : 1;
-                    tasks.addAll(HouseBuilder.buildLampPost(x, baseY + 1, street.startZ() + side * (street.halfWidth() + 2), sb));
+                    int z = street.startZ() + side * (street.halfWidth() + 2);
+                    if (!isStreetFurnitureFree(
+                            x, z, layout, settings, center, 1)) {
+                        continue;
+                    }
+                    BlockFace arm = side < 0 ? BlockFace.SOUTH : BlockFace.NORTH;
+                    tasks.addAll(HouseBuilder.buildLampPost(
+                            x, baseY + 1, z, arm, sb));
                 }
             } else {
-                int start = Math.min(street.startZ(), street.endZ());
-                int end = Math.max(street.startZ(), street.endZ());
+                int start = street.minZ();
+                int end = street.maxZ();
                 int toggle = 0;
                 for (int z = start + interval / 2; z < end; z += interval) {
                     int side = toggle++ % 2 == 0 ? -1 : 1;
-                    tasks.addAll(HouseBuilder.buildLampPost(street.startX() + side * (street.halfWidth() + 2), baseY + 1, z, sb));
+                    int x = street.startX() + side * (street.halfWidth() + 2);
+                    if (!isStreetFurnitureFree(
+                            x, z, layout, settings, center, 1)) {
+                        continue;
+                    }
+                    BlockFace arm = side < 0 ? BlockFace.EAST : BlockFace.WEST;
+                    tasks.addAll(HouseBuilder.buildLampPost(
+                            x, baseY + 1, z, arm, sb));
                 }
             }
         }
         return tasks;
     }
 
-    private static List<Runnable> buildCrossroadDetails(World world, Location center, int baseY, TerrainManager.SetBlock sb) {
-        List<Runnable> tasks = new ArrayList<>();
-        int cx = center.getBlockX();
-        int cz = center.getBlockZ();
-
-        // Deux petits îlots décoratifs pour casser l'effet "croix parfaite".
-        decorateRoadsideIsland(tasks, world, cx - 6, baseY, cz + 5, sb, true);
-        decorateRoadsideIsland(tasks, world, cx + 6, baseY, cz - 5, sb, false);
-        return tasks;
-    }
-
-    private static void decorateRoadsideIsland(List<Runnable> tasks,
-                                               World world,
-                                               int x,
-                                               int y,
-                                               int z,
-                                               TerrainManager.SetBlock sb,
-                                               boolean crate) {
-        place(tasks, sb, x, y, z, Material.MOSS_BLOCK);
-        place(tasks, sb, x + 1, y, z, Material.GRASS_BLOCK);
-        place(tasks, sb, x, y + 1, z, crate ? Material.BARREL : Material.FLOWERING_AZALEA);
-        place(tasks, sb, x + 1, y + 1, z, crate ? Material.CHEST : Material.LANTERN);
-        if (!crate) {
-            place(tasks, sb, x + 1, y + 2, z, Material.CHAIN);
+    private static boolean isStreetFurnitureFree(int x,
+                                                 int z,
+                                                 VillageLayoutPlan layout,
+                                                 VillageLayoutSettings settings,
+                                                 Location center,
+                                                 int radius) {
+        int plazaHalf = settings.effectivePlazaSize() / 2 + 1;
+        if (Math.abs(x - center.getBlockX()) <= plazaHalf + radius
+                && Math.abs(z - center.getBlockZ()) <= plazaHalf + radius) {
+            return false;
         }
+
+        for (LotPlan lot : layout.lots()) {
+            if (x + radius >= lot.siteMinX()
+                    && x - radius <= lot.siteMaxX()
+                    && z + radius >= lot.siteMinZ()
+                    && z - radius <= lot.siteMaxZ()) {
+                return false;
+            }
+        }
+
+        /*
+         * Un lampadaire placé sur l'accotement d'une rue ne doit pas tomber
+         * dans la chaussée d'une autre rue au niveau d'un carrefour.
+         */
+        for (StreetPlan street : layout.streets()) {
+            if (street.contains(x, z, radius)) {
+                return false;
+            }
+        }
+        return true;
     }
 
-    private static List<Runnable> prepareLotBase(LotPlan lot, int baseY, TerrainManager.SetBlock sb) {
+    private static List<Runnable> prepareLotBase(LotPlan lot,
+                                                  List<StreetPlan> streets,
+                                                  Location villageCenter,
+                                                  int plazaSize,
+                                                  int baseY,
+                                                  TerrainManager.SetBlock sb) {
         List<Runnable> tasks = new ArrayList<>();
         int terraceTop = baseY + lot.terraceY();
-        int fullMinX = lot.minX() - lot.yardDepth();
-        int fullMaxX = lot.maxX() + lot.yardDepth();
-        int fullMinZ = lot.minZ() - lot.yardDepth();
-        int fullMaxZ = lot.maxZ() + lot.yardDepth();
+        int fullMinX = lot.siteMinX();
+        int fullMaxX = lot.siteMaxX();
+        int fullMinZ = lot.siteMinZ();
+        int fullMaxZ = lot.siteMaxZ();
+        int plazaHalf = plazaSize / 2;
 
         for (int x = fullMinX; x <= fullMaxX; x++) {
             for (int z = fullMinZ; z <= fullMaxZ; z++) {
-                boolean perimeter = x == fullMinX || x == fullMaxX || z == fullMinZ || z == fullMaxZ;
-                Material fill = terraceTop > baseY && perimeter ? Material.STONE_BRICKS : Material.DIRT;
+                // Les jardins peuvent arriver au bord d'une rue, mais ne
+                // doivent jamais repeindre sa chaussée ni le dallage central.
+                boolean protectedStreet = isProtectedStreet(streets, x, z);
+                boolean protectedPlaza = Math.abs(x - villageCenter.getBlockX()) <= plazaHalf
+                        && Math.abs(z - villageCenter.getBlockZ()) <= plazaHalf;
+                if (protectedStreet || protectedPlaza) {
+                    continue;
+                }
+
+                boolean perimeter = x == fullMinX
+                        || x == fullMaxX
+                        || z == fullMinZ
+                        || z == fullMaxZ;
+                Material fill = terraceTop > baseY && perimeter
+                        ? Material.STONE_BRICKS
+                        : Material.DIRT;
                 for (int y = baseY - 1; y < terraceTop; y++) {
                     place(tasks, sb, x, y, z, fill);
                 }
@@ -372,21 +461,36 @@ public final class Disposition {
             }
         }
 
-        // Retenue de terre visible si lot en terrasse.
+        // Retenue de terre visible uniquement sur les arêtes libres.
         if (lot.terraceY() > 0) {
             for (int x = fullMinX; x <= fullMaxX; x++) {
                 for (int z = fullMinZ; z <= fullMaxZ; z++) {
-                    boolean edge = x == fullMinX || x == fullMaxX || z == fullMinZ || z == fullMaxZ;
-                    if (!edge) {
+                    boolean edge = x == fullMinX
+                            || x == fullMaxX
+                            || z == fullMinZ
+                            || z == fullMaxZ;
+                    if (!edge || isProtectedStreet(streets, x, z)) {
                         continue;
                     }
                     for (int y = baseY; y < terraceTop; y++) {
-                        place(tasks, sb, x, y, z, (x + z + y) % 4 == 0 ? Material.MOSSY_STONE_BRICKS : Material.STONE_BRICKS);
+                        place(tasks, sb, x, y, z,
+                                Math.floorMod(x + z + y, 4) == 0
+                                        ? Material.MOSSY_STONE_BRICKS
+                                        : Material.STONE_BRICKS);
                     }
                 }
             }
         }
         return tasks;
+    }
+
+    private static boolean isProtectedStreet(List<StreetPlan> streets, int x, int z) {
+        for (StreetPlan street : streets) {
+            if (street.contains(x, z, 1)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static Material lotSurface(LotPlan lot, int x, int z) {
@@ -399,6 +503,7 @@ public final class Disposition {
                 case PEN -> selector % 2 == 0 ? Material.GRASS_BLOCK : Material.COARSE_DIRT;
                 case CHURCH -> selector % 2 == 0 ? Material.SMOOTH_STONE : Material.POLISHED_ANDESITE;
                 case FORGE -> selector % 2 == 0 ? Material.COBBLED_DEEPSLATE : Material.GRAVEL;
+                case INN, BAKERY -> selector == 0 ? Material.COARSE_DIRT : Material.GRASS_BLOCK;
                 default -> selector == 0 ? Material.MOSS_BLOCK : Material.GRASS_BLOCK;
             };
         }
@@ -447,12 +552,17 @@ public final class Disposition {
                                     int z,
                                     LotPlan lot,
                                     boolean widen) {
-        for (int fillY = y - 1; fillY >= Math.max(0, y - 2); fillY--) {
+        /*
+         * Deux blocs de fondation suffisent. La borne zéro de l'ancienne
+         * boucle cassait les chemins dans les mondes dont l'altitude est
+         * négative (Minecraft descend jusqu'à -64).
+         */
+        for (int fillY = y - 1; fillY >= y - 2; fillY--) {
             place(tasks, sb, x, fillY, z, Material.STONE_BRICKS);
         }
 
         Material surface = switch (lot.role()) {
-            case CHURCH, FORGE, MARKET -> Material.POLISHED_ANDESITE;
+            case CHURCH, FORGE, INN, BAKERY, MARKET -> Material.POLISHED_ANDESITE;
             case FARM, PEN -> Material.PACKED_MUD;
             default -> Material.DIRT_PATH;
         };
@@ -471,42 +581,23 @@ public final class Disposition {
                                                      int baseY,
                                                      TerrainManager.SetBlock sb) {
         List<Runnable> tasks = new ArrayList<>();
-        int lateralX = lot.facing().getModZ();
-        int lateralZ = lot.facing().getModX();
-        for (int sign : List.of(-1, 1)) {
-            int x = lot.frontageX() + lateralX * sign * 2;
-            int z = lot.frontageZ() + lateralZ * sign * 2;
-            tasks.addAll(HouseBuilder.buildLampPost(x, baseY, z, sb));
-        }
+        BlockFace left = VillageStyle.leftOf(lot.facing());
+        BlockFace right = VillageStyle.rightOf(lot.facing());
+
+        int leftX = lot.frontStepX() + left.getModX() * 2;
+        int leftZ = lot.frontStepZ() + left.getModZ() * 2;
+        int rightX = lot.frontStepX() + right.getModX() * 2;
+        int rightZ = lot.frontStepZ() + right.getModZ() * 2;
+
+        tasks.addAll(HouseBuilder.buildLampPost(
+                leftX, baseY, leftZ, right, sb));
+        tasks.addAll(HouseBuilder.buildLampPost(
+                rightX, baseY, rightZ, left, sb));
         return tasks;
     }
 
     private static int hash(int x, int z, int salt) {
-        return Math.abs((x * 31) ^ (z * 17) ^ (salt * 13));
-    }
-
-    private static void stair(List<Runnable> tasks,
-                              World world,
-                              TerrainManager.SetBlock sb,
-                              int x,
-                              int y,
-                              int z,
-                              Material material,
-                              BlockFace facing) {
-        place(tasks, sb, x, y, z, material);
-        tasks.add(() -> VillageStyle.setStair(world, x, y, z, material, facing, Stairs.Half.BOTTOM, Stairs.Shape.STRAIGHT));
-    }
-
-    private static void slab(List<Runnable> tasks,
-                             World world,
-                             TerrainManager.SetBlock sb,
-                             int x,
-                             int y,
-                             int z,
-                             Material material,
-                             Slab.Type type) {
-        place(tasks, sb, x, y, z, material);
-        tasks.add(() -> VillageStyle.setSlab(world, x, y, z, material, type));
+        return Math.floorMod((x * 31) ^ (z * 17) ^ (salt * 13), Integer.MAX_VALUE);
     }
 
     private static void place(List<Runnable> tasks, TerrainManager.SetBlock sb, int x, int y, int z, Material material) {

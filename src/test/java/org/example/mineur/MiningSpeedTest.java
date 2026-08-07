@@ -13,4 +13,11 @@ class MiningSpeedTest {
         assertEquals(0.2D, MiningSpeed.NORMAL.progressPerTick(1.0D), 0.0001D);
         assertEquals(0.1D, MiningSpeed.SLOW.progressPerTick(1.0D), 0.0001D);
     }
+
+    @Test
+    void progressPerTickFallsBackForNonFiniteMultipliers() {
+        assertEquals(0.2D, MiningSpeed.NORMAL.progressPerTick(Double.NaN), 0.0001D);
+        assertEquals(0.2D, MiningSpeed.NORMAL.progressPerTick(Double.POSITIVE_INFINITY), 0.0001D);
+        assertEquals(0.01D, MiningSpeed.NORMAL.progressPerTick(-10.0D), 0.0001D);
+    }
 }

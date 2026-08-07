@@ -91,7 +91,22 @@ public final class SpecialBuildings {
             }
         }
 
-        buildGable(tasks, world, sb, minX, maxX, minZ, maxZ, naveTop + 1, Material.DARK_OAK_STAIRS);
+        VillageRoofBuilder.buildGable(
+                tasks,
+                world,
+                sb,
+                minX,
+                maxX,
+                minZ,
+                maxZ,
+                naveTop + 1,
+                BlockFace.SOUTH,
+                Material.DARK_OAK_STAIRS,
+                Material.DARK_OAK_SLAB,
+                Material.STONE_BRICKS,
+                Material.STRIPPED_DARK_OAK_LOG,
+                Material.BLUE_STAINED_GLASS_PANE
+        );
         buildTowerRoof(tasks, world, sb, towerX + 2, towerZ + 2, baseY + 13);
 
         // Porte principale.
@@ -165,14 +180,24 @@ public final class SpecialBuildings {
             }
         }
 
-        // Toit principal.
-        for (int x = minX; x <= maxX; x++) {
-            stair(tasks, world, sb, x, baseY + 6, minZ - 1, Material.SPRUCE_STAIRS, BlockFace.NORTH);
-            stair(tasks, world, sb, x, baseY + 6, maxZ + 1, Material.SPRUCE_STAIRS, BlockFace.SOUTH);
-        }
-        for (int z = minZ; z <= maxZ; z++) {
-            slab(tasks, world, sb, centerX, baseY + 7, z, Material.SPRUCE_SLAB, Slab.Type.TOP);
-        }
+        // Couverture fermée : l'ancienne forge ne possédait que deux lignes
+        // d'escaliers et restait ouverte au ciel sur presque toute sa largeur.
+        VillageRoofBuilder.buildGable(
+                tasks,
+                world,
+                sb,
+                minX,
+                maxX,
+                minZ,
+                maxZ,
+                baseY + 6,
+                lot.facing(),
+                Material.SPRUCE_STAIRS,
+                Material.SPRUCE_SLAB,
+                Material.STONE_BRICKS,
+                Material.STRIPPED_SPRUCE_LOG,
+                Material.IRON_BARS
+        );
 
         // Appentis latéral / atelier extérieur.
         buildLeanTo(tasks, world, sb, maxX - 4, maxZ, baseY + 4, BlockFace.SOUTH);
@@ -235,11 +260,31 @@ public final class SpecialBuildings {
             }
         }
 
-        // Toile rayée.
-        for (int x = minX; x <= maxX; x++) {
-            for (int z = minZ; z <= maxZ; z++) {
-                place(tasks, sb, x, baseY + 4, z, stripe[Math.abs(x - minX + z - minZ) % stripe.length]);
+        // Toile rayée en pavillon, plus lisible qu'un plafond parfaitement
+        // plat. Chaque rangée forme une pente complète jusqu'au faîtage.
+        int canopyLayers = Math.max(2, (maxZ - minZ + 3) / 2);
+        for (int layer = 0; layer < canopyLayers; layer++) {
+            int northZ = minZ - 1 + layer;
+            int southZ = maxZ + 1 - layer;
+            int roofY = baseY + 4 + layer;
+            for (int x = minX - 1; x <= maxX + 1; x++) {
+                Material cloth = stripe[Math.floorMod(x - minX + layer, stripe.length)];
+                place(tasks, sb, x, roofY, northZ, cloth);
+                if (southZ != northZ) {
+                    place(tasks, sb, x, roofY, southZ, cloth);
+                }
             }
+        }
+        /*
+         * Le faîtage reste au niveau de la dernière rangée de toile. Placé un
+         * bloc plus haut, il flottait au-dessus de l'étal.
+         */
+        for (int x = minX - 1; x <= maxX + 1; x++) {
+            slab(tasks, world, sb, x,
+                    baseY + 4 + canopyLayers - 1,
+                    (minZ + maxZ) / 2,
+                    Material.SPRUCE_SLAB,
+                    Slab.Type.TOP);
         }
 
         // Comptoir et marchandises.
@@ -250,6 +295,134 @@ public final class SpecialBuildings {
         place(tasks, sb, (minX + maxX) / 2, baseY + 1, minZ + 1, random.nextBoolean() ? Material.CAKE : Material.BARREL);
         place(tasks, sb, (minX + maxX) / 2, baseY + 2, minZ + 1, Material.LANTERN);
         place(tasks, sb, (minX + maxX) / 2, baseY + 3, minZ + 1, Material.CHAIN);
+        return tasks;
+    }
+
+    /**
+     * Donne à la grande maison son identité d'auberge sans dupliquer le
+     * générateur de maison : enseigne, marquise et petite terrasse latérale.
+     */
+    public static List<Runnable> decorateInn(World world,
+                                             LotPlan lot,
+                                             int baseY,
+                                             TerrainManager.SetBlock sb) {
+        List<Runnable> tasks = new ArrayList<>();
+        int frontRadius = frontRadius(lot);
+        int sideRadius = sideRadius(lot);
+        BlockFace front = lot.facing();
+
+        LocalPoint sign = localPoint(lot, -3, frontRadius + 1);
+        place(tasks, sb, sign.x(), baseY + 3, sign.z(), Material.OAK_WALL_SIGN);
+        tasks.add(() -> VillageStyle.setDirectional(
+                world, sign.x(), baseY + 3, sign.z(),
+                Material.OAK_WALL_SIGN, front));
+
+        LocalPoint banner = localPoint(lot, 3, frontRadius + 1);
+        place(tasks, sb, banner.x(), baseY + 3, banner.z(), Material.RED_WALL_BANNER);
+        tasks.add(() -> VillageStyle.setDirectional(
+                world, banner.x(), baseY + 3, banner.z(),
+                Material.RED_WALL_BANNER, front));
+
+        // Marquise continue, assez haute pour ne pas couper l'entrée.
+        for (int lateral = -2; lateral <= 2; lateral++) {
+            for (int forward = frontRadius + 1; forward <= frontRadius + 2; forward++) {
+                LocalPoint point = localPoint(lot, lateral, forward);
+                slab(tasks, world, sb, point.x(), baseY + 4, point.z(),
+                        Material.DARK_OAK_SLAB, Slab.Type.TOP);
+            }
+        }
+        LocalPoint lantern = localPoint(lot, 0, frontRadius + 2);
+        place(tasks, sb, lantern.x(), baseY + 3, lantern.z(), Material.LANTERN);
+
+        // Terrasse de trois blocs sur le côté le plus éloigné des autres
+        // volumes. Le lot possède déjà une réserve de jardin suffisante.
+        int terraceSide = lot.wingSide() == VillageStyle.rightOf(front) ? -1 : 1;
+        int terraceLateral = terraceSide * (sideRadius + 2);
+        for (int lateral = terraceLateral - 1; lateral <= terraceLateral + 1; lateral++) {
+            for (int forward = -1; forward <= 1; forward++) {
+                LocalPoint point = localPoint(lot, lateral, forward);
+                place(tasks, sb, point.x(), baseY, point.z(),
+                        Math.floorMod(lateral + forward, 2) == 0
+                                ? Material.GRAVEL
+                                : Material.PACKED_MUD);
+            }
+        }
+
+        LocalPoint table = localPoint(lot, terraceLateral, 0);
+        place(tasks, sb, table.x(), baseY + 1, table.z(), Material.SPRUCE_FENCE);
+        place(tasks, sb, table.x(), baseY + 2, table.z(), Material.SPRUCE_PRESSURE_PLATE);
+        for (int forward : new int[]{-1, 1}) {
+            LocalPoint chair = localPoint(lot, terraceLateral, forward);
+            stair(tasks, world, sb, chair.x(), baseY + 1, chair.z(),
+                    Material.SPRUCE_STAIRS,
+                    forward < 0 ? front : front.getOppositeFace());
+        }
+        LocalPoint barrel = localPoint(lot, terraceLateral + terraceSide, 1);
+        place(tasks, sb, barrel.x(), baseY + 1, barrel.z(), Material.BARREL);
+
+        return tasks;
+    }
+
+    /**
+     * Identité de boulangerie : auvent clair, étal de pain et four de briques
+     * latéral. Les détails restent dans la réserve de cour du lot.
+     */
+    public static List<Runnable> decorateBakery(World world,
+                                                LotPlan lot,
+                                                int baseY,
+                                                TerrainManager.SetBlock sb) {
+        List<Runnable> tasks = new ArrayList<>();
+        int frontRadius = frontRadius(lot);
+        int sideRadius = sideRadius(lot);
+        BlockFace front = lot.facing();
+
+        LocalPoint sign = localPoint(lot, -2, frontRadius + 1);
+        place(tasks, sb, sign.x(), baseY + 3, sign.z(), Material.OAK_WALL_SIGN);
+        tasks.add(() -> VillageStyle.setDirectional(
+                world, sign.x(), baseY + 3, sign.z(),
+                Material.OAK_WALL_SIGN, front));
+
+        // Auvent rayé au-dessus de la fenêtre de vente.
+        for (int lateral = -1; lateral <= 2; lateral++) {
+            LocalPoint point = localPoint(lot, lateral, frontRadius + 1);
+            Material cloth = Math.floorMod(lateral, 2) == 0
+                    ? Material.YELLOW_WOOL
+                    : Material.WHITE_WOOL;
+            place(tasks, sb, point.x(), baseY + 4, point.z(), cloth);
+        }
+
+        LocalPoint counter = localPoint(lot, 2, frontRadius + 1);
+        place(tasks, sb, counter.x(), baseY + 1, counter.z(), Material.BARREL);
+        place(tasks, sb, counter.x(), baseY + 2, counter.z(), Material.CAKE);
+        LocalPoint sacks = localPoint(lot, -2, frontRadius + 1);
+        place(tasks, sb, sacks.x(), baseY + 1, sacks.z(), Material.HAY_BLOCK);
+
+        // Four extérieur compact du côté opposé à l'aile éventuelle.
+        int ovenSide = lot.wingSide() == VillageStyle.rightOf(front) ? -1 : 1;
+        int ovenLateral = ovenSide * (sideRadius + 2);
+        for (int lateral = ovenLateral - 1; lateral <= ovenLateral + 1; lateral++) {
+            for (int forward = -2; forward <= 0; forward++) {
+                LocalPoint point = localPoint(lot, lateral, forward);
+                boolean edge = lateral == ovenLateral - 1
+                        || lateral == ovenLateral + 1
+                        || forward == -2;
+                place(tasks, sb, point.x(), baseY + 1, point.z(),
+                        edge ? Material.BRICKS : Material.SMOOTH_STONE);
+                if (edge) {
+                    place(tasks, sb, point.x(), baseY + 2, point.z(), Material.BRICKS);
+                }
+            }
+        }
+        LocalPoint firebox = localPoint(lot, ovenLateral, -1);
+        place(tasks, sb, firebox.x(), baseY + 1, firebox.z(), Material.SMOKER);
+        tasks.add(() -> VillageStyle.setDirectional(
+                world, firebox.x(), baseY + 1, firebox.z(),
+                Material.SMOKER, front));
+        for (int dy = 3; dy <= 5; dy++) {
+            place(tasks, sb, firebox.x(), baseY + dy, firebox.z(), Material.BRICKS);
+        }
+        place(tasks, sb, firebox.x(), baseY + 6, firebox.z(), Material.CAMPFIRE);
+
         return tasks;
     }
 
@@ -346,7 +519,14 @@ public final class SpecialBuildings {
         for (int dx = -2; dx <= 2; dx++) {
             for (int dz = -2; dz <= 2; dz++) {
                 boolean edge = Math.abs(dx) == 2 || Math.abs(dz) == 2;
-                place(tasks, sb, x + dx, y, z + dz, edge ? Material.COBBLESTONE_WALL : Material.MOSS_BLOCK);
+                boolean entrance = dz == 2 && dx == 0;
+                place(tasks, sb, x + dx, y, z + dz,
+                        edge ? Material.COARSE_DIRT : Material.MOSS_BLOCK);
+                if (edge && !entrance) {
+                    // La bordure se trouve au-dessus du sol ; l'ancienne
+                    // version enterrait les murets dans le terrain.
+                    place(tasks, sb, x + dx, y + 1, z + dz, Material.COBBLESTONE_WALL);
+                }
             }
         }
         place(tasks, sb, x, y + 1, z, Material.FLOWERING_AZALEA);
@@ -379,26 +559,25 @@ public final class SpecialBuildings {
         return tasks;
     }
 
-    private static void buildGable(List<Runnable> tasks,
-                                   World world,
-                                   TerrainManager.SetBlock sb,
-                                   int minX,
-                                   int maxX,
-                                   int minZ,
-                                   int maxZ,
-                                   int y,
-                                   Material stair) {
-        for (int layer = 0; layer < 3; layer++) {
-            int lowZ = minZ - 1 + layer;
-            int highZ = maxZ + 1 - layer;
-            for (int x = minX; x <= maxX; x++) {
-                stair(tasks, world, sb, x, y + layer, lowZ, stair, BlockFace.NORTH);
-                stair(tasks, world, sb, x, y + layer, highZ, stair, BlockFace.SOUTH);
-            }
-        }
-        for (int x = minX; x <= maxX; x++) {
-            slab(tasks, world, sb, x, y + 3, (minZ + maxZ) / 2, Material.DARK_OAK_SLAB, Slab.Type.TOP);
-        }
+    private static int frontRadius(LotPlan lot) {
+        return (lot.facing() == BlockFace.NORTH || lot.facing() == BlockFace.SOUTH)
+                ? (lot.footprintDepth() - 1) / 2
+                : (lot.footprintWidth() - 1) / 2;
+    }
+
+    private static int sideRadius(LotPlan lot) {
+        return (lot.facing() == BlockFace.NORTH || lot.facing() == BlockFace.SOUTH)
+                ? (lot.footprintWidth() - 1) / 2
+                : (lot.footprintDepth() - 1) / 2;
+    }
+
+    private static LocalPoint localPoint(LotPlan lot, int lateral, int forward) {
+        BlockFace front = lot.facing();
+        BlockFace right = VillageStyle.rightOf(front);
+        return new LocalPoint(
+                lot.centerX() + right.getModX() * lateral + front.getModX() * forward,
+                lot.centerZ() + right.getModZ() * lateral + front.getModZ() * forward
+        );
     }
 
     private static void buildTowerRoof(List<Runnable> tasks,
@@ -407,17 +586,19 @@ public final class SpecialBuildings {
                                        int centerX,
                                        int centerZ,
                                        int y) {
-        for (int layer = 0; layer < 2; layer++) {
-            for (int x = centerX - 2 + layer; x <= centerX + 2 - layer; x++) {
-                stair(tasks, world, sb, x, y + layer, centerZ - 2 + layer, Material.DARK_OAK_STAIRS, BlockFace.NORTH);
-                stair(tasks, world, sb, x, y + layer, centerZ + 2 - layer, Material.DARK_OAK_STAIRS, BlockFace.SOUTH);
-            }
-            for (int z = centerZ - 1 + layer; z <= centerZ + 1 - layer; z++) {
-                stair(tasks, world, sb, centerX - 2 + layer, y + layer, z, Material.DARK_OAK_STAIRS, BlockFace.WEST);
-                stair(tasks, world, sb, centerX + 2 - layer, y + layer, z, Material.DARK_OAK_STAIRS, BlockFace.EAST);
-            }
-        }
-        slab(tasks, world, sb, centerX, y + 2, centerZ, Material.DARK_OAK_SLAB, Slab.Type.TOP);
+        VillageRoofBuilder.buildHip(
+                tasks,
+                world,
+                sb,
+                centerX - 2,
+                centerX + 2,
+                centerZ - 2,
+                centerZ + 2,
+                y,
+                Material.DARK_OAK_STAIRS,
+                Material.DARK_OAK_SLAB
+        );
+        place(tasks, sb, centerX, y + 4, centerZ, Material.LIGHTNING_ROD);
     }
 
     private static void buildLeanTo(List<Runnable> tasks,
@@ -461,4 +642,6 @@ public final class SpecialBuildings {
     private static void place(List<Runnable> tasks, TerrainManager.SetBlock sb, int x, int y, int z, Material material) {
         tasks.add(() -> sb.set(x, y, z, material));
     }
+
+    private record LocalPoint(int x, int z) {}
 }

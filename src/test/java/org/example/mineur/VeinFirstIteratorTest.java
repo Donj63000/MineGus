@@ -29,6 +29,7 @@ class VeinFirstIteratorTest {
         Block normal = putBlock(blocks, world, 0, 64, 0, Material.STONE);
         Block firstOre = putBlock(blocks, world, 1, 64, 0, Material.DIAMOND_ORE);
         Block secondOre = putBlock(blocks, world, 2, 64, 0, Material.DIAMOND_ORE);
+        Block diagonalOre = putBlock(blocks, world, 3, 65, 1, Material.DIAMOND_ORE);
         Block afterVein = putBlock(blocks, world, 8, 64, 0, Material.DEEPSLATE);
 
         when(world.getBlockAt(anyInt(), anyInt(), anyInt())).thenAnswer(invocation -> {
@@ -45,6 +46,7 @@ class VeinFirstIteratorTest {
         assertTrue(iterator.hasNext());
         assertSame(firstOre, iterator.next());
         assertSame(secondOre, iterator.next());
+        assertSame(diagonalOre, iterator.next());
         assertSame(normal, iterator.next());
         assertSame(afterVein, iterator.next());
         assertFalse(iterator.hasNext());
@@ -74,6 +76,44 @@ class VeinFirstIteratorTest {
         VeinFirstIterator iterator = new VeinFirstIterator(world, delegate, 3, 1);
 
         assertSame(firstOre, iterator.next());
+        assertSame(normal, iterator.next());
+        assertFalse(iterator.hasNext());
+    }
+
+    @Test
+    void doesNotLeaveCursorBoundsWhenRestrictionIsEnabled() {
+        World world = mock(World.class);
+        when(world.getMinHeight()).thenReturn(0);
+        when(world.getMaxHeight()).thenReturn(256);
+        when(world.isChunkLoaded(anyInt(), anyInt())).thenReturn(true);
+
+        Map<Coord, Block> blocks = new HashMap<>();
+        Block normal = putBlock(blocks, world, 0, 64, 0, Material.STONE);
+        putBlock(blocks, world, 1, 64, 0, Material.EMERALD_ORE);
+
+        when(world.getBlockAt(anyInt(), anyInt(), anyInt())).thenAnswer(invocation -> {
+            int x = invocation.getArgument(0);
+            int y = invocation.getArgument(1);
+            int z = invocation.getArgument(2);
+            return blocks.computeIfAbsent(
+                    new Coord(x, y, z),
+                    coord -> block(world, coord.x(), coord.y(), coord.z(), Material.STONE)
+            );
+        });
+
+        MiningCursor cursor = new MiningCursor(new Location(world, 0, 64, 0), 1, 1);
+        MiningIterator delegate = new FixedIterator(cursor, normal);
+        VeinFirstIterator iterator = new VeinFirstIterator(
+                world,
+                delegate,
+                3,
+                10,
+                1,
+                60,
+                70,
+                true
+        );
+
         assertSame(normal, iterator.next());
         assertFalse(iterator.hasNext());
     }

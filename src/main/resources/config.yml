@@ -4,42 +4,105 @@
 mineur:
   allowed-worlds: [world]
   stop-at-y: -58
-  allow-block-placement: false  # true = autoriser piliers, escaliers et torches automatiques
+
+  # true reproduit les mises à jour naturelles (sable/gravier, fluides, redstone).
+  apply-physics: true
+
+  # La décoration reste désactivée par défaut et ne remplace jamais un bloc existant.
+  allow-block-placement: false
   default:
     pattern: QUARRY
-    speed: FAST
+    speed: NORMAL
     torch-layers: 4
     supports-every: 8
     use-barrel-master: false
+
+  # Outil virtuel utilisé pour calculer correctement les drops des minerais.
+  tool:
+    material: NETHERITE_PICKAXE
+
+  # Mode sûr : le propriétaire doit être connecté pour fournir un vrai Player
+  # aux plugins de protection. Pour miner hors ligne, mettre les deux options
+  # ci-dessous à false en connaissance de cause.
+  protection:
+    require-owner-online: true
+    fire-block-break-event: true
+
+  storage:
+    barrel-search-radius: 6
+    barrel-search-height: 2
+    # Distance horizontale maximale depuis le bord de l'emprise minée.
+    maximum-distance: 24
+    max-containers: 32
+
   branch:
     spacing: 6        # espacement entre deux branches sur l'axe X
     gallery-width: 3  # largeur de la galerie principale (en blocs)
+
   tunnel:
     section-size: 10
     height: 3
-    max-sections: 0   # 0 = infini
+    max-height: 8
+    max-sections: 0               # 0 = infini jusqu'à max-distance-from-base
+    max-distance-from-base: 2048
+
   vein:
     scan-radius: 5
     max-blocks: 96
+    scan-every-blocks: 8
+
   limits:
     max-sessions-per-player: 1
+    max-width: 64
+    max-length: 64
+    max-area: 4096
+    max-loaded-chunks: 64
+    max-trusted-players: 64
+
   economy:
     enable: false
     cost-per-layer: 0
 
 # Paramètres des gardes royaux
 garde:
-  # Distance maximale entre le joueur et un garde avant rappel sécurisé.
+  # Distance maximale hors combat avant un rappel sécurisé près du propriétaire.
+  # Elle est automatiquement relevée si nécessaire pour contenir la formation et sa recherche sûre.
   follow-radius: 20
-  # Distance à laquelle un garde cesse de recalculer un chemin vers son propriétaire.
-  comfort-distance: 3
-  # Distance maximale entre le joueur et l'agresseur avant abandon de la poursuite.
+
+  # Formation en V ouvert derrière le regard du joueur : un garde de chaque côté.
+  # Les valeurs trop serrées sont automatiquement éloignées de la zone personnelle.
+  formation-side-distance: 2.25
+  formation-rear-distance: 1.75
+  # Marge dans laquelle le garde est considéré correctement placé et arrête son ancien chemin.
+  formation-tolerance: 0.9
+  # Zone interdite autour du joueur et longueur du cône dégagé devant sa caméra.
+  personal-space-radius: 1.65
+  view-clearance-distance: 4.0
+
+  # Zone locale de protection ; elle sert aussi de minimum à la laisse de combat.
   protection-radius: 32
-  # Durée pendant laquelle une agression reste prioritaire.
+  # Rayon du balayage périodique de secours pour les cibles injectées sans événement Bukkit.
+  # Pour protéger le thread serveur, ce scan local est borné à 64 blocs ; les événements
+  # directs peuvent toujours engager une cible jusqu'à combat-leash-radius.
+  threat-detection-radius: 32
+  # Une cible déjà engagée peut être poursuivie plus loin afin d'être réellement achevée.
+  # La valeur effective ne sera jamais inférieure à protection-radius.
+  combat-leash-radius: 48
+
+  # Le duo assiste chaque attaque valide du propriétaire, y compris ses projectiles
+  # et les coups portés à une partie de l'Ender Dragon (le parent vivant est ciblé).
+  assist-owner-attacks: true
+  # Le duo intercepte les mobs qui prennent le propriétaire ou l'un des gardes pour cible avant le premier dégât.
+  proactive-defense: true
+  # true conserve une cible engagée jusqu'à sa mort ou sa sortie de la laisse de combat.
+  finish-engaged-targets: true
+  # Utilisé uniquement lorsque finish-engaged-targets vaut false.
   threat-duration-seconds: 10
+
   respawn-delay-seconds: 20
-  # false protège les gardes contre les coups accidentels de leur propriétaire.
+  # false protège les gardes contre les coups accidentels du propriétaire et de son propre duo.
   friendly-fire: false
+
   # true empêche tous les golems de fer (naturels, villageois ou créés par MineGus)
   # de conserver un garde royal comme cible et bloque leurs dégâts.
   iron-golem-neutrality: true
@@ -49,13 +112,14 @@ garde:
   # Si un golem parvient malgré tout à tenter une frappe, les dégâts restent annulés
   # et le duo contre-attaque. Passez à false pour une neutralité strictement pacifique.
   iron-golem-retaliation: true
+
   # Messages lors de la mort et du retour d'un garde.
   notifications: true
   attributes:
     max-health: 100.0
     attack-damage: 16.0
     movement-speed: 0.35
-    # Portée de poursuite du Husk ; elle est automatiquement relevée au moins à protection-radius.
+    # Automatiquement relevée au moins à la laisse de combat effective.
     follow-range: 48.0
     knockback-resistance: 0.6
 
@@ -80,17 +144,21 @@ village:
   houseSmall: 9
   houseBig: 11
   roadHalf: 2
+  # Pas centre-à-centre des îlots (et non une marge ajoutée à la maison).
   spacing: 20
-  plazaSize: 9
+  # Taille impaire ; 13 laisse respirer le puits, les bancs et les étals.
+  plazaSize: 13
   rows: 4
   cols: 5
-  houseCountMin: 10
+  houseCountMin: 12
   houseCountMax: 16
   mainStreetHalf: 2
   sideStreetHalf: 1
   terrainMaxStep: 2
-  decorDensity: medium
-  wallGap: 6        # marge entre les maisons et la muraille
+  # none | low | medium | high
+  decorDensity: high
+  # Respiration minimale entre les derniers jardins et la face intérieure.
+  wallGap: 7
 
 # Paramètres des métiers
 jobs:

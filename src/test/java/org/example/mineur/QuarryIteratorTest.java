@@ -55,7 +55,8 @@ class QuarryIteratorTest {
 
         assertFalse(iterator.hasNext());
         assertNull(iterator.next());
-        assertEquals(63, cursor.y);
+        assertEquals(64, cursor.y);
+        assertTrue(cursor.exhausted);
         assertEquals(cursor.minX, cursor.x);
         assertEquals(cursor.minZ, cursor.z);
     }

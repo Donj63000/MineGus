@@ -2,6 +2,7 @@ package org.example;
 
 import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
+import org.bukkit.GameMode;
 import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.World;
@@ -14,6 +15,9 @@ import org.bukkit.command.TabExecutor;
 import org.bukkit.command.CommandSender;
 import org.bukkit.damage.DamageSource;
 import org.bukkit.enchantments.Enchantment;
+import org.bukkit.entity.AnimalTamer;
+import org.bukkit.entity.ArmorStand;
+import org.bukkit.entity.ComplexEntityPart;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.Husk;
 import org.bukkit.entity.IronGolem;
@@ -21,6 +25,7 @@ import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Mob;
 import org.bukkit.entity.Player;
 import org.bukkit.entity.Projectile;
+import org.bukkit.entity.Tameable;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.HandlerList;
 import org.bukkit.event.EventPriority;
@@ -28,6 +33,7 @@ import org.bukkit.event.Listener;
 import org.bukkit.event.entity.EntityDamageByEntityEvent;
 import org.bukkit.event.entity.EntityDamageEvent;
 import org.bukkit.event.entity.EntityDeathEvent;
+import org.bukkit.event.entity.EntityTargetEvent;
 import org.bukkit.event.entity.EntityTargetLivingEntityEvent;
 import org.bukkit.event.entity.EntityTransformEvent;
 import org.bukkit.event.player.PlayerChangedWorldEvent;
@@ -44,6 +50,8 @@ import org.bukkit.util.Vector;
 
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.Iterator;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -73,15 +81,26 @@ public final class RoyalGuardManager implements TabExecutor, Listener {
 
     private static final String USE_PERMISSION = "mineplugin.garde.use";
     private static final int GUARD_COUNT = 2;
-    private static final long FOLLOW_PERIOD_TICKS = 20L;
+    private static final long FOLLOW_PERIOD_TICKS = 10L;
     private static final long COMBAT_MAINTENANCE_PERIOD_TICKS = 5L;
+    private static final int AWARENESS_SCAN_INTERVAL_FOLLOW_CYCLES = 2;
     private static final int MAX_PATH_FAILURES = 3;
+    private static final int MAX_TRACKED_THREATS = 24;
     private static final double DEFAULT_FOLLOW_RADIUS = 20.0D;
-    private static final double DEFAULT_COMFORT_DISTANCE = 3.0D;
+    private static final double DEFAULT_FORMATION_SIDE_DISTANCE = 2.25D;
+    private static final double DEFAULT_FORMATION_REAR_DISTANCE = 1.75D;
+    private static final double DEFAULT_FORMATION_TOLERANCE = 0.9D;
+    private static final double DEFAULT_PERSONAL_SPACE_RADIUS = 1.65D;
+    private static final double DEFAULT_VIEW_CLEARANCE_DISTANCE = 4.0D;
     private static final double DEFAULT_PROTECTION_RADIUS = 32.0D;
+    private static final double DEFAULT_THREAT_DETECTION_RADIUS = 32.0D;
+    private static final double DEFAULT_COMBAT_LEASH_RADIUS = 48.0D;
     private static final int DEFAULT_THREAT_DURATION_SECONDS = 10;
     private static final int DEFAULT_RESPAWN_DELAY_SECONDS = 20;
     private static final boolean DEFAULT_FRIENDLY_FIRE = false;
+    private static final boolean DEFAULT_ASSIST_OWNER_ATTACKS = true;
+    private static final boolean DEFAULT_PROACTIVE_DEFENSE = true;
+    private static final boolean DEFAULT_FINISH_ENGAGED_TARGETS = true;
     private static final boolean DEFAULT_IRON_GOLEM_NEUTRALITY = true;
     private static final boolean DEFAULT_IRON_GOLEM_RETALIATION = true;
     private static final boolean DEFAULT_NOTIFICATIONS = true;
@@ -92,9 +111,25 @@ public final class RoyalGuardManager implements TabExecutor, Listener {
     private static final double DEFAULT_FOLLOW_RANGE = 48.0D;
     private static final double DEFAULT_KNOCKBACK_RESISTANCE = 0.6D;
     private static final double FOLLOW_SPEED = 1.15D;
+    private static final double VIEW_CLEARANCE_COSINE = Math.cos(Math.toRadians(55.0D));
+    private static final double MIN_DIRECTION_LENGTH_SQUARED = 1.0E-6D;
+    private static final double EMERGENCY_OVERLAP_RADIUS = 0.65D;
+    private static final double COMBAT_RECALL_MARGIN = 6.0D;
+    private static final double MIN_GUARD_SEPARATION = 1.20D;
+    private static final double MIN_FORMATION_SIDE_DISTANCE = 0.90D;
+    private static final double FORMATION_PERSONAL_SPACE_MARGIN = 0.75D;
+    private static final double CLEARANCE_SIDE_MARGIN = 0.85D;
+    private static final double CLEARANCE_SIDE_REUSE_THRESHOLD = 0.35D;
+    private static final double CLEARANCE_MIN_FORWARD_OFFSET = -0.50D;
+    private static final double CLEARANCE_MAX_FORWARD_OFFSET = 1.25D;
     private static final double MAX_FOLLOW_RADIUS = 128.0D;
-    private static final double MAX_COMFORT_DISTANCE = 64.0D;
+    private static final double MAX_FORMATION_OFFSET = 8.0D;
+    private static final double MAX_FORMATION_TOLERANCE = 4.0D;
+    private static final double MAX_PERSONAL_SPACE_RADIUS = 4.0D;
+    private static final double MAX_VIEW_CLEARANCE_DISTANCE = 12.0D;
     private static final double MAX_PROTECTION_RADIUS = 128.0D;
+    private static final double MAX_THREAT_DETECTION_RADIUS = 64.0D;
+    private static final double MAX_COMBAT_LEASH_RADIUS = 128.0D;
     private static final int MAX_THREAT_DURATION_SECONDS = 300;
     private static final int MAX_RESPAWN_DELAY_SECONDS = 3_600;
     private static final double MAX_CONFIGURED_HEALTH = 1024.0D;
@@ -122,7 +157,19 @@ public final class RoyalGuardManager implements TabExecutor, Listener {
     private boolean shuttingDown;
 
     public RoyalGuardManager(JavaPlugin plugin) {
-        this(plugin, (guard, target, speed) -> guard.getPathfinder().moveTo(target, speed), true, null, null);
+        this(plugin, new GuardNavigator() {
+            @Override
+            public boolean moveTo(Mob guard, Location target, double speed) {
+                return guard.getPathfinder().moveTo(target, speed);
+            }
+
+            @Override
+            public void stop(Mob guard) {
+                // Arrêter explicitement l'ancien chemin empêche le Husk de terminer une route
+                // devenue obsolète jusque dans le corps ou le champ de vision du propriétaire.
+                guard.getPathfinder().stopPathfinding();
+            }
+        }, true, null, null);
     }
 
     RoyalGuardManager(JavaPlugin plugin, GuardNavigator navigator, boolean startFollowTask) {
@@ -330,7 +377,74 @@ public final class RoyalGuardManager implements TabExecutor, Listener {
         }
 
         squad.owner = owner;
-        engageThreat(squad, attacker);
+        engageThreat(squad, attacker, ThreatReason.OWNER_DAMAGED, false);
+    }
+
+    /**
+     * Ordonne au duo d'assister une attaque réellement validée du propriétaire. DamageSource
+     * permet également de reconnaître le joueur derrière une flèche, un trident ou une potion.
+     */
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    public void onOwnerAttacks(EntityDamageByEntityEvent event) {
+        if (event.isCancelled() || !isOwnerAttackAssistEnabled()) {
+            return;
+        }
+
+        LivingEntity target = resolveLivingDamageTarget(event.getEntity());
+        if (target == null) {
+            return;
+        }
+
+        LivingEntity attacker = resolveLivingAttacker(event);
+        if (!(attacker instanceof Player owner)) {
+            return;
+        }
+
+        GuardSquad squad = squads.get(owner.getUniqueId());
+        if (squad == null || !squad.active) {
+            return;
+        }
+
+        squad.owner = owner;
+        // Une nouvelle cible explicitement frappée par le maître remplace une autre consigne
+        // de même priorité, mais ne détourne pas les gardes d'un danger immédiat plus grave.
+        engageThreat(squad, target, ThreatReason.OWNER_ATTACKED_TARGET, true);
+    }
+
+    /**
+     * Détecte l'intention hostile avant le premier dégât : dès qu'un mob choisit le propriétaire
+     * ou l'un de ses gardes comme cible de combat, le duo peut l'intercepter. Les raisons de suivi
+     * non agressives (par exemple un animal attiré par de la nourriture) sont ignorées.
+     */
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    public void onEntityTargetsOwner(EntityTargetLivingEntityEvent event) {
+        if (event.isCancelled() || !isProactiveDefenseEnabled()
+                || !(event.getEntity() instanceof LivingEntity threat)
+                || !isHostileTargetReason(event.getReason())) {
+            return;
+        }
+
+        LivingEntity protectedTarget = event.getTarget();
+        GuardSquad squad;
+        ThreatReason reason;
+        if (protectedTarget instanceof Player owner) {
+            squad = squads.get(owner.getUniqueId());
+            reason = ThreatReason.TARGETING_OWNER;
+            if (squad != null) {
+                squad.owner = owner;
+            }
+        } else if (isTrackedGuard(protectedTarget)) {
+            UUID ownerId = ownerOf(protectedTarget);
+            squad = ownerId == null ? null : squads.get(ownerId);
+            reason = ThreatReason.TARGETING_GUARD;
+        } else {
+            return;
+        }
+
+        if (squad == null || !squad.active) {
+            return;
+        }
+        engageThreat(squad, threat, reason, false);
     }
 
     /**
@@ -412,7 +526,7 @@ public final class RoyalGuardManager implements TabExecutor, Listener {
         if (squad != null && squad.active) {
             // Ce cas ne devrait survenir qu'en dernier recours : la tentative de frappe prouve
             // néanmoins une agression réelle, donc le duo contre-attaque sans exposer le garde aux dégâts.
-            engageThreat(squad, golem);
+            engageThreat(squad, golem, ThreatReason.GUARD_DAMAGED, false);
         }
     }
 
@@ -438,7 +552,7 @@ public final class RoyalGuardManager implements TabExecutor, Listener {
             return;
         }
 
-        engageThreat(squad, attacker);
+        engageThreat(squad, attacker, ThreatReason.GUARD_DAMAGED, false);
     }
 
     /**
@@ -459,14 +573,20 @@ public final class RoyalGuardManager implements TabExecutor, Listener {
             return;
         }
 
+        Player owner = getOnlineOwner(squad);
+        if (owner == null) {
+            rejectAutonomousGuardTarget(event);
+            return;
+        }
+
+        // Si la cible précédente vient de mourir, on bascule directement vers la prochaine
+        // menace de la file au lieu de rendre le Husk passif jusqu'au cycle de maintenance suivant.
+        selectCurrentThreat(squad, owner, null, false);
         LivingEntity threat = squad.threat;
         boolean validThreat = threat != null
                 && isCurrentThreat(ownerId, threat)
                 && isInSameWorld(event.getEntity(), threat);
         if (!validThreat) {
-            if (squad.threatId != null) {
-                clearThreat(squad);
-            }
             rejectAutonomousGuardTarget(event);
             return;
         }
@@ -488,7 +608,8 @@ public final class RoyalGuardManager implements TabExecutor, Listener {
 
         UUID ownerId = ownerOf(event.getDamager());
         GuardSquad squad = ownerId == null ? null : squads.get(ownerId);
-        if (!(event.getEntity() instanceof LivingEntity target)
+        LivingEntity target = resolveLivingDamageTarget(event.getEntity());
+        if (target == null
                 || ownerId == null
                 || !isCurrentThreat(ownerId, target)) {
             event.setCancelled(true);
@@ -564,7 +685,12 @@ public final class RoyalGuardManager implements TabExecutor, Listener {
         for (int slot = 0; slot < GUARD_COUNT; slot++) {
             Husk guard = getLiveGuard(squad, slot);
             if (guard != null) {
+                // Un changement de dimension doit aussi interrompre immédiatement l'ancienne
+                // animation et l'ancien chemin de combat, même si aucun emplacement sûr n'est
+                // disponible pendant ce tick.
                 guard.setTarget(null);
+                guard.setAggressive(false);
+                stopGuardNavigation(guard);
                 if (teleportNearOwner(guard, event.getPlayer(), slot)) {
                     resetNavigationState(squad, slot);
                 }
@@ -651,18 +777,17 @@ public final class RoyalGuardManager implements TabExecutor, Listener {
             }
 
             try {
-                expireThreatIfNeeded(squad);
-                clearThreatIfNoLongerRelevant(squad, owner);
+                reconcileThreatState(squad, owner, true);
             } catch (RuntimeException exception) {
                 logNavigationFailure(squad, -1, exception);
-                clearThreat(squad);
+                clearThreatAndTargets(squad);
             }
 
-            if (isIronGolemNeutralityEnabled()) {
+            if (shouldRunAwarenessScan(squad)) {
                 try {
-                    // Balayage borné une fois par seconde : il rattrape les cibles injectées sans
-                    // événement, sans jamais parcourir tous les golems ni toutes les entités du monde.
-                    neutralizeNearbyIronGolems(owner);
+                    // Un seul balayage local et sphérique couvre à la fois les golems résiduels
+                    // et les mobs qui ont obtenu le maître comme cible sans événement exploitable.
+                    scanNearbySafetyAndThreats(squad, owner);
                 } catch (RuntimeException exception) {
                     logNavigationFailure(squad, -1, exception);
                 }
@@ -696,7 +821,7 @@ public final class RoyalGuardManager implements TabExecutor, Listener {
         }
 
         for (GuardSquad squad : new ArrayList<>(squads.values())) {
-            if (!squad.active || squad.threatId == null) {
+            if (!squad.active || (squad.threatId == null && squad.threatCandidates.isEmpty())) {
                 continue;
             }
 
@@ -707,11 +832,7 @@ public final class RoyalGuardManager implements TabExecutor, Listener {
                     continue;
                 }
 
-                expireThreatIfNeeded(squad);
-                clearThreatIfNoLongerRelevant(squad, owner);
-                if (squad.threatId != null && squad.threat != null) {
-                    applyThreatToGuards(squad, owner);
-                }
+                reconcileThreatState(squad, owner, true);
             } catch (RuntimeException exception) {
                 logNavigationFailure(squad, -1, exception);
                 // Une menace corrompue ne doit pas bloquer les futurs combats de l'escouade.
@@ -769,6 +890,8 @@ public final class RoyalGuardManager implements TabExecutor, Listener {
     }
 
     private void followGuard(GuardSquad squad, Husk guard, Player owner, int slot) {
+        repairGuardMobState(guard);
+
         if (!isInSameWorld(guard, owner)) {
             if (teleportNearOwner(guard, owner, slot)) {
                 resetNavigationState(squad, slot);
@@ -779,10 +902,20 @@ public final class RoyalGuardManager implements TabExecutor, Listener {
 
         restoreCurrentThreatTarget(squad, guard);
 
-        double distanceSquared = guard.getLocation().distanceSquared(owner.getLocation());
-        double followRadius = getPositiveConfig(
-                "garde.follow-radius", DEFAULT_FOLLOW_RADIUS, MAX_FOLLOW_RADIUS);
-        if (distanceSquared > followRadius * followRadius) {
+        Location guardLocation = guard.getLocation();
+        Location ownerLocation = owner.getLocation();
+        double distanceSquared = guardLocation.distanceSquared(ownerLocation);
+        boolean fighting = squad.threat != null && isCurrentThreat(squad.ownerId, squad.threat);
+
+        /*
+         * En combat, la portée de rappel doit être plus large que la portée de formation.
+         * Sinon un garde qui arrive enfin au contact d'une cible éloignée est téléporté près
+         * du maître avant d'avoir pu l'achever.
+         */
+        double recallRadius = fighting
+                ? getCombatRecallRadius()
+                : getEffectiveFollowRadius();
+        if (distanceSquared > recallRadius * recallRadius) {
             if (teleportNearOwner(guard, owner, slot)) {
                 resetNavigationState(squad, slot);
                 restoreCurrentThreatTarget(squad, guard);
@@ -790,14 +923,52 @@ public final class RoyalGuardManager implements TabExecutor, Listener {
             return;
         }
 
-        double comfortDistance = Math.min(followRadius, getPositiveConfig(
-                "garde.comfort-distance", DEFAULT_COMFORT_DISTANCE, MAX_COMFORT_DISTANCE));
-        if (guard.getTarget() != null || distanceSquared <= comfortDistance * comfortDistance) {
+        /*
+         * Une superposition presque exacte reste interdite même pendant un combat : elle masque
+         * toute la caméra et peut enfermer le propriétaire. Le rappel latéral conserve ensuite
+         * la menace courante, sans substituer une route de formation à l'objectif d'attaque.
+         */
+        if (isSeverelyOverlappingOwner(ownerLocation, guardLocation)
+                && teleportNearOwner(guard, owner, slot)) {
+            resetNavigationState(squad, slot);
+            if (fighting) {
+                restoreCurrentThreatTarget(squad, guard);
+            }
+            return;
+        }
+
+        // Pendant le combat, l'objectif d'attaque du Husk pilote son déplacement. Une route de
+        // formation ne doit surtout pas concurrencer la poursuite de la menace courante.
+        if (fighting) {
             resetNavigationState(squad, slot);
             return;
         }
 
-        boolean pathFound = navigator.moveTo(guard, owner.getLocation(), FOLLOW_SPEED);
+        Location formationTarget = getFormationTarget(owner, slot);
+        double tolerance = getPositiveConfig(
+                "garde.formation-tolerance", DEFAULT_FORMATION_TOLERANCE, MAX_FORMATION_TOLERANCE);
+        boolean invadesPersonalSpace = isInsideOwnerPersonalSpace(ownerLocation, guardLocation);
+        boolean blocksView = isInsideOwnerViewCorridor(ownerLocation, guardLocation);
+
+        if (!invadesPersonalSpace
+                && !blocksView
+                && guardLocation.distanceSquared(formationTarget) <= tolerance * tolerance) {
+            // Sans cet arrêt explicite, Paper peut continuer l'ancien chemin jusqu'à la position
+            // précédente du joueur et le garde finit précisément devant sa caméra.
+            stopGuardNavigation(guard);
+            resetNavigationState(squad, slot);
+            return;
+        }
+
+        /*
+         * Lorsqu'il est devant la caméra, le garde sort d'abord latéralement du cône de vision.
+         * Aller directement vers son point arrière pourrait tracer un chemin qui traverse le
+         * joueur ; le point intermédiaire évite ce croisement visuel.
+         */
+        Location navigationTarget = invadesPersonalSpace || blocksView
+                ? getViewClearanceTarget(owner, guardLocation, slot)
+                : formationTarget;
+        boolean pathFound = navigator.moveTo(guard, navigationTarget, FOLLOW_SPEED);
         if (pathFound) {
             squad.pathFailures.remove(slot);
             if (isStuck(squad, guard, slot) && teleportNearOwner(guard, owner, slot)) {
@@ -893,10 +1064,19 @@ public final class RoyalGuardManager implements TabExecutor, Listener {
         guard.setCanBreakDoors(false);
         guard.setAI(true);
         guard.setAware(true);
+        // Les gardes restent visibles mais ne poussent plus le maître et ne peuvent plus
+        // l'enfermer physiquement dans un passage étroit.
+        guard.setCollidable(false);
+        guard.setAggressive(false);
         guard.setPersistent(true);
         guard.setRemoveWhenFarAway(false);
         guard.setCanPickupItems(false);
         guard.setTarget(null);
+        // Le pathfinder doit traiter les portes ouvertes et fermées comme franchissables ;
+        // sinon un garde peut rester de l'autre côté d'une maison tout en conservant sa cible.
+        guard.getPathfinder().setCanOpenDoors(true);
+        guard.getPathfinder().setCanPassDoors(true);
+        guard.getPathfinder().setCanFloat(true);
         guard.getPersistentDataContainer().set(Keys.royalGuardType(), PersistentDataType.STRING, GUARD_TYPE);
         guard.getPersistentDataContainer().set(Keys.royalGuardOwner(), PersistentDataType.STRING, ownerId.toString());
         guard.getPersistentDataContainer().set(Keys.royalGuardSlot(), PersistentDataType.INTEGER, slot);
@@ -1025,17 +1205,245 @@ public final class RoyalGuardManager implements TabExecutor, Listener {
         lastNavigationErrorLogAt.remove(ownerId);
     }
 
-    private void engageThreat(GuardSquad squad, LivingEntity attacker) {
+    private void engageThreat(GuardSquad squad,
+                              LivingEntity attacker,
+                              ThreatReason reason,
+                              boolean preferImmediately) {
         Player owner = getOnlineOwner(squad);
-        if (!squad.active || owner == null || attacker.isDead() || !attacker.isValid()
-                || isFriendlyToOwner(attacker, squad.ownerId) || !isInSameWorld(owner, attacker)) {
+        if (!squad.active || owner == null
+                || !registerThreatCandidate(squad, owner, attacker, reason)) {
             return;
         }
 
-        squad.threatId = attacker.getUniqueId();
-        squad.threat = attacker;
-        squad.threatExpiresAtNanos = System.nanoTime() + getThreatDurationNanos();
+        selectCurrentThreat(squad, owner, attacker.getUniqueId(), preferImmediately);
         applyThreatToGuards(squad, owner);
+    }
+
+    /**
+     * Mémorise plusieurs dangers au lieu d'écraser la cible précédente. La file est bornée pour
+     * qu'un joueur frappant une grande quantité d'entités ne puisse jamais créer une fuite mémoire.
+     */
+    private boolean registerThreatCandidate(GuardSquad squad,
+                                            Player owner,
+                                            LivingEntity entity,
+                                            ThreatReason reason) {
+        if (reason == null
+                || !isEligibleThreatBase(owner, entity)
+                || !isInsideInitialEngagementRadius(owner, entity)) {
+            return false;
+        }
+
+        long now = System.nanoTime();
+        UUID entityId = entity.getUniqueId();
+        ThreatCandidate candidate = squad.threatCandidates.get(entityId);
+        if (candidate == null) {
+            candidate = new ThreatCandidate(entityId, entity, reason, now, computeThreatExpiry(now));
+            squad.threatCandidates.put(entityId, candidate);
+        } else {
+            candidate.entity = entity;
+            if (reason.priority() > candidate.reason.priority()) {
+                candidate.reason = reason;
+            }
+            candidate.lastObservedAtNanos = now;
+            candidate.expiresAtNanos = computeThreatExpiry(now);
+        }
+
+        trimThreatCandidates(squad, entityId);
+        return true;
+    }
+
+    private long computeThreatExpiry(long now) {
+        long duration = getThreatDurationNanos();
+        long deadline = now + duration;
+        // System.nanoTime() est signé ; cette garde évite qu'un dépassement arithmétique
+        // transforme une nouvelle menace en cible immédiatement expirée.
+        return duration > 0L && deadline < now ? Long.MAX_VALUE : deadline;
+    }
+
+    private void trimThreatCandidates(GuardSquad squad, UUID protectedCandidateId) {
+        while (squad.threatCandidates.size() > MAX_TRACKED_THREATS) {
+            ThreatCandidate victim = null;
+            for (ThreatCandidate candidate : squad.threatCandidates.values()) {
+                if (candidate.entityId.equals(squad.threatId)
+                        || candidate.entityId.equals(protectedCandidateId)) {
+                    continue;
+                }
+                if (victim == null
+                        || candidate.reason.priority() < victim.reason.priority()
+                        || (candidate.reason.priority() == victim.reason.priority()
+                        && candidate.lastObservedAtNanos < victim.lastObservedAtNanos)) {
+                    victim = candidate;
+                }
+            }
+
+            if (victim == null) {
+                return;
+            }
+            squad.threatCandidates.remove(victim.entityId);
+        }
+    }
+
+    /**
+     * Nettoie les menaces mortes/hors zone puis sélectionne la meilleure cible restante.
+     * Une priorité identique ne remplace pas la cible active : cette stabilité évite les
+     * oscillations d'IA lorsqu'un groupe entier cible le propriétaire au même moment.
+     */
+    private void reconcileThreatState(GuardSquad squad, Player owner, boolean applyTargets) {
+        UUID previousThreatId = squad.threatId;
+        selectCurrentThreat(squad, owner, null, false);
+
+        if (squad.threatId == null) {
+            if (previousThreatId != null) {
+                clearGuardTargets(squad);
+            }
+            return;
+        }
+
+        if (applyTargets) {
+            applyThreatToGuards(squad, owner);
+        }
+    }
+
+    private void selectCurrentThreat(GuardSquad squad,
+                                     Player owner,
+                                     UUID preferredCandidateId,
+                                     boolean preferOnEqualPriority) {
+        pruneThreatCandidates(squad, owner);
+
+        ThreatCandidate current = squad.threatId == null
+                ? null
+                : squad.threatCandidates.get(squad.threatId);
+        ThreatCandidate best = findBestThreatCandidate(squad, owner);
+        ThreatCandidate selected = current;
+
+        if (selected == null
+                || (best != null && best.reason.priority() > selected.reason.priority())) {
+            selected = best;
+        }
+
+        ThreatCandidate preferred = preferredCandidateId == null
+                ? null
+                : squad.threatCandidates.get(preferredCandidateId);
+        if (preferred != null && (selected == null
+                || preferred.reason.priority() > selected.reason.priority()
+                || (preferOnEqualPriority
+                && preferred.reason.priority() == selected.reason.priority()))) {
+            selected = preferred;
+        }
+
+        if (selected == null) {
+            clearActiveThreat(squad);
+        } else {
+            activateThreat(squad, selected);
+        }
+    }
+
+    private ThreatCandidate findBestThreatCandidate(GuardSquad squad, Player owner) {
+        ThreatCandidate best = null;
+        for (ThreatCandidate candidate : squad.threatCandidates.values()) {
+            if (best == null || isBetterThreatCandidate(candidate, best, owner)) {
+                best = candidate;
+            }
+        }
+        return best;
+    }
+
+    private boolean isBetterThreatCandidate(ThreatCandidate candidate,
+                                            ThreatCandidate currentBest,
+                                            Player owner) {
+        int priorityComparison = Integer.compare(
+                candidate.reason.priority(), currentBest.reason.priority());
+        if (priorityComparison != 0) {
+            return priorityComparison > 0;
+        }
+
+        double candidateDistance = owner.getLocation().distanceSquared(candidate.entity.getLocation());
+        double currentDistance = owner.getLocation().distanceSquared(currentBest.entity.getLocation());
+        int distanceComparison = Double.compare(candidateDistance, currentDistance);
+        if (distanceComparison != 0) {
+            return distanceComparison < 0;
+        }
+        return candidate.lastObservedAtNanos > currentBest.lastObservedAtNanos;
+    }
+
+    private void pruneThreatCandidates(GuardSquad squad, Player owner) {
+        Iterator<Map.Entry<UUID, ThreatCandidate>> iterator =
+                squad.threatCandidates.entrySet().iterator();
+        while (iterator.hasNext()) {
+            ThreatCandidate candidate = iterator.next().getValue();
+            try {
+                if (!isThreatCandidateRelevant(owner, candidate)) {
+                    iterator.remove();
+                }
+            } catch (RuntimeException exception) {
+                /*
+                 * Une référence d'entité devenue incohérente (déchargement ou plugin tiers)
+                 * invalide seulement cette entrée. Vider toute la file ferait oublier des
+                 * adversaires parfaitement valides et interromprait inutilement la défense.
+                 */
+                iterator.remove();
+                logNavigationFailure(squad, -1, exception);
+            }
+        }
+    }
+
+    private boolean isThreatCandidateRelevant(Player owner, ThreatCandidate candidate) {
+        if (candidate == null
+                || candidate.entity == null
+                || !candidate.entityId.equals(candidate.entity.getUniqueId())
+                || !isEligibleThreatBase(owner, candidate.entity)) {
+            return false;
+        }
+
+        double leashRadius = getCombatLeashRadius();
+        if (owner.getLocation().distanceSquared(candidate.entity.getLocation())
+                > leashRadius * leashRadius) {
+            return false;
+        }
+
+        // Avec finish-engaged-targets, la cible reste prioritaire jusqu'à sa mort, son
+        // invalidation, son changement de monde ou sa sortie de la laisse de sécurité.
+        return isFinishEngagedTargetsEnabled()
+                || System.nanoTime() - candidate.expiresAtNanos < 0L;
+    }
+
+    private boolean isEligibleThreatBase(Player owner, LivingEntity target) {
+        if (owner == null
+                || target == null
+                || target instanceof ArmorStand
+                || target.isDead()
+                || !target.isValid()
+                || target.isInvulnerable()
+                || isFriendlyToOwner(target, owner.getUniqueId())
+                || !isInSameWorld(owner, target)) {
+            return false;
+        }
+
+        return !(target instanceof Player targetPlayer)
+                || (targetPlayer.getGameMode() != GameMode.CREATIVE
+                && targetPlayer.getGameMode() != GameMode.SPECTATOR);
+    }
+
+    private boolean isInsideInitialEngagementRadius(Player owner,
+                                                    LivingEntity target) {
+        /*
+         * Les événements de ciblage et de dégâts ne nécessitent aucun balayage du monde : ils
+         * peuvent donc engager une menace dans toute la laisse de combat. threat-detection-radius
+         * borne seulement le filet de sécurité périodique qui inspecte les entités voisines.
+         */
+        double initialRadius = getCombatLeashRadius();
+        return owner.getLocation().distanceSquared(target.getLocation())
+                <= initialRadius * initialRadius;
+    }
+
+    private void activateThreat(GuardSquad squad, ThreatCandidate candidate) {
+        squad.threatId = candidate.entityId;
+        squad.threat = candidate.entity;
+    }
+
+    private void clearActiveThreat(GuardSquad squad) {
+        squad.threatId = null;
+        squad.threat = null;
     }
 
     private void applyThreatToGuards(GuardSquad squad, Player owner) {
@@ -1123,56 +1531,143 @@ public final class RoyalGuardManager implements TabExecutor, Listener {
         }
     }
 
+    private boolean shouldRunAwarenessScan(GuardSquad squad) {
+        if (squad.followCyclesUntilAwarenessScan <= 0) {
+            squad.followCyclesUntilAwarenessScan = AWARENESS_SCAN_INTERVAL_FOLLOW_CYCLES - 1;
+            return true;
+        }
+
+        squad.followCyclesUntilAwarenessScan--;
+        return false;
+    }
+
     /**
-     * Rattrape à faible fréquence les cibles posées directement par du code NMS ou par un plugin
-     * qui ne déclencherait pas l'événement Bukkit. Le rayon est borné et centré sur le propriétaire ;
-     * les événements et l'annulation des dégâts restent les protections principales hors de ce rayon.
+     * Rattrape une fois par seconde les cibles posées directement par NMS ou par un autre plugin.
+     * Le même parcours local traite les golems et la défense proactive afin d'éviter deux scans
+     * coûteux du voisinage pour chaque propriétaire.
      */
-    private void neutralizeNearbyIronGolems(Player owner) {
-        double radius = getPositiveConfig(
+    private void scanNearbySafetyAndThreats(GuardSquad squad, Player owner) {
+        boolean protectFromGolems = isIronGolemNeutralityEnabled();
+        boolean detectThreats = isProactiveDefenseEnabled();
+        if (!protectFromGolems && !detectThreats) {
+            return;
+        }
+
+        double golemRadius = protectFromGolems
+                ? getPositiveConfig(
                 "garde.iron-golem-neutrality-radius",
                 DEFAULT_IRON_GOLEM_NEUTRALITY_RADIUS,
-                MAX_IRON_GOLEM_NEUTRALITY_RADIUS);
-        List<Entity> nearbyEntities = owner.getNearbyEntities(radius, radius, radius);
+                MAX_IRON_GOLEM_NEUTRALITY_RADIUS)
+                : 0.0D;
+        double threatRadius = detectThreats ? getThreatDetectionRadius() : 0.0D;
+        double scanRadius = Math.max(golemRadius, threatRadius);
+        if (scanRadius <= 0.0D) {
+            return;
+        }
+
+        List<Entity> nearbyEntities = owner.getNearbyEntities(scanRadius, scanRadius, scanRadius);
         if (nearbyEntities == null || nearbyEntities.isEmpty()) {
             return;
         }
 
+        Location ownerLocation = owner.getLocation();
+        boolean registeredThreat = false;
         for (Entity nearbyEntity : nearbyEntities) {
-            if (!(nearbyEntity instanceof IronGolem golem)) {
-                continue;
+            try {
+                if (nearbyEntity == null
+                        || !isInSameWorld(owner, nearbyEntity)
+                        || nearbyEntity.getUniqueId().equals(owner.getUniqueId())) {
+                    continue;
+                }
+
+                double distanceSquared = ownerLocation.distanceSquared(nearbyEntity.getLocation());
+                boolean neutralizedGolemGuardTarget = false;
+                if (protectFromGolems
+                        && distanceSquared <= golemRadius * golemRadius
+                        && nearbyEntity instanceof IronGolem golem) {
+                    LivingEntity target = golem.getTarget();
+                    if (target != null && isRoyalGuard(target)) {
+                        neutralizeIronGolemAggression(golem);
+                        neutralizedGolemGuardTarget = true;
+                    }
+                }
+
+                if (neutralizedGolemGuardTarget
+                        || !detectThreats
+                        || distanceSquared > threatRadius * threatRadius
+                        || !(nearbyEntity instanceof Mob mob)) {
+                    continue;
+                }
+
+                LivingEntity mobTarget = mob.getTarget();
+                ThreatReason observedReason = null;
+                if (mobTarget != null
+                        && mobTarget.getUniqueId().equals(owner.getUniqueId())) {
+                    observedReason = ThreatReason.TARGETING_OWNER;
+                } else if (mobTarget != null
+                        && isTrackedGuard(mobTarget)
+                        && squad.ownerId.equals(ownerOf(mobTarget))) {
+                    observedReason = ThreatReason.TARGETING_GUARD;
+                }
+
+                if (observedReason != null
+                        && registerThreatCandidate(squad, owner, mob, observedReason)) {
+                    registeredThreat = true;
+                }
+            } catch (RuntimeException exception) {
+                /*
+                 * Une entité déchargée ou modifiée pendant l'itération ne doit pas empêcher
+                 * l'analyse des autres mobs du voisinage. Le journal reste limité par escouade.
+                 */
+                logNavigationFailure(squad, -1, exception);
             }
-            LivingEntity target = golem.getTarget();
-            if (target != null && isRoyalGuard(target)) {
-                neutralizeIronGolemAggression(golem);
-            }
+        }
+
+        if (registeredThreat) {
+            selectCurrentThreat(squad, owner, null, false);
+            applyThreatToGuards(squad, owner);
         }
     }
 
-    private void expireThreatIfNeeded(GuardSquad squad) {
-        if (squad.threatId == null || !isThreatExpired(squad)) {
-            return;
-        }
-        clearThreatAndTargets(squad);
-    }
-
-    private void clearThreatIfNoLongerRelevant(GuardSquad squad, Player owner) {
-        if (squad.threatId == null) {
-            return;
-        }
-
-        LivingEntity threat = squad.threat;
+    private double getThreatDetectionRadius() {
         double protectionRadius = getPositiveConfig(
                 "garde.protection-radius", DEFAULT_PROTECTION_RADIUS, MAX_PROTECTION_RADIUS);
-        if (threat == null || !isCurrentThreat(squad.ownerId, threat) || !isInSameWorld(owner, threat)
-                || owner.getLocation().distanceSquared(threat.getLocation())
-                > protectionRadius * protectionRadius) {
-            clearThreatAndTargets(squad);
-        }
+        double configuredRadius = getPositiveConfig(
+                "garde.threat-detection-radius",
+                DEFAULT_THREAT_DETECTION_RADIUS,
+                MAX_THREAT_DETECTION_RADIUS);
+        // La détection proactive reste volontairement locale. Une cible déjà engagée peut ensuite
+        // être poursuivie plus loin, jusqu'à combat-leash-radius.
+        return Math.min(configuredRadius, protectionRadius);
+    }
+
+    private double getCombatLeashRadius() {
+        double protectionRadius = getPositiveConfig(
+                "garde.protection-radius", DEFAULT_PROTECTION_RADIUS, MAX_PROTECTION_RADIUS);
+        double configuredRadius = getPositiveConfig(
+                "garde.combat-leash-radius",
+                DEFAULT_COMBAT_LEASH_RADIUS,
+                MAX_COMBAT_LEASH_RADIUS);
+        // Une configuration incohérente ne doit jamais accepter une menace puis l'abandonner
+        // immédiatement : la laisse effective couvre au minimum la zone de protection.
+        return Math.max(configuredRadius, protectionRadius);
+    }
+
+    private double getCombatRecallRadius() {
+        /*
+         * Le garde peut légitimement dépasser légèrement la distance maître-cible au moment de
+         * contourner ou de frapper l'ennemi. Cette marge évite une boucle rappel/poursuite au bord
+         * exact de la laisse sans autoriser la cible elle-même à s'en éloigner davantage.
+         */
+        return getCombatLeashRadius() + COMBAT_RECALL_MARGIN;
     }
 
     private void clearThreatAndTargets(GuardSquad squad) {
         clearThreat(squad);
+        clearGuardTargets(squad);
+    }
+
+    private void clearGuardTargets(GuardSquad squad) {
         for (int slot = 0; slot < GUARD_COUNT; slot++) {
             try {
                 Husk guard = getLiveGuard(squad, slot);
@@ -1180,6 +1675,8 @@ public final class RoyalGuardManager implements TabExecutor, Listener {
                     // L'appel explicite couvre aussi une cible conservée côté moteur mais non reflétée
                     // momentanément par getTarget() pendant un changement de monde ou un déchargement.
                     guard.setTarget(null);
+                    guard.setAggressive(false);
+                    stopGuardNavigation(guard);
                 }
             } catch (RuntimeException exception) {
                 // Un garde momentanément déchargé ne doit pas empêcher le second d'être nettoyé.
@@ -1189,26 +1686,25 @@ public final class RoyalGuardManager implements TabExecutor, Listener {
     }
 
     private void clearThreat(GuardSquad squad) {
-        squad.threatId = null;
-        squad.threat = null;
-        squad.threatExpiresAtNanos = 0L;
+        squad.threatCandidates.clear();
+        clearActiveThreat(squad);
     }
 
     private boolean isCurrentThreat(UUID ownerId, LivingEntity target) {
         GuardSquad squad = squads.get(ownerId);
-        return squad != null
-                && squad.active
-                && squad.threatId != null
-                && !isThreatExpired(squad)
-                && squad.threatId.equals(target.getUniqueId())
-                && !target.isDead()
-                && target.isValid();
+        if (squad == null
+                || !squad.active
+                || squad.threatId == null
+                || target == null
+                || !squad.threatId.equals(target.getUniqueId())) {
+            return false;
+        }
+
+        Player owner = getOnlineOwner(squad);
+        ThreatCandidate candidate = squad.threatCandidates.get(squad.threatId);
+        return owner != null && isThreatCandidateRelevant(owner, candidate);
     }
 
-    private boolean isThreatExpired(GuardSquad squad) {
-        return squad.threatId != null
-                && System.nanoTime() - squad.threatExpiresAtNanos >= 0L;
-    }
 
     private void restoreCurrentThreatTarget(GuardSquad squad, Husk guard) {
         LivingEntity currentTarget = guard.getTarget();
@@ -1217,21 +1713,30 @@ public final class RoyalGuardManager implements TabExecutor, Listener {
             if (currentTarget != null) {
                 guard.setTarget(null);
             }
+            guard.setAggressive(false);
             return;
         }
 
-        // Ces indicateurs sont persistants sur l'entité. On les répare seulement pendant un combat
-        // au cas où un autre plugin ou une ancienne sauvegarde aurait neutralisé l'IA du garde.
-        if (!guard.hasAI()) {
-            guard.setAI(true);
-        }
-        if (!guard.isAware()) {
-            guard.setAware(true);
-        }
-
+        repairGuardMobState(guard);
         if (currentTarget == null || !currentTarget.getUniqueId().equals(threat.getUniqueId())) {
+            // Un ancien chemin de formation peut sinon gagner quelques ticks sur l'objectif
+            // d'attaque et faire repartir le garde vers le joueur au début du combat.
+            stopGuardNavigation(guard);
             guard.setTarget(threat);
         }
+        guard.setAggressive(true);
+    }
+
+    private LivingEntity resolveLivingDamageTarget(Entity damagedEntity) {
+        if (damagedEntity instanceof LivingEntity livingEntity) {
+            return livingEntity;
+        }
+        if (damagedEntity instanceof ComplexEntityPart part) {
+            // Les dégâts infligés à une partie de dragon doivent commander le parent vivant,
+            // seule entité que l'IA d'un Husk peut réellement conserver comme cible.
+            return part.getParent();
+        }
+        return null;
     }
 
     private LivingEntity resolveLivingAttacker(EntityDamageByEntityEvent event) {
@@ -1257,8 +1762,33 @@ public final class RoyalGuardManager implements TabExecutor, Listener {
         return null;
     }
 
+    private boolean isHostileTargetReason(EntityTargetEvent.TargetReason reason) {
+        if (reason == null) {
+            // Une raison absente venant d'une implémentation tierce reste traitée par prudence.
+            return true;
+        }
+        return switch (reason) {
+            // TEMPT est le seul ciblage positif explicitement non agressif : l'entité suit
+            // simplement le joueur qui tient un objet désiré. FOLLOW_LEADER reste hostile,
+            // car Paper l'utilise lorsqu'un raider reprend la cible de ses alliés.
+            case TEMPT, FORGOT_TARGET, TARGET_DIED,
+                    TARGET_INVALID, TARGET_OTHER_LEVEL -> false;
+            default -> true;
+        };
+    }
+
     private boolean isFriendlyToOwner(Entity entity, UUID ownerId) {
-        return ownerId.equals(entity.getUniqueId()) || isGuardOfOwner(entity, ownerId);
+        if (entity == null || ownerId == null) {
+            return false;
+        }
+        if (ownerId.equals(entity.getUniqueId()) || isGuardOfOwner(entity, ownerId)) {
+            return true;
+        }
+        if (entity instanceof Tameable tameable) {
+            AnimalTamer tamer = tameable.getOwner();
+            return tamer != null && ownerId.equals(tamer.getUniqueId());
+        }
+        return false;
     }
 
     private boolean isGuardOfOwner(Entity entity, UUID ownerId) {
@@ -1331,6 +1861,201 @@ public final class RoyalGuardManager implements TabExecutor, Listener {
         return null;
     }
 
+    private void repairGuardMobState(Husk guard) {
+        if (!guard.hasAI()) {
+            guard.setAI(true);
+        }
+        if (!guard.isAware()) {
+            guard.setAware(true);
+        }
+        if (guard.isCollidable()) {
+            guard.setCollidable(false);
+        }
+    }
+
+    private void stopGuardNavigation(Mob guard) {
+        try {
+            navigator.stop(guard);
+        } catch (RuntimeException ignored) {
+            // L'arrêt est une optimisation de confort. Le prochain ordre de déplacement ou
+            // de combat reprendra la main même si un autre plugin a invalidé le pathfinder.
+        }
+    }
+
+    /**
+     * Retourne l'ancrage de formation du slot : un garde à gauche derrière le joueur,
+     * l'autre à droite derrière lui. La formation suit le regard horizontal, jamais la
+     * position exacte du joueur.
+     */
+    Location getFormationTarget(Player owner, int slot) {
+        if (!isGuardSlot(slot)) {
+            throw new IllegalArgumentException("Slot de garde invalide : " + slot);
+        }
+
+        Location ownerLocation = owner.getLocation().clone();
+        Vector forward = horizontalDirection(ownerLocation);
+        Vector right = new Vector(-forward.getZ(), 0.0D, forward.getX());
+        FormationOffsets offsets = getFormationOffsets();
+        double sideSign = slot == 0 ? 1.0D : -1.0D;
+        ownerLocation.add(forward.clone().multiply(-offsets.rearDistance()));
+        ownerLocation.add(right.multiply(offsets.sideDistance() * sideSign));
+        ownerLocation.setPitch(0.0F);
+        return ownerLocation;
+    }
+
+    private FormationOffsets getFormationOffsets() {
+        double sideDistance = Math.max(
+                getPositiveConfig(
+                        "garde.formation-side-distance",
+                        DEFAULT_FORMATION_SIDE_DISTANCE,
+                        MAX_FORMATION_OFFSET),
+                MIN_FORMATION_SIDE_DISTANCE);
+        double rearDistance = getPositiveConfig(
+                "garde.formation-rear-distance",
+                DEFAULT_FORMATION_REAR_DISTANCE,
+                MAX_FORMATION_OFFSET);
+        double personalSpaceRadius = getPositiveConfig(
+                "garde.personal-space-radius",
+                DEFAULT_PERSONAL_SPACE_RADIUS,
+                MAX_PERSONAL_SPACE_RADIUS);
+        double minimumAnchorDistance = personalSpaceRadius + FORMATION_PERSONAL_SPACE_MARGIN;
+        double configuredAnchorDistance = Math.hypot(sideDistance, rearDistance);
+        if (configuredAnchorDistance < minimumAnchorDistance) {
+            // Une combinaison de configuration incohérente ne doit jamais replacer les gardes
+            // dans le joueur : on conserve l'angle demandé tout en éloignant l'ancrage.
+            double scale = minimumAnchorDistance / configuredAnchorDistance;
+            sideDistance *= scale;
+            rearDistance *= scale;
+        }
+        return new FormationOffsets(sideDistance, rearDistance);
+    }
+
+    private double getEffectiveFollowRadius() {
+        FormationOffsets offsets = getFormationOffsets();
+        double formationDistance = Math.hypot(offsets.sideDistance(), offsets.rearDistance());
+        double configuredRadius = getPositiveConfig(
+                "garde.follow-radius", DEFAULT_FOLLOW_RADIUS, MAX_FOLLOW_RADIUS);
+        /*
+         * La recherche d'un bloc sûr peut décaler l'ancrage de quelques blocs. Relever
+         * automatiquement la portée évite qu'une configuration contradictoire téléporte le garde
+         * en boucle alors qu'il se trouve déjà sur le meilleur emplacement disponible.
+         */
+        double minimumRadius = formationDistance + SAFE_LOCATION_SEARCH_RADIUS + 1.0D;
+        return Math.max(configuredRadius, minimumRadius);
+    }
+
+    /**
+     * Construit un point de dégagement latéral. Le côté actuel du garde est conservé lorsqu'il
+     * est déjà nettement engagé à gauche ou à droite afin qu'il ne traverse jamais le joueur
+     * pour rejoindre trop tôt son slot définitif.
+     */
+    Location getViewClearanceTarget(Player owner, Location guardLocation, int slot) {
+        if (!isGuardSlot(slot)) {
+            throw new IllegalArgumentException("Slot de garde invalide : " + slot);
+        }
+
+        Location ownerLocation = owner.getLocation().clone();
+        Vector forward = horizontalDirection(ownerLocation);
+        Vector right = new Vector(-forward.getZ(), 0.0D, forward.getX());
+        Vector horizontalOffset = guardLocation.toVector()
+                .subtract(ownerLocation.toVector())
+                .setY(0.0D);
+
+        double currentLateralOffset = horizontalOffset.dot(right);
+        double slotSide = slot == 0 ? 1.0D : -1.0D;
+        double escapeSide = Math.abs(currentLateralOffset) >= CLEARANCE_SIDE_REUSE_THRESHOLD
+                ? Math.copySign(1.0D, currentLateralOffset)
+                : slotSide;
+
+        double configuredSideDistance = getPositiveConfig(
+                "garde.formation-side-distance",
+                DEFAULT_FORMATION_SIDE_DISTANCE,
+                MAX_FORMATION_OFFSET);
+        double personalSpaceRadius = getPositiveConfig(
+                "garde.personal-space-radius",
+                DEFAULT_PERSONAL_SPACE_RADIUS,
+                MAX_PERSONAL_SPACE_RADIUS);
+        double clearanceSideDistance = Math.max(
+                configuredSideDistance + CLEARANCE_SIDE_MARGIN,
+                personalSpaceRadius + CLEARANCE_SIDE_MARGIN);
+
+        double currentForwardOffset = horizontalOffset.dot(forward);
+        double clearanceForwardOffset = Math.max(
+                CLEARANCE_MIN_FORWARD_OFFSET,
+                Math.min(currentForwardOffset, CLEARANCE_MAX_FORWARD_OFFSET));
+
+        ownerLocation.add(right.multiply(clearanceSideDistance * escapeSide));
+        ownerLocation.add(forward.multiply(clearanceForwardOffset));
+        ownerLocation.setPitch(0.0F);
+        return ownerLocation;
+    }
+
+    private boolean isSeverelyOverlappingOwner(Location ownerLocation, Location guardLocation) {
+        if (!Objects.equals(ownerLocation.getWorld(), guardLocation.getWorld())
+                || Math.abs(ownerLocation.getY() - guardLocation.getY()) > 2.5D) {
+            return false;
+        }
+        return horizontalDistanceSquared(ownerLocation, guardLocation)
+                < EMERGENCY_OVERLAP_RADIUS * EMERGENCY_OVERLAP_RADIUS;
+    }
+
+    private Vector horizontalDirection(Location location) {
+        Vector direction = location.getDirection().setY(0.0D);
+        if (direction.lengthSquared() < MIN_DIRECTION_LENGTH_SQUARED) {
+            double yawRadians = Math.toRadians(location.getYaw());
+            direction = new Vector(
+                    -Math.sin(yawRadians),
+                    0.0D,
+                    Math.cos(yawRadians));
+        }
+        return direction.normalize();
+    }
+
+    private boolean isInsideOwnerPersonalSpace(Location ownerLocation, Location candidate) {
+        if (!Objects.equals(ownerLocation.getWorld(), candidate.getWorld())
+                || Math.abs(ownerLocation.getY() - candidate.getY()) > 3.0D) {
+            return false;
+        }
+
+        double radius = getPositiveConfig(
+                "garde.personal-space-radius",
+                DEFAULT_PERSONAL_SPACE_RADIUS,
+                MAX_PERSONAL_SPACE_RADIUS);
+        return horizontalDistanceSquared(ownerLocation, candidate) < radius * radius;
+    }
+
+    private boolean isInsideOwnerViewCorridor(Location ownerLocation, Location candidate) {
+        if (!Objects.equals(ownerLocation.getWorld(), candidate.getWorld())
+                || Math.abs(ownerLocation.getY() - candidate.getY()) > 3.0D) {
+            return false;
+        }
+
+        double distanceSquared = horizontalDistanceSquared(ownerLocation, candidate);
+        double maximumDistance = getPositiveConfig(
+                "garde.view-clearance-distance",
+                DEFAULT_VIEW_CLEARANCE_DISTANCE,
+                MAX_VIEW_CLEARANCE_DISTANCE);
+        if (distanceSquared > maximumDistance * maximumDistance) {
+            return false;
+        }
+        if (distanceSquared < MIN_DIRECTION_LENGTH_SQUARED) {
+            return true;
+        }
+
+        Vector forward = horizontalDirection(ownerLocation);
+        double offsetX = candidate.getX() - ownerLocation.getX();
+        double offsetZ = candidate.getZ() - ownerLocation.getZ();
+        double normalizedDot = (offsetX * forward.getX() + offsetZ * forward.getZ())
+                / Math.sqrt(distanceSquared);
+        return normalizedDot >= VIEW_CLEARANCE_COSINE;
+    }
+
+    private double horizontalDistanceSquared(Location first, Location second) {
+        double deltaX = first.getX() - second.getX();
+        double deltaZ = first.getZ() - second.getZ();
+        return deltaX * deltaX + deltaZ * deltaZ;
+    }
+
     private boolean isStuck(GuardSquad squad, Husk guard, int slot) {
         Location current = guard.getLocation();
         Location previous = squad.lastLocations.put(slot, current.clone());
@@ -1351,6 +2076,7 @@ public final class RoyalGuardManager implements TabExecutor, Listener {
             return false;
         }
 
+        stopGuardNavigation(guard);
         boolean teleported = guard.teleport(destination);
         if (!teleported) {
             return false;
@@ -1420,41 +2146,84 @@ public final class RoyalGuardManager implements TabExecutor, Listener {
     }
 
     private Location findSafeLocationNear(Player owner, int slot) {
-        Location base = owner.getLocation();
-        if (base == null || base.getWorld() == null) {
+        Location ownerLocation = owner.getLocation();
+        if (ownerLocation == null || ownerLocation.getWorld() == null || !isGuardSlot(slot)) {
             return null;
         }
-        int direction = slot == 0 ? 1 : -1;
-        int[][] offsets = {
-                {2 * direction, 0}, {2 * direction, 1}, {2 * direction, -1},
-                {direction, 2}, {direction, -2}, {3 * direction, 0}
-        };
-        for (int[] offset : offsets) {
-            Location candidate = safeLocationAt(base, offset[0], offset[1]);
-            if (candidate != null) {
-                return candidate;
-            }
-        }
 
-        for (int radius = 1; radius <= SAFE_LOCATION_SEARCH_RADIUS; radius++) {
-            // Chaque slot commence la recherche de son propre côté afin d'éviter que les deux
-            // gardes se superposent lorsque les emplacements préférés sont obstrués.
-            for (int normalizedX = radius; normalizedX >= -radius; normalizedX--) {
-                int offsetX = normalizedX * direction;
+        Location desired = getFormationTarget(owner, slot);
+        for (int radius = 0; radius <= SAFE_LOCATION_SEARCH_RADIUS; radius++) {
+            for (int offsetX = -radius; offsetX <= radius; offsetX++) {
                 for (int offsetZ = -radius; offsetZ <= radius; offsetZ++) {
-                    if (Math.max(Math.abs(offsetX), Math.abs(offsetZ)) != radius) {
+                    if (radius > 0
+                            && Math.max(Math.abs(offsetX), Math.abs(offsetZ)) != radius) {
                         continue;
                     }
-                    Location candidate = safeLocationAt(base, offsetX, offsetZ);
-                    if (candidate != null) {
+
+                    Location candidate = safeLocationAt(desired, offsetX, offsetZ);
+                    if (candidate != null && isAcceptableRecallLocation(owner, slot, candidate)) {
                         return candidate;
                     }
                 }
             }
         }
 
-        // Ici, je préfère réessayer au prochain cycle plutôt que téléporter un garde dans une zone dangereuse.
+        // Dernier recours dans un environnement très encombré : on cherche autour du maître,
+        // mais jamais dans son espace personnel ni dans le cône qui masque sa vue.
+        int direction = slot == 0 ? 1 : -1;
+        for (int radius = 2; radius <= SAFE_LOCATION_SEARCH_RADIUS; radius++) {
+            for (int normalizedX = radius; normalizedX >= -radius; normalizedX--) {
+                int offsetX = normalizedX * direction;
+                for (int offsetZ = -radius; offsetZ <= radius; offsetZ++) {
+                    if (Math.max(Math.abs(offsetX), Math.abs(offsetZ)) != radius) {
+                        continue;
+                    }
+
+                    Location candidate = safeLocationAt(ownerLocation, offsetX, offsetZ);
+                    if (candidate != null && isAcceptableRecallLocation(owner, slot, candidate)) {
+                        return candidate;
+                    }
+                }
+            }
+        }
+
+        // On préfère réessayer au prochain cycle plutôt que téléporter un garde dans le joueur,
+        // devant sa caméra, dans un bloc dangereux ou hors de la bordure du monde.
         return null;
+    }
+
+    private boolean isAcceptableRecallLocation(Player owner, int slot, Location candidate) {
+        Location ownerLocation = owner.getLocation();
+        return !isInsideOwnerPersonalSpace(ownerLocation, candidate)
+                && !isInsideOwnerViewCorridor(ownerLocation, candidate)
+                && !isTooCloseToSiblingGuard(owner.getUniqueId(), slot, candidate);
+    }
+
+    private boolean isTooCloseToSiblingGuard(UUID ownerId, int slot, Location candidate) {
+        GuardSquad squad = squads.get(ownerId);
+        if (squad == null || !squad.active) {
+            return false;
+        }
+
+        for (int otherSlot = 0; otherSlot < GUARD_COUNT; otherSlot++) {
+            if (otherSlot == slot) {
+                continue;
+            }
+
+            Husk sibling = getLiveGuard(squad, otherSlot);
+            if (sibling == null) {
+                continue;
+            }
+
+            Location siblingLocation = sibling.getLocation();
+            if (Objects.equals(candidate.getWorld(), siblingLocation.getWorld())
+                    && Math.abs(candidate.getY() - siblingLocation.getY()) <= 2.5D
+                    && horizontalDistanceSquared(candidate, siblingLocation)
+                    < MIN_GUARD_SEPARATION * MIN_GUARD_SEPARATION) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private Location safeLocationAt(Location base, int offsetX, int offsetZ) {
@@ -1554,6 +2323,21 @@ public final class RoyalGuardManager implements TabExecutor, Listener {
         return plugin.getConfig().getBoolean("garde.friendly-fire", DEFAULT_FRIENDLY_FIRE);
     }
 
+    private boolean isOwnerAttackAssistEnabled() {
+        return plugin.getConfig().getBoolean(
+                "garde.assist-owner-attacks", DEFAULT_ASSIST_OWNER_ATTACKS);
+    }
+
+    private boolean isProactiveDefenseEnabled() {
+        return plugin.getConfig().getBoolean(
+                "garde.proactive-defense", DEFAULT_PROACTIVE_DEFENSE);
+    }
+
+    private boolean isFinishEngagedTargetsEnabled() {
+        return plugin.getConfig().getBoolean(
+                "garde.finish-engaged-targets", DEFAULT_FINISH_ENGAGED_TARGETS);
+    }
+
     private boolean isIronGolemNeutralityEnabled() {
         return plugin.getConfig().getBoolean(
                 "garde.iron-golem-neutrality", DEFAULT_IRON_GOLEM_NEUTRALITY);
@@ -1562,6 +2346,28 @@ public final class RoyalGuardManager implements TabExecutor, Listener {
     private boolean isIronGolemRetaliationEnabled() {
         return plugin.getConfig().getBoolean(
                 "garde.iron-golem-retaliation", DEFAULT_IRON_GOLEM_RETALIATION);
+    }
+
+    /**
+     * Classe les ordres de combat selon l'urgence pour éviter qu'une animation ou une cible
+     * secondaire ne détourne les gardes d'un danger immédiat visant leur maître.
+     */
+    private enum ThreatReason {
+        OWNER_DAMAGED(500),
+        GUARD_DAMAGED(490),
+        TARGETING_OWNER(480),
+        TARGETING_GUARD(470),
+        OWNER_ATTACKED_TARGET(400);
+
+        private final int priority;
+
+        ThreatReason(int priority) {
+            this.priority = priority;
+        }
+
+        private int priority() {
+            return priority;
+        }
     }
 
     private enum GuardCommandAction {
@@ -1576,6 +2382,14 @@ public final class RoyalGuardManager implements TabExecutor, Listener {
     @FunctionalInterface
     interface GuardNavigator {
         boolean moveTo(Mob guard, Location target, double speed);
+
+        /**
+         * Le comportement par défaut conserve la compatibilité avec les navigateurs de test
+         * et les intégrations existantes qui n'ont besoin que de {@link #moveTo(Mob, Location, double)}.
+         */
+        default void stop(Mob guard) {
+            // Aucun arrêt spécifique n'est requis pour un navigateur injecté qui ne le prend pas en charge.
+        }
     }
 
     @FunctionalInterface
@@ -1586,6 +2400,9 @@ public final class RoyalGuardManager implements TabExecutor, Listener {
     @FunctionalInterface
     interface GuardLocationResolver {
         Location find(Player owner, int slot);
+    }
+
+    private record FormationOffsets(double sideDistance, double rearDistance) {
     }
 
     record GuardSettings(double maxHealth,
@@ -1599,6 +2416,11 @@ public final class RoyalGuardManager implements TabExecutor, Listener {
                     plugin.getConfig().getDouble("garde.protection-radius", DEFAULT_PROTECTION_RADIUS),
                     DEFAULT_PROTECTION_RADIUS,
                     MAX_PROTECTION_RADIUS);
+            double configuredCombatLeash = positiveBounded(
+                    plugin.getConfig().getDouble("garde.combat-leash-radius", DEFAULT_COMBAT_LEASH_RADIUS),
+                    DEFAULT_COMBAT_LEASH_RADIUS,
+                    MAX_COMBAT_LEASH_RADIUS);
+            double effectiveCombatLeash = Math.max(configuredCombatLeash, protectionRadius);
             double configuredFollowRange = positiveBounded(
                     plugin.getConfig().getDouble("garde.attributes.follow-range", DEFAULT_FOLLOW_RANGE),
                     DEFAULT_FOLLOW_RANGE,
@@ -1611,9 +2433,9 @@ public final class RoyalGuardManager implements TabExecutor, Listener {
                             DEFAULT_ATTACK_DAMAGE, MAX_CONFIGURED_ATTACK_DAMAGE),
                     positiveBounded(plugin.getConfig().getDouble("garde.attributes.movement-speed", DEFAULT_MOVEMENT_SPEED),
                             DEFAULT_MOVEMENT_SPEED, MAX_CONFIGURED_MOVEMENT_SPEED),
-                    // La portée de détection ne doit jamais être inférieure au rayon dans lequel
-                    // le plugin demande au garde de poursuivre une menace.
-                    Math.max(configuredFollowRange, protectionRadius),
+                    // L'IA du Husk doit pouvoir suivre toute cible que le gestionnaire conserve
+                    // dans sa laisse de combat, même si follow-range a été configuré trop bas.
+                    Math.max(configuredFollowRange, effectiveCombatLeash),
                     nonNegativeBounded(plugin.getConfig().getDouble("garde.attributes.knockback-resistance", DEFAULT_KNOCKBACK_RESISTANCE),
                             DEFAULT_KNOCKBACK_RESISTANCE, MAX_CONFIGURED_KNOCKBACK_RESISTANCE)
             );
@@ -1628,6 +2450,30 @@ public final class RoyalGuardManager implements TabExecutor, Listener {
         return Double.isFinite(value) && value >= 0.0D && value <= maximum ? value : fallback;
     }
 
+    /**
+     * Référence bornée vers une menace observée. L'entité est conservée uniquement tant qu'elle
+     * reste valide et dans la zone de combat ; aucun identifiant ne survit au renvoi du duo.
+     */
+    private static final class ThreatCandidate {
+        private final UUID entityId;
+        private LivingEntity entity;
+        private ThreatReason reason;
+        private long lastObservedAtNanos;
+        private long expiresAtNanos;
+
+        private ThreatCandidate(UUID entityId,
+                                LivingEntity entity,
+                                ThreatReason reason,
+                                long lastObservedAtNanos,
+                                long expiresAtNanos) {
+            this.entityId = entityId;
+            this.entity = entity;
+            this.reason = reason;
+            this.lastObservedAtNanos = lastObservedAtNanos;
+            this.expiresAtNanos = expiresAtNanos;
+        }
+    }
+
     private static final class GuardSquad {
         private final UUID ownerId;
         private Player owner;
@@ -1636,10 +2482,11 @@ public final class RoyalGuardManager implements TabExecutor, Listener {
         private final Map<Integer, Integer> pathFailures = new HashMap<>();
         private final Map<Integer, Location> lastLocations = new HashMap<>();
         private final Map<Integer, Integer> stuckChecks = new HashMap<>();
+        private final Map<UUID, ThreatCandidate> threatCandidates = new LinkedHashMap<>();
         private boolean active = true;
         private UUID threatId;
         private LivingEntity threat;
-        private long threatExpiresAtNanos;
+        private int followCyclesUntilAwarenessScan;
 
         private GuardSquad(UUID ownerId, Player owner) {
             this.ownerId = ownerId;

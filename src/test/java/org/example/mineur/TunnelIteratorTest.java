@@ -14,6 +14,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -58,7 +59,8 @@ class TunnelIteratorTest {
         assertNull(iterator.next());
         assertEquals(10, cursor.x);
         assertEquals(20, cursor.y);
-        assertEquals(32, cursor.z);
+        assertEquals(31, cursor.z);
+        assertTrue(cursor.exhausted);
     }
 
     @Test

@@ -19,7 +19,11 @@ public final class TorchPlacer {
             return;
         }
         if (!supportBlock.getType().isSolid()) {
-            supportBlock.setType(Material.STONE_BRICKS, false);
+            /*
+             * Ne pas écraser un bloc non solide (panneau, eau, redstone...).
+             * Le support est préparé explicitement par l'appelant.
+             */
+            return;
         }
         Block target = supportBlock.getRelative(facing);
         if (!target.getType().isAir()) {

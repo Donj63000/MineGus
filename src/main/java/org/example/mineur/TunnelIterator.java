@@ -1,35 +1,41 @@
 package org.example.mineur;
 
-import org.bukkit.Material;
 import org.bukkit.World;
 import org.bukkit.block.Block;
 
 /**
- * Iterator for the TUNNEL pattern.
- *
- * Contrary to a quarry, this pattern does not dig downward until stop-at-y. It
- * mines a bounded horizontal section: width x height x length. The cursor stores
- * the current position and the tunnel floor in minY, so the session can be saved
- * and resumed cleanly.
+ * Parcours d'un tronçon horizontal borné : largeur × hauteur × longueur.
  */
 public final class TunnelIterator implements MiningIterator {
 
     private final World world;
     private final MiningCursor cursor;
-    private final int maxX;
-    private final int maxY;
-    private final int maxZ;
+    private final int worldMinY;
+    private final int worldMaxY;
+    private final long maxXExclusive;
+    private final long maxYExclusive;
+    private final long maxZExclusive;
 
     public TunnelIterator(World world, MiningCursor cursor, int tunnelHeight) {
         this.world = world;
         this.cursor = cursor;
-        this.cursor.height = Math.max(1, tunnelHeight);
-        if (this.cursor.minY == 0 && this.cursor.y != 0) {
-            this.cursor.minY = this.cursor.y;
+        this.worldMinY = effectiveMinimumHeight(world);
+        this.worldMaxY = effectiveMaximumHeight(world, worldMinY);
+
+        cursor.width = Math.max(1, cursor.width);
+        cursor.length = Math.max(1, cursor.length);
+        cursor.height = Math.max(1, tunnelHeight);
+
+        if (cursor.minY == 0 && cursor.y != 0) {
+            cursor.minY = cursor.y;
         }
-        this.maxX = this.cursor.minX + Math.max(1, this.cursor.width);
-        this.maxY = this.cursor.minY + Math.max(1, this.cursor.height);
-        this.maxZ = this.cursor.minZ + Math.max(1, this.cursor.length);
+        cursor.minY = Math.max(worldMinY, Math.min(worldMaxY - 1, cursor.minY));
+        int availableHeight = Math.max(1, worldMaxY - cursor.minY);
+        cursor.height = Math.min(cursor.height, availableHeight);
+
+        this.maxXExclusive = safeExclusiveEnd(cursor.minX, cursor.width);
+        this.maxYExclusive = safeExclusiveEnd(cursor.minY, cursor.height);
+        this.maxZExclusive = safeExclusiveEnd(cursor.minZ, cursor.length);
         normalizeCursor();
     }
 
@@ -40,20 +46,25 @@ public final class TunnelIterator implements MiningIterator {
 
     @Override
     public boolean hasNext() {
-        return cursor.z < maxZ
+        return !cursor.exhausted
                 && cursor.z >= cursor.minZ
+                && cursor.z < maxZExclusive
                 && cursor.x >= cursor.minX
-                && cursor.x < maxX
+                && cursor.x < maxXExclusive
                 && cursor.y >= cursor.minY
-                && cursor.y < maxY;
+                && cursor.y < maxYExclusive
+                && cursor.y >= worldMinY
+                && cursor.y < worldMaxY;
     }
 
     @Override
     public Block next() {
-        while (hasNext()) {
+        int inspected = 0;
+        while (hasNext() && inspected < DEFAULT_SCAN_BUDGET) {
             Block block = world.getBlockAt(cursor.x, cursor.y, cursor.z);
             advance();
-            if (isMineable(block.getType())) {
+            inspected++;
+            if (block != null && MiningBlockPolicy.isCandidate(block.getType())) {
                 return block;
             }
         }
@@ -61,50 +72,60 @@ public final class TunnelIterator implements MiningIterator {
     }
 
     private void normalizeCursor() {
-        if (cursor.z >= maxZ) {
+        if (cursor.exhausted) {
+            return;
+        }
+        if (cursor.z >= maxZExclusive) {
             return;
         }
         if (cursor.z < cursor.minZ) {
             cursor.z = cursor.minZ;
         }
-        if (cursor.x < cursor.minX || cursor.x >= maxX) {
+        if (cursor.x < cursor.minX || cursor.x >= maxXExclusive) {
             cursor.x = cursor.minX;
         }
-        if (cursor.y < cursor.minY || cursor.y >= maxY) {
+        if (cursor.y < cursor.minY || cursor.y >= maxYExclusive) {
             cursor.y = cursor.minY;
         }
     }
 
     private void advance() {
-        cursor.x++;
-        if (cursor.x >= maxX) {
-            cursor.x = cursor.minX;
-            cursor.y++;
-            if (cursor.y >= maxY) {
-                cursor.y = cursor.minY;
-                cursor.z++;
-            }
+        if ((long) cursor.x + 1L < maxXExclusive) {
+            cursor.x++;
+            return;
         }
+        cursor.x = cursor.minX;
+
+        if ((long) cursor.y + 1L < maxYExclusive) {
+            cursor.y++;
+            return;
+        }
+        cursor.y = cursor.minY;
+
+        if ((long) cursor.z + 1L < maxZExclusive) {
+            cursor.z++;
+            return;
+        }
+
+        /*
+         * Une sentinelle booléenne est sérialisée avec le curseur. Elle reste
+         * fiable même lorsque maxZExclusive vaut Integer.MAX_VALUE + 1.
+         */
+        cursor.exhausted = true;
     }
 
-    private boolean isMineable(Material type) {
-        return type != null
-                && !isAir(type)
-                && type != Material.BEDROCK
-                && type != Material.BARRIER
-                && type != Material.COMMAND_BLOCK
-                && type != Material.CHAIN_COMMAND_BLOCK
-                && type != Material.REPEATING_COMMAND_BLOCK
-                && type != Material.STRUCTURE_BLOCK
-                && type != Material.JIGSAW
-                && type != Material.END_PORTAL
-                && type != Material.END_PORTAL_FRAME
-                && type != Material.NETHER_PORTAL;
+    private static long safeExclusiveEnd(int start, int size) {
+        return Math.min((long) Integer.MAX_VALUE + 1L, (long) start + Math.max(1, size));
     }
 
-    private boolean isAir(Material type) {
-        return type == Material.AIR
-                || type == Material.CAVE_AIR
-                || type == Material.VOID_AIR;
+    private static int effectiveMinimumHeight(World world) {
+        int minimum = world.getMinHeight();
+        int maximum = world.getMaxHeight();
+        return maximum > minimum ? minimum : -64;
+    }
+
+    private static int effectiveMaximumHeight(World world, int minimum) {
+        int maximum = world.getMaxHeight();
+        return maximum > minimum ? maximum : 320;
     }
 }

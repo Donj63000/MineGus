@@ -36,6 +36,7 @@ class MiningCursorTest {
         cursor.minY = cursor.y;
         cursor.height = 3;
         cursor.scanXFirst = false;
+        cursor.exhausted = true;
 
         MiningCursor clone = cursor.copy();
 
@@ -50,6 +51,7 @@ class MiningCursorTest {
         assertEquals(cursor.height, clone.height);
         assertEquals(cursor.length, clone.length);
         assertFalse(clone.scanXFirst);
+        assertTrue(clone.exhausted);
 
         cursor.x++;
         cursor.scanXFirst = true;
@@ -66,6 +68,7 @@ class MiningCursorTest {
         cursor.minY = cursor.y;
         cursor.height = 5;
         cursor.scanXFirst = false;
+        cursor.exhausted = true;
 
         Map<String, Object> data = cursor.toMap();
         MiningCursor restored = MiningCursor.fromMap(data);
@@ -80,6 +83,25 @@ class MiningCursorTest {
         assertEquals(cursor.height, restored.height);
         assertEquals(cursor.length, restored.length);
         assertFalse(restored.scanXFirst);
+        assertTrue(restored.exhausted);
+    }
+
+    @Test
+    void fromMapSaturatesOutOfRangeCoordinatesAndRejectsNaN() {
+        Map<String, Object> data = new HashMap<>();
+        data.put("x", Long.MAX_VALUE);
+        data.put("y", Long.MIN_VALUE);
+        data.put("z", Double.NaN);
+        data.put("minZ", Double.POSITIVE_INFINITY);
+        data.put("width", Long.MAX_VALUE);
+
+        MiningCursor restored = MiningCursor.fromMap(data);
+
+        assertEquals(Integer.MAX_VALUE, restored.x);
+        assertEquals(Integer.MIN_VALUE, restored.y);
+        assertEquals(0, restored.z);
+        assertEquals(0, restored.minZ);
+        assertEquals(Integer.MAX_VALUE, restored.width);
     }
 
     @Test
