@@ -13,6 +13,8 @@ import org.bukkit.block.BlockState;
 import org.bukkit.block.BlockFace;
 import org.bukkit.block.Container;
 import org.bukkit.block.DoubleChest;
+import org.bukkit.block.data.BlockData;
+import org.bukkit.block.data.Waterlogged;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandExecutor;
 import org.bukkit.command.CommandSender;
@@ -61,6 +63,7 @@ import org.example.mineur.QuarryIterator;
 import org.example.mineur.TunnelIterator;
 import org.example.mineur.VeinFirstIterator;
 import org.example.mineur.builders.MineCabinBuilder;
+import org.example.mineur.builders.MineShaftColumnBuilder;
 import org.example.mineur.builders.StairBuilder;
 import org.example.mineur.builders.SupportBuilder;
 import org.example.mineur.builders.TorchPlacer;
@@ -77,6 +80,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
+import java.util.function.Consumer;
 import java.util.logging.Level;
 
 public class Mineur implements CommandExecutor, Listener {
@@ -165,7 +169,8 @@ public class Mineur implements CommandExecutor, Listener {
         List<String> lines = new ArrayList<>();
         lines.add(CMD_PREFIX + ChatColor.YELLOW + "Aide complete du mode mineur");
         lines.add(ChatColor.GRAY + "Parametres actuels: stop-at-y=" + ChatColor.AQUA + stopAtY
-                + ChatColor.GRAY + ", pose auto=" + ChatColor.AQUA + (placementAuto ? "activee" : "desactivee"));
+                + ChatColor.GRAY + ", decors secondaires=" + ChatColor.AQUA
+                + (placementAuto ? "actives" : "desactives"));
         lines.add(ChatColor.DARK_GRAY + "--------------------------------------------------");
 
         lines.add(ChatColor.GOLD + "/mineur" + ChatColor.GRAY
@@ -432,7 +437,7 @@ public class Mineur implements CommandExecutor, Listener {
         if (preparedCabinPlan != null) {
             player.sendMessage(CMD_PREFIX + ChatColor.GOLD
                     + "Chevalement construit : plateforme à Y " + preparedCabinPlan.deckY()
-                    + ", cabane luxueuse et "
+                    + ", cabane de stockage, accès central au puits et "
                     + preparedCabinPlan.chestPairs().size() + " coffres doubles.");
         }
         player.sendMessage(CMD_PREFIX + ChatColor.GRAY + "Mineurs actifs : " + ChatColor.GREEN
@@ -766,11 +771,15 @@ public class Mineur implements CommandExecutor, Listener {
             player.sendMessage(ChatColor.GRAY + " • Tunnel : direction " + ChatColor.AQUA + formatDirection(state.tunnelDirection)
                     + ChatColor.GRAY + ", hauteur " + ChatColor.AQUA + Math.max(1, state.tunnelHeight));
         }
-        if (state.structureVersion >= MineCabinBuilder.STRUCTURE_VERSION) {
+        if (state.structureVersion >= MineCabinBuilder.FIRST_STRUCTURE_VERSION) {
             player.sendMessage(ChatColor.GRAY + " • Stockage de la cabane : "
                     + ChatColor.GOLD + (state.containers.size() / 2)
                     + ChatColor.GRAY + " coffres doubles ("
                     + state.containers.size() + " blocs de coffre).");
+            player.sendMessage(ChatColor.GRAY + " • Accès vertical : "
+                    + (hasIntegratedShaft(state)
+                    ? ChatColor.GREEN + "puits central éclairé"
+                    : ChatColor.YELLOW + "cabane héritée sans puits central"));
         } else {
             player.sendMessage(ChatColor.GRAY + " • Conteneurs : " + state.containers.size());
         }
@@ -1198,6 +1207,16 @@ public class Mineur implements CommandExecutor, Listener {
             } else if (state.waitingStorage) {
                 waitingStorage++;
             }
+
+            /*
+             * Les poses protégées sont différées lorsque le propriétaire est
+             * hors ligne. Sa reconnexion fournit maintenant un acteur valide
+             * pour réparer d'un coup toute la colonne déjà excavée.
+             */
+            RuntimeSession runtime = runtimeOf(state.id);
+            if (runtime != null && runtime.decoration != null && !state.paused) {
+                runtime.decoration.synchronizeToCursor();
+            }
         }
         if (paused > 0) {
             event.getPlayer().sendMessage(CMD_PREFIX + ChatColor.YELLOW
@@ -1407,12 +1426,15 @@ public class Mineur implements CommandExecutor, Listener {
 
             ensureContainers(state, runtime, freshlyCreated, preparedCabinPlan);
             runtime.router = createInventoryRouter(runtime);
-            runtime.decoration = allowBlockPlacement && state.pattern == MiningPattern.QUARRY
+            runtime.decoration = shouldUseQuarryDecoration(state)
                     ? new DecorationDelegate(state)
                     : null;
 
             if (state.paused) {
                 runtime.commitFreshConstruction();
+                if (runtime.decoration != null) {
+                    runtime.decoration.synchronizeToCursor();
+                }
                 runtime.suspend();
                 return;
             }
@@ -1424,12 +1446,15 @@ public class Mineur implements CommandExecutor, Listener {
              * reçoit jamais ce cadre supplémentaire.
              */
             if (freshlyCreated
-                    && state.structureVersion < MineCabinBuilder.STRUCTURE_VERSION
+                    && state.structureVersion < MineCabinBuilder.FIRST_STRUCTURE_VERSION
                     && allowBlockPlacement
                     && state.pattern == MiningPattern.QUARRY) {
                 ensureFrame(state);
             }
             runtime.commitFreshConstruction();
+            if (runtime.decoration != null) {
+                runtime.decoration.synchronizeToCursor();
+            }
         } catch (RuntimeException exception) {
             runtime.rollbackFreshConstruction();
             throw exception;
@@ -1449,12 +1474,26 @@ public class Mineur implements CommandExecutor, Listener {
         }
         ensureGolems(runtime);
 
-        if (allowMinerBlockPlacement() && runtime.state.pattern == MiningPattern.QUARRY) {
+        if (shouldUseQuarryDecoration(runtime.state)) {
             if (runtime.decoration == null) {
                 runtime.decoration = new DecorationDelegate(runtime.state);
             }
         } else {
             runtime.decoration = null;
+        }
+
+        /*
+         * Une construction fraîche reste rollbackable jusqu'à la fin de
+         * startRuntime. Son puits dynamique ne démarre qu'après le commit ;
+         * les restaurations, elles, peuvent être réparées immédiatement.
+         */
+        if (runtime.decoration != null && runtime.freshConstruction == null) {
+            /*
+             * Une reprise répare aussi les niveaux déjà parcourus. Cela couvre
+             * une pose précédemment refusée, un bloc retiré pendant la pause ou
+             * une ancienne tâche interrompue entre deux callbacks.
+             */
+            runtime.decoration.synchronizeToCursor();
         }
 
         restartLoop(runtime);
@@ -2226,7 +2265,7 @@ public class Mineur implements CommandExecutor, Listener {
          * restaure, elle, ses cibles historiques bornées à 256 blocs.
          */
         int maximum = getMaximumStorageContainers();
-        if (state.structureVersion >= MineCabinBuilder.STRUCTURE_VERSION) {
+        if (state.structureVersion >= MineCabinBuilder.FIRST_STRUCTURE_VERSION) {
             maximum = Math.max(maximum, Math.min(256, persisted.size()));
         }
 
@@ -2989,6 +3028,8 @@ public class Mineur implements CommandExecutor, Listener {
                 runtime.router,
                 runtime.miner,
                 createMiningTool(),
+                block -> currentRuntime.decoration == null
+                        || !currentRuntime.decoration.isManagedBlock(block),
                 block -> canAutomatedMinerBreak(runtime.state, block),
                 block -> {
                     if (currentRuntime.decoration != null) {
@@ -3033,6 +3074,15 @@ public class Mineur implements CommandExecutor, Listener {
             MiningSessionState state = runtime.state;
 
             try {
+                /*
+                 * L'itérateur peut terminer sur des couches entièrement vides,
+                 * donc sans callback de casse. Une dernière synchronisation
+                 * prolonge alors l'échelle jusqu'au stop-at-y exact.
+                 */
+                if (runtime.decoration != null) {
+                    runtime.decoration.synchronizeToCursor();
+                }
+
                 if (runtime.miner == null
                         || runtime.miner.isDead()
                         || !runtime.miner.isValid()) {
@@ -3049,6 +3099,15 @@ public class Mineur implements CommandExecutor, Listener {
                 }
 
                 if (continued) {
+                    /*
+                     * Le puits est lié au balayage vertical de la carrière. Une
+                     * fois le tunnel horizontal initialisé, conserver le
+                     * delegate ferait interpréter ses blocs comme de nouvelles
+                     * couches du puits et ajouterait un travail inutile.
+                     */
+                    if (!shouldUseQuarryDecoration(state)) {
+                        runtime.decoration = null;
+                    }
                     refreshChunkTickets(state, runtime);
                     restartLoop(runtime);
                     return;
@@ -3348,8 +3407,14 @@ public class Mineur implements CommandExecutor, Listener {
                         "Le chevalement persisté dépasse les limites du monde."
                 );
             }
+            /*
+             * La présence de bornes prouve au minimum une structure v1. Ne pas
+             * promouvoir silencieusement une ancienne cabane vers la version
+             * courante : le puits v2 n'existe physiquement que s'il a été
+             * construit avec sa trappe et son garde-corps.
+             */
             state.structureVersion = Math.max(
-                    MineCabinBuilder.STRUCTURE_VERSION,
+                    MineCabinBuilder.FIRST_STRUCTURE_VERSION,
                     state.structureVersion
             );
         } else {
@@ -4224,6 +4289,184 @@ public class Mineur implements CommandExecutor, Listener {
         };
     }
 
+    private boolean hasIntegratedShaft(MiningSessionState state) {
+        return state != null
+                && state.structureBounds != null
+                && state.structureVersion
+                >= MineCabinBuilder.SHAFT_ACCESS_STRUCTURE_VERSION;
+    }
+
+    private boolean shouldUseQuarryDecoration(MiningSessionState state) {
+        return state != null
+                && state.pattern == MiningPattern.QUARRY
+                && (hasIntegratedShaft(state) || allowMinerBlockPlacement());
+    }
+
+    private int getShaftLightInterval() {
+        return MineShaftColumnBuilder.normalizeLightInterval(
+                plugin.getConfig().getInt(
+                        "mineur.structure.shaft-light-interval",
+                        MineShaftColumnBuilder.DEFAULT_LIGHT_INTERVAL
+                )
+        );
+    }
+
+    /**
+     * Pose un élément de la colonne verticale sans écraser le monde.
+     *
+     * <p>La méthode répète les contrôles de sûreté au moment exact de
+     * l'écriture, applique les BlockData avant l'événement synthétique puis
+     * restaure le snapshot si une protection refuse la pose. Une décoration
+     * dynamique ne peut ainsi ni contourner un claim, ni laisser un bloc à
+     * moitié configuré après une exception.</p>
+     */
+    private boolean placeShaftBlock(MiningSessionState state,
+                                    Block target,
+                                    Material material,
+                                    Consumer<BlockData> dataConfigurer) {
+        if (state == null
+                || state.base == null
+                || target == null
+                || material == null
+                || state.worldUid == null
+                || !state.worldUid.equals(target.getWorld().getUID())) {
+            return false;
+        }
+
+        World world = target.getWorld();
+        if (target.getY() < effectiveWorldMinHeight(world)
+                || target.getY() >= effectiveWorldMaxHeight(world)
+                || !world.isChunkLoaded(target.getX() >> 4, target.getZ() >> 4)
+                || !isInsideWorldBorder(target.getLocation().add(0.5D, 0.5D, 0.5D))) {
+            return false;
+        }
+
+        Material current = target.getType();
+        if (current == material) {
+            BlockData data = target.getBlockData();
+            if (dataConfigurer != null) {
+                dataConfigurer.accept(data);
+            }
+            if (data instanceof Waterlogged waterlogged) {
+                waterlogged.setWaterlogged(false);
+            }
+            target.setBlockData(data, false);
+            return true;
+        }
+        if (!current.isAir() && !MineShaftColumnBuilder.isManagedMaterial(current)) {
+            /*
+             * Minerai, roche, liquide ou construction du joueur : la colonne
+             * attend que la case soit réellement excavée au lieu de la forcer.
+             */
+            return false;
+        }
+
+        boolean fireEvents = fireStructureProtectionEvents();
+        Player actor = state.owner != null ? Bukkit.getPlayer(state.owner) : null;
+        if (fireEvents && actor == null) {
+            /*
+             * Un BlockPlaceEvent crédible exige un joueur. La réparation sera
+             * retentée au prochain bloc ou à la reconnexion du propriétaire.
+             */
+            return false;
+        }
+
+        BlockState replacedState = target.getState();
+        try {
+            target.setType(material, false);
+            BlockData data = target.getBlockData();
+            if (dataConfigurer != null) {
+                dataConfigurer.accept(data);
+            }
+            if (data instanceof Waterlogged waterlogged) {
+                waterlogged.setWaterlogged(false);
+            }
+            target.setBlockData(data, false);
+
+            if (fireEvents) {
+                BlockPlaceEvent event = new BlockPlaceEvent(
+                        target,
+                        replacedState,
+                        findShaftPlacedAgainst(target),
+                        new ItemStack(material, 1),
+                        actor,
+                        true,
+                        EquipmentSlot.HAND
+                );
+                AutomatedMiningContext.call(() -> {
+                    plugin.getServer().getPluginManager().callEvent(event);
+                    return null;
+                });
+                if (event.isCancelled() || !event.canBuild()) {
+                    restoreShaftSnapshot(replacedState, target);
+                    return false;
+                }
+            }
+
+            if (target.getType() != material) {
+                /*
+                 * Un autre plugin a transformé le bloc pendant l'événement.
+                 * Revenir au snapshot est plus sûr que d'adopter une matière
+                 * inconnue comme élément géré du puits.
+                 */
+                restoreShaftSnapshot(replacedState, target);
+                return false;
+            }
+            return true;
+        } catch (RuntimeException exception) {
+            restoreShaftSnapshot(replacedState, target);
+            throw exception;
+        }
+    }
+
+    private Block findShaftPlacedAgainst(Block block) {
+        Block below = block.getRelative(BlockFace.DOWN);
+        if (!below.getType().isAir()) {
+            return below;
+        }
+
+        Block above = block.getRelative(BlockFace.UP);
+        if (!above.getType().isAir()) {
+            return above;
+        }
+
+        for (BlockFace face : List.of(
+                BlockFace.NORTH,
+                BlockFace.SOUTH,
+                BlockFace.EAST,
+                BlockFace.WEST
+        )) {
+            Block adjacent = block.getRelative(face);
+            if (!adjacent.getType().isAir()) {
+                return adjacent;
+            }
+        }
+        return below;
+    }
+
+    private void restoreShaftSnapshot(BlockState snapshot, Block target) {
+        if (snapshot == null) {
+            return;
+        }
+        try {
+            if (!snapshot.update(true, false)) {
+                plugin.getLogger().warning(
+                        "[Mineur] Snapshot du puits non restauré en "
+                                + (target != null ? coords(target) : "position inconnue")
+                                + "."
+                );
+            }
+        } catch (RuntimeException restoreFailure) {
+            plugin.getLogger().log(
+                    Level.SEVERE,
+                    "[Mineur] Échec de restauration d'un bloc du puits en "
+                            + (target != null ? coords(target) : "position inconnue")
+                            + ".",
+                    restoreFailure
+            );
+        }
+    }
+
     private boolean allowMinerBlockPlacement() {
         return plugin.getConfig().getBoolean("mineur.allow-block-placement", false);
     }
@@ -4407,6 +4650,16 @@ public class Mineur implements CommandExecutor, Listener {
 
     private final class DecorationDelegate {
         private final MiningSessionState state;
+        private final boolean optionalDecorationsEnabled;
+        private final boolean integratedShaftEnabled;
+        private final MineShaftColumnBuilder.Layout shaftLayout;
+        private final int shaftLightInterval;
+
+        /*
+         * Paramètres de compatibilité de l'ancien accès périphérique. Ils ne
+         * sont utilisés que pour une cabane v1 ou lorsque la structure
+         * automatique est désactivée.
+         */
         private final int supportSpacing;
         private final int torchLayerInterval;
         private final int ladderX;
@@ -4417,27 +4670,84 @@ public class Mineur implements CommandExecutor, Listener {
         private final int torchSupportZ;
         private final BlockFace torchFacing = BlockFace.SOUTH;
         private final int depthMarkerInterval = 5;
-        private int minedBlocks = 0;
+
+        private int minedBlocks;
         private int completedLayers;
         private int currentLayerY;
+        private boolean initialized;
 
         DecorationDelegate(MiningSessionState state) {
-            this.state = state;
-            this.supportSpacing = Math.max(0, plugin.getConfig().getInt("mineur.default.supports-every", 8));
-            this.torchLayerInterval = Math.max(1, plugin.getConfig().getInt("mineur.default.torch-layers", 4));
-            this.ladderX = state.base.getBlockX() + Math.max(state.width - 1, 0);
+            this.state = Objects.requireNonNull(state, "state");
+            if (state.base == null) {
+                throw new IllegalArgumentException("Base absente pour la décoration de mine.");
+            }
+
+            this.optionalDecorationsEnabled = allowMinerBlockPlacement();
+            this.integratedShaftEnabled = hasIntegratedShaft(state);
+            this.shaftLayout = integratedShaftEnabled
+                    ? MineShaftColumnBuilder.createLayout(
+                    state.base.getBlockX(),
+                    state.base.getBlockZ(),
+                    Math.max(1, state.width),
+                    Math.max(1, state.length)
+            )
+                    : null;
+            this.shaftLightInterval = getShaftLightInterval();
+
+            this.supportSpacing = Math.max(
+                    0,
+                    plugin.getConfig().getInt("mineur.default.supports-every", 8)
+            );
+            this.torchLayerInterval = Math.max(
+                    1,
+                    plugin.getConfig().getInt("mineur.default.torch-layers", 4)
+            );
+            this.ladderX = safeRectangleMaximum(
+                    state.base.getBlockX(),
+                    Math.max(1, state.width)
+            );
             this.ladderZ = state.base.getBlockZ() + Math.max(state.length, 1) / 2;
-            this.ladderSupportX = this.ladderX + 1;
+            this.ladderSupportX = this.ladderX < Integer.MAX_VALUE
+                    ? this.ladderX + 1
+                    : this.ladderX;
             this.torchX = state.base.getBlockX() + Math.max(state.width, 1) / 2;
-            this.torchSupportZ = state.base.getBlockZ() - 1;
-            this.currentLayerY = state.cursor != null
-                    ? state.cursor.y
-                    : state.base.getBlockY();
-            this.completedLayers = Math.max(0, state.base.getBlockY() - currentLayerY);
-            prepareInitialAccess(state.base.getWorld());
+            this.torchSupportZ = state.base.getBlockZ() > Integer.MIN_VALUE
+                    ? state.base.getBlockZ() - 1
+                    : state.base.getBlockZ();
+
+            int baseY = state.base.getBlockY();
+            int cursorY = state.cursor != null ? state.cursor.y : baseY;
+            this.currentLayerY = Math.min(baseY, cursorY);
+            this.completedLayers = Math.max(0, baseY - currentLayerY);
+        }
+
+        void initialize() {
+            if (initialized) {
+                return;
+            }
+            initialized = true;
+            try {
+                prepareInitialAccess(state.base.getWorld());
+            } catch (RuntimeException exception) {
+                /*
+                 * La cabane statique est déjà transactionnelle. Une panne de
+                 * décoration profonde ne doit pas invalider son commit ni
+                 * supprimer une session qui peut continuer à miner.
+                 */
+                plugin.getLogger().log(
+                        Level.WARNING,
+                        "[Mineur] Initialisation du puits ignorée pour la session "
+                                + state.id + ".",
+                        exception
+                );
+            }
         }
 
         void afterBlock(Block block) {
+            initialize();
+            if (block == null) {
+                return;
+            }
             minedBlocks++;
 
             /*
@@ -4448,17 +4758,105 @@ public class Mineur implements CommandExecutor, Listener {
              */
             advanceCompletedLayers(block.getWorld(), block.getY());
 
-            /*
-             * Si la case de l'échelle vient seulement d'être excavée, la poser
-             * maintenant plutôt que d'écraser le minerai avant sa collecte.
-             */
-            if (block.getX() == ladderX && block.getZ() == ladderZ) {
-                placeLadderAt(block.getWorld(), block.getY());
+            if (integratedShaftEnabled
+                    && shaftLayout.isRelevantHorizontal(block.getX(), block.getZ())) {
+                maintainIntegratedLayer(block.getWorld(), block.getY());
+            } else if (!integratedShaftEnabled
+                    && optionalDecorationsEnabled
+                    && block.getX() == ladderX
+                    && block.getZ() == ladderZ) {
+                /*
+                 * Compatibilité v1 : la case de l'échelle n'est équipée qu'après
+                 * sa collecte, jamais en remplaçant un minerai.
+                 */
+                placeLegacyLadderAt(block.getWorld(), block.getY());
             }
 
-            if (supportSpacing > 0 && minedBlocks % supportSpacing == 0) {
+            /*
+             * Les anciens piliers de pierre aléatoires restent disponibles pour
+             * les structures v1. Le puits v2 possède déjà une charpente lisible
+             * et ne reçoit pas ce décor dispersé qui brouillerait son identité.
+             */
+            if (!integratedShaftEnabled
+                    && optionalDecorationsEnabled
+                    && supportSpacing > 0
+                    && minedBlocks % supportSpacing == 0) {
                 Block floor = block.getRelative(BlockFace.DOWN);
                 SupportBuilder.placeSupportColumn(block.getWorld(), floor, 3);
+            }
+        }
+
+        /**
+         * Indique à la boucle quels blocs appartiennent au puits et doivent être
+         * validés sans nouvelle casse lors d'une reprise de checkpoint.
+         */
+        boolean isManagedBlock(Block block) {
+            if (block == null) {
+                return false;
+            }
+            if (integratedShaftEnabled) {
+                return MineShaftColumnBuilder.isManagedBlock(
+                        shaftLayout,
+                        state.base.getBlockY(),
+                        block
+                );
+            }
+            return optionalDecorationsEnabled
+                    && block.getX() == ladderX
+                    && block.getZ() == ladderZ
+                    && block.getY() <= state.base.getBlockY()
+                    && block.getType() == Material.LADDER;
+        }
+
+        /**
+         * Répare tout le tronçon déjà excavé, notamment après une reconnexion
+         * du propriétaire ou une fin de parcours composée uniquement d'air.
+         */
+        void synchronizeToCursor() {
+            initialize();
+            if (!integratedShaftEnabled) {
+                return;
+            }
+
+            World world = state.base.getWorld();
+            if (world == null) {
+                return;
+            }
+
+            int targetY = state.cursor != null
+                    ? Math.min(currentLayerY, state.cursor.y)
+                    : currentLayerY;
+            targetY = Math.max(
+                    effectiveWorldMinHeight(world),
+                    Math.min(state.base.getBlockY(), targetY)
+            );
+
+            try {
+                MineShaftColumnBuilder.maintainRange(
+                        world,
+                        shaftLayout,
+                        state.base.getBlockY(),
+                        targetY,
+                        shaftLightInterval,
+                        this::placeIntegratedShaftBlock
+                );
+                currentLayerY = targetY;
+                completedLayers = Math.max(
+                        0,
+                        state.base.getBlockY() - currentLayerY
+                );
+            } catch (RuntimeException exception) {
+                /*
+                 * Le puits est une amélioration d'accès : une erreur de pose ne
+                 * doit pas faire perdre un bloc déjà miné ni interrompre le
+                 * dépôt des ressources.
+                 */
+                plugin.getLogger().log(
+                        Level.WARNING,
+                        "[Mineur] Synchronisation du puits ignorée pour la session "
+                                + state.id + ".",
+                        exception
+                );
             }
         }
 
@@ -4466,51 +4864,102 @@ public class Mineur implements CommandExecutor, Listener {
             while (currentLayerY > minedY) {
                 currentLayerY--;
                 completedLayers++;
-                buildAccessStair(world, currentLayerY);
-                extendAccessLadder(world, currentLayerY);
-                if (shouldPlaceDepthMarker(currentLayerY)) {
-                    placeDepthMarker(world, currentLayerY);
+
+                if (integratedShaftEnabled) {
+                    maintainIntegratedLayer(world, currentLayerY);
+                    continue;
+                }
+                if (!optionalDecorationsEnabled) {
+                    continue;
+                }
+
+                buildLegacyAccessStair(world, currentLayerY);
+                extendLegacyAccessLadder(world, currentLayerY);
+                if (shouldPlaceLegacyDepthMarker(currentLayerY)) {
+                    placeLegacyDepthMarker(world, currentLayerY);
                 }
                 if (completedLayers % torchLayerInterval == 0) {
-                    placeWallTorch(world, currentLayerY);
+                    placeLegacyWallTorch(world, currentLayerY);
                 }
             }
-        }
-
-        private void buildAccessStair(World world, int layerY) {
-            if (world == null
-                    || layerY < effectiveWorldMinHeight(world)
-                    || layerY >= effectiveWorldMaxHeight(world)) {
-                return;
-            }
-            Location base = state.base;
-            Block stairBlock = world.getBlockAt(base.getBlockX() - 1, layerY, base.getBlockZ());
-            StairBuilder.ensureStair(world, stairBlock, BlockFace.SOUTH, 3);
         }
 
         private void prepareInitialAccess(World world) {
             if (world == null) {
                 return;
             }
-            extendAccessLadder(world, currentLayerY);
+            if (integratedShaftEnabled) {
+                MineShaftColumnBuilder.maintainRange(
+                        world,
+                        shaftLayout,
+                        state.base.getBlockY(),
+                        currentLayerY,
+                        shaftLightInterval,
+                        this::placeIntegratedShaftBlock
+                );
+            } else if (optionalDecorationsEnabled) {
+                extendLegacyAccessLadder(world, currentLayerY);
+            }
         }
 
-        private void extendAccessLadder(World world, int targetY) {
+        private void maintainIntegratedLayer(World world, int y) {
+            MineShaftColumnBuilder.maintainLayer(
+                    world,
+                    shaftLayout,
+                    state.base.getBlockY(),
+                    y,
+                    shaftLightInterval,
+                    this::placeIntegratedShaftBlock
+            );
+        }
+
+        private boolean placeIntegratedShaftBlock(Block target,
+                                                  Material material,
+                                                  Consumer<BlockData> dataConfigurer) {
+            return Mineur.this.placeShaftBlock(
+                    state,
+                    target,
+                    material,
+                    dataConfigurer
+            );
+        }
+
+        private void buildLegacyAccessStair(World world, int layerY) {
+            if (world == null
+                    || layerY < effectiveWorldMinHeight(world)
+                    || layerY >= effectiveWorldMaxHeight(world)) {
+                return;
+            }
+            Location base = state.base;
+            Block stairBlock = world.getBlockAt(
+                    base.getBlockX() - 1,
+                    layerY,
+                    base.getBlockZ()
+            );
+            StairBuilder.ensureStair(world, stairBlock, BlockFace.SOUTH, 3);
+        }
+
+        private void extendLegacyAccessLadder(World world, int targetY) {
             if (world == null) {
                 return;
             }
             int minY = Math.max(targetY, effectiveWorldMinHeight(world));
             int startY = state.base.getBlockY();
             for (int y = startY; y >= minY; y--) {
-                placeLadderAt(world, y);
+                placeLegacyLadderAt(world, y);
             }
         }
 
-        private void placeLadderAt(World world, int y) {
+        private void placeLegacyLadderAt(World world, int y) {
             if (world == null
                     || y < effectiveWorldMinHeight(world)
                     || y >= effectiveWorldMaxHeight(world)
-                    || !ensureSupportBlock(world, ladderSupportX, y, ladderZ)) {
+                    || !ensureLegacySupportBlock(
+                    world,
+                    ladderSupportX,
+                    y,
+                    ladderZ
+            )) {
                 return;
             }
 
@@ -4528,17 +4977,17 @@ public class Mineur implements CommandExecutor, Listener {
             }
         }
 
-        private void placeWallTorch(World world, int y) {
+        private void placeLegacyWallTorch(World world, int y) {
             if (world == null) {
                 return;
             }
-            if (ensureSupportBlock(world, torchX, y, torchSupportZ)) {
+            if (ensureLegacySupportBlock(world, torchX, y, torchSupportZ)) {
                 Block support = world.getBlockAt(torchX, y, torchSupportZ);
                 TorchPlacer.placeWallTorch(world, support, torchFacing);
             }
         }
 
-        private boolean shouldPlaceDepthMarker(int y) {
+        private boolean shouldPlaceLegacyDepthMarker(int y) {
             if (depthMarkerInterval <= 0) {
                 return false;
             }
@@ -4546,14 +4995,16 @@ public class Mineur implements CommandExecutor, Listener {
             return delta > 0 && delta % depthMarkerInterval == 0;
         }
 
-        private void placeDepthMarker(World world, int y) {
-            if (world == null) {
-                return;
+        private void placeLegacyDepthMarker(World world, int y) {
+            if (world != null) {
+                ensureLegacySupportBlock(world, torchX, y, torchSupportZ);
             }
-            ensureSupportBlock(world, torchX, y, torchSupportZ);
         }
 
-        private boolean ensureSupportBlock(World world, int x, int y, int z) {
+        private boolean ensureLegacySupportBlock(World world,
+                                                 int x,
+                                                 int y,
+                                                 int z) {
             if (world == null
                     || y < effectiveWorldMinHeight(world)
                     || y >= effectiveWorldMaxHeight(world)) {
@@ -4575,4 +5026,5 @@ public class Mineur implements CommandExecutor, Listener {
             return true;
         }
     }
+
 }

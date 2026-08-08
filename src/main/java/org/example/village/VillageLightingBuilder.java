@@ -346,6 +346,22 @@ public final class VillageLightingBuilder {
             return false;
         }
 
+        /*
+         * Le donjon englobe la courtine nord et avance légèrement dans la cour.
+         * Sa réserve inclut le porche : aucune borne ne peut apparaître dans le
+         * vestibule, un escalier ou au pied d'une tour.
+         */
+        if (KeepBuilder.reservesGround(
+                centerX,
+                centerZ,
+                rz,
+                x,
+                z,
+                2
+        )) {
+            return false;
+        }
+
         if (layout == null) {
             return true;
         }

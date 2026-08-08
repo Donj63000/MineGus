@@ -198,6 +198,109 @@ class MineCabinBuilderTest {
     }
 
     @Test
+    void closesEveryRoofStairWithAContinuousTimberShell() {
+        Plan plan = MineCabinBuilder.createPlan(40, 72, -20, 12, 9, DEFAULTS);
+        int roofBaseY = plan.deckY() + DEFAULTS.wallHeight() + 1;
+        int checkedRoofStairs = 0;
+
+        for (BlockPos position : plan.placedPositions()) {
+            if (position.y() < roofBaseY
+                    || plan.materialAt(position) != Material.DARK_OAK_STAIRS) {
+                continue;
+            }
+
+            checkedRoofStairs++;
+            assertEquals(
+                    Material.SPRUCE_PLANKS,
+                    plan.materialAt(position.offset(0, -1, 0)),
+                    "Chaque escalier du toit doit masquer sa diagonale depuis l'intérieur"
+            );
+        }
+
+        assertTrue(checkedRoofStairs >= 100, "La toiture principale doit rester complète");
+    }
+
+    @Test
+    void providesWideLitStairsAlignedWithBothCabinDoors() {
+        Plan plan = MineCabinBuilder.createPlan(20, 64, 30, 18, 14, DEFAULTS);
+        int groundY = plan.baseY() + 1;
+        int rise = plan.deckY() - groundY;
+        int centerX = (plan.cabinMinX() + plan.cabinMaxX()) / 2;
+
+        assertMainStaircase(
+                plan,
+                centerX,
+                groundY,
+                rise,
+                plan.frameMinZ() - rise,
+                1,
+                BlockFace.SOUTH
+        );
+        assertMainStaircase(
+                plan,
+                centerX,
+                groundY,
+                rise,
+                plan.frameMaxZ() + rise,
+                -1,
+                BlockFace.NORTH
+        );
+
+        assertTrue(
+                countMaterial(plan, Material.LANTERN) >= 12,
+                "Les deux accès principaux doivent rester clairement éclairés"
+        );
+    }
+
+    @Test
+    void alignsTheChestRoomHatchWithThePersistentShaftColumn() {
+        Plan plan = MineCabinBuilder.createPlan(40, 72, -20, 12, 9, DEFAULTS);
+        MineShaftColumnBuilder.Layout shaft = plan.shaftLayout();
+
+        assertEquals(40, shaft.mineMinX());
+        assertEquals(51, shaft.mineMaxX());
+        assertEquals(-20, shaft.mineMinZ());
+        assertEquals(-12, shaft.mineMaxZ());
+
+        BlockPos hatch = new BlockPos(shaft.ladderX(), plan.deckY(), shaft.ladderZ());
+        assertEquals(Material.SPRUCE_TRAPDOOR, plan.materialAt(hatch));
+        assertEquals(shaft.supportDirection(), plan.facingAt(hatch));
+
+        for (int y = plan.baseY() + 1; y < plan.deckY(); y++) {
+            BlockPos ladder = new BlockPos(shaft.ladderX(), y, shaft.ladderZ());
+            BlockPos support = new BlockPos(shaft.supportX(), y, shaft.supportZ());
+
+            assertEquals(Material.LADDER, plan.materialAt(ladder));
+            assertEquals(shaft.ladderFacing(), plan.facingAt(ladder));
+            assertEquals(Material.STRIPPED_DARK_OAK_LOG, plan.materialAt(support));
+        }
+
+        assertEquals(
+                Material.STRIPPED_DARK_OAK_LOG,
+                plan.materialAt(new BlockPos(
+                        shaft.supportX(),
+                        plan.deckY(),
+                        shaft.supportZ()
+                ))
+        );
+
+        /*
+         * Le garde-corps occupe un carré 3x3 au centre. Aucun coffre ne doit
+         * donc empiéter sur l'accès, même si la capacité configurée est pleine.
+         */
+        for (BlockPos chest : plan.chestPositions()) {
+            long distance = Math.max(
+                    Math.abs((long) chest.x() - shaft.ladderX()),
+                    Math.abs((long) chest.z() - shaft.ladderZ())
+            );
+            assertTrue(distance > 1L, "Un coffre bloque le garde-corps du puits");
+        }
+
+        assertEquals(1, countMaterial(plan, Material.SPRUCE_TRAPDOOR));
+        assertTrue(countMaterial(plan, Material.SPRUCE_FENCE_GATE) >= 5);
+    }
+
+    @Test
     void rejectsCoordinatesThatWouldOverflowInclusiveLoops() {
         assertThrows(
                 IllegalArgumentException.class,
@@ -272,6 +375,36 @@ class MineCabinBuilderTest {
                         plan.materialAt(support)
                 );
             }
+        }
+    }
+
+    private void assertMainStaircase(Plan plan,
+                                     int centerX,
+                                     int groundY,
+                                     int rise,
+                                     int bottomZ,
+                                     int directionZ,
+                                     BlockFace facing) {
+        for (int step = 0; step < rise; step++) {
+            int y = groundY + step;
+            int z = bottomZ + directionZ * step;
+
+            for (int dx = -2; dx <= 2; dx++) {
+                BlockPos position = new BlockPos(centerX + dx, y, z);
+                Material expected = Math.abs(dx) <= 1
+                        ? Material.SPRUCE_STAIRS
+                        : Material.DARK_OAK_STAIRS;
+                assertEquals(expected, plan.materialAt(position));
+                assertEquals(facing, plan.facingAt(position));
+            }
+        }
+
+        int landingZ = bottomZ - directionZ;
+        for (int dx = -1; dx <= 1; dx++) {
+            assertEquals(
+                    Material.SPRUCE_PLANKS,
+                    plan.materialAt(new BlockPos(centerX + dx, groundY, landingZ))
+            );
         }
     }
 

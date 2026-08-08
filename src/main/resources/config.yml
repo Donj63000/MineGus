@@ -8,8 +8,9 @@ mineur:
   # true reproduit les mises à jour naturelles (sable/gravier, fluides, redstone).
   apply-physics: true
 
-  # Décorations internes de la carrière (torches, supports et escalier).
-  # La cabane de surface possède son propre interrupteur ci-dessous.
+  # Décors secondaires des anciennes carrières (supports de pierre,
+  # torches murales et escalier périphérique). Le puits central sécurisé des
+  # cabanes v2 reste actif indépendamment de cette option.
   allow-block-placement: false
   default:
     pattern: QUARRY
@@ -52,6 +53,10 @@ mineur:
     cabin-min-size: 15
     cabin-max-size: 17
     wall-height: 5
+
+    # Espacement vertical entre les éclairages du puits central. La valeur est
+    # automatiquement bornée entre 3 et 16 blocs.
+    shaft-light-interval: 5
 
     # 16 coffres doubles = 864 emplacements d'inventaire.
     # La valeur effective respecte aussi storage.max-containers.

@@ -20,6 +20,7 @@ import org.bukkit.block.data.type.Door;
 import org.bukkit.block.data.type.Gate;
 import org.bukkit.block.data.type.Lantern;
 import org.bukkit.block.data.type.Stairs;
+import org.bukkit.block.data.type.TrapDoor;
 import org.bukkit.entity.Player;
 import org.bukkit.event.block.BlockBreakEvent;
 import org.bukkit.event.block.BlockPlaceEvent;
@@ -53,15 +54,19 @@ import java.util.logging.Logger;
  */
 public final class MineCabinBuilder {
 
-    public static final int STRUCTURE_VERSION = 1;
+    public static final int FIRST_STRUCTURE_VERSION = 1;
+    public static final int SHAFT_ACCESS_STRUCTURE_VERSION = 2;
+    public static final int STRUCTURE_VERSION = SHAFT_ACCESS_STRUCTURE_VERSION;
 
     private static final int PRIORITY_FLOOR = 10;
     private static final int PRIORITY_ACCENT = 20;
     private static final int PRIORITY_WALL = 30;
     private static final int PRIORITY_FRAME = 40;
     private static final int PRIORITY_DECORATION = 50;
+    private static final int PRIORITY_ROOF_SHELL = 55;
     private static final int PRIORITY_ROOF = 60;
     private static final int PRIORITY_ATTACHMENT = 70;
+    private static final int PRIORITY_SHAFT = 75;
     private static final int PRIORITY_CONTAINER = 80;
 
     /*
@@ -221,6 +226,7 @@ public final class MineCabinBuilder {
         private final int frameMinZ;
         private final int frameMaxZ;
         private final Settings settings;
+        private final MineShaftColumnBuilder.Layout shaftLayout;
         private final Bounds bounds;
         private final Map<BlockPos, Placement> placements;
         private final Set<BlockPos> clearances;
@@ -238,6 +244,7 @@ public final class MineCabinBuilder {
                      int frameMinZ,
                      int frameMaxZ,
                      Settings settings,
+                     MineShaftColumnBuilder.Layout shaftLayout,
                      Bounds bounds,
                      Map<BlockPos, Placement> placements,
                      Set<BlockPos> clearances,
@@ -254,6 +261,7 @@ public final class MineCabinBuilder {
             this.frameMinZ = frameMinZ;
             this.frameMaxZ = frameMaxZ;
             this.settings = settings;
+            this.shaftLayout = Objects.requireNonNull(shaftLayout, "shaftLayout");
             this.bounds = bounds;
             this.placements = Map.copyOf(placements);
             this.clearances = Set.copyOf(clearances);
@@ -303,6 +311,10 @@ public final class MineCabinBuilder {
 
         public Settings settings() {
             return settings;
+        }
+
+        public MineShaftColumnBuilder.Layout shaftLayout() {
+            return shaftLayout;
         }
 
         public Bounds bounds() {
@@ -449,6 +461,8 @@ public final class MineCabinBuilder {
         int mineMaxX = checkedCoordinate((long) mineMinX + width - 1L, "X maximal de la mine");
         int mineMaxZ = checkedCoordinate((long) mineMinZ + length - 1L, "Z maximal de la mine");
         int deckY = checkedCoordinate((long) baseY + settings.platformHeight(), "hauteur de plateforme");
+        MineShaftColumnBuilder.Layout shaftLayout =
+                MineShaftColumnBuilder.createLayout(mineMinX, mineMinZ, width, length);
 
         int scaledCabinWidth = scaledCabinSize(
                 width,
@@ -499,6 +513,15 @@ public final class MineCabinBuilder {
         int frameMaxZ = checkedCoordinate(Math.max((long) mineMaxZ + 2L, (long) cabinMaxZ + 2L), "Z maximal du cadre");
 
         /*
+         * Les deux escaliers principaux dépassent le cadre vers le nord et le
+         * sud. Valider leur palier extérieur ici évite tout débordement tardif
+         * au milieu de l'assemblage.
+         */
+        int staircaseReach = settings.platformHeight() + 1;
+        checkedCoordinate((long) frameMinZ - staircaseReach, "palier nord");
+        checkedCoordinate((long) frameMaxZ + staircaseReach, "palier sud");
+
+        /*
          * Plusieurs boucles utilisent une borne inclusive. Refuser la valeur
          * Integer.MAX_VALUE empêche le dernier incrément de reboucler vers
          * Integer.MIN_VALUE sur une sauvegarde ou une sélection forgée.
@@ -524,7 +547,8 @@ public final class MineCabinBuilder {
                 frameMaxX,
                 frameMinZ,
                 frameMaxZ,
-                settings
+                settings,
+                shaftLayout
         );
         return assembler.assemble();
     }
@@ -1109,6 +1133,7 @@ public final class MineCabinBuilder {
         private final int centerX;
         private final int centerZ;
         private final Settings settings;
+        private final MineShaftColumnBuilder.Layout shaftLayout;
 
         private final LinkedHashMap<BlockPos, Placement> placements = new LinkedHashMap<>();
         private final LinkedHashSet<BlockPos> clearances = new LinkedHashSet<>();
@@ -1129,7 +1154,8 @@ public final class MineCabinBuilder {
                               int frameMaxX,
                               int frameMinZ,
                               int frameMaxZ,
-                              Settings settings) {
+                              Settings settings,
+                              MineShaftColumnBuilder.Layout shaftLayout) {
             this.mineMinX = mineMinX;
             this.mineMaxX = mineMaxX;
             this.mineMinZ = mineMinZ;
@@ -1148,6 +1174,7 @@ public final class MineCabinBuilder {
             this.centerX = (int) Math.floorDiv((long) cabinMinX + cabinMaxX, 2L);
             this.centerZ = (int) Math.floorDiv((long) cabinMinZ + cabinMaxZ, 2L);
             this.settings = settings;
+            this.shaftLayout = Objects.requireNonNull(shaftLayout, "shaftLayout");
         }
 
         private Plan assemble() {
@@ -1191,6 +1218,7 @@ public final class MineCabinBuilder {
                     frameMinZ,
                     frameMaxZ,
                     settings,
+                    shaftLayout,
                     bounds,
                     placements,
                     clearances,
@@ -1423,6 +1451,134 @@ public final class MineCabinBuilder {
             addOuterRailing(deckY, true);
             addBalconyRailing();
             addBridgeRailings();
+            addMainAccessStaircases();
+        }
+
+        /**
+         * Ajoute deux escaliers de cinq blocs de large alignés sur les portes.
+         *
+         * <p>Les trois marches centrales offrent un passage confortable ; les
+         * marches sombres latérales servent de limons et portent une rambarde.
+         * Le joueur n'est ainsi plus obligé de rejoindre un angle du grand
+         * chevalement pour grimper par une échelle étroite.</p>
+         */
+        private void addMainAccessStaircases() {
+            addMainAccessStaircase(BlockFace.NORTH);
+            addMainAccessStaircase(BlockFace.SOUTH);
+        }
+
+        private void addMainAccessStaircase(BlockFace side) {
+            if (side != BlockFace.NORTH && side != BlockFace.SOUTH) {
+                throw new IllegalArgumentException("Côté d'escalier principal invalide.");
+            }
+
+            int rise = deckY - groundY;
+            int directionZ = side == BlockFace.NORTH ? 1 : -1;
+            int bottomZ = side == BlockFace.NORTH
+                    ? checkedCoordinate((long) frameMinZ - rise, "bas de l'escalier nord")
+                    : checkedCoordinate((long) frameMaxZ + rise, "bas de l'escalier sud");
+            BlockFace facing = side == BlockFace.NORTH
+                    ? BlockFace.SOUTH
+                    : BlockFace.NORTH;
+
+            for (int step = 0; step < rise; step++) {
+                int y = checkedCoordinate((long) groundY + step, "hauteur d'escalier");
+                int z = checkedCoordinate(
+                        (long) bottomZ + (long) directionZ * step,
+                        "progression d'escalier"
+                );
+
+                for (int dx = -2; dx <= 2; dx++) {
+                    int x = checkedCoordinate((long) centerX + dx, "largeur d'escalier");
+
+                    /*
+                     * Le noyau minéral évite les marches flottantes lorsque la
+                     * plateforme est haute de six blocs.
+                     */
+                    for (int supportY = groundY; supportY < y; supportY++) {
+                        putSimple(
+                                x,
+                                supportY,
+                                z,
+                                Material.STONE_BRICKS,
+                                PRIORITY_FLOOR
+                        );
+                    }
+
+                    Material stairMaterial = Math.abs(dx) <= 1
+                            ? Material.SPRUCE_STAIRS
+                            : Material.DARK_OAK_STAIRS;
+                    putStairs(
+                            x,
+                            y,
+                            z,
+                            stairMaterial,
+                            facing,
+                            Stairs.Half.BOTTOM,
+                            PRIORITY_ACCENT
+                    );
+
+                    if (Math.abs(dx) <= 1) {
+                        reserveColumn(x, y + 1, y + 2, z);
+                    } else {
+                        putSimple(
+                                x,
+                                y + 1,
+                                z,
+                                Material.DARK_OAK_FENCE,
+                                PRIORITY_DECORATION
+                        );
+                    }
+                }
+            }
+
+            int landingZ = checkedCoordinate(
+                    (long) bottomZ - directionZ,
+                    "palier extérieur d'escalier"
+            );
+            for (int dx = -2; dx <= 2; dx++) {
+                int x = checkedCoordinate((long) centerX + dx, "largeur du palier");
+                if (Math.abs(dx) == 2) {
+                    putOrientable(
+                            x,
+                            groundY,
+                            landingZ,
+                            Material.STRIPPED_DARK_OAK_LOG,
+                            Axis.Z,
+                            PRIORITY_ACCENT
+                    );
+                    putSimple(
+                            x,
+                            groundY + 1,
+                            landingZ,
+                            Material.DARK_OAK_FENCE,
+                            PRIORITY_DECORATION
+                    );
+                } else {
+                    putSimple(
+                            x,
+                            groundY,
+                            landingZ,
+                            Material.SPRUCE_PLANKS,
+                            PRIORITY_FLOOR
+                    );
+                    reserveColumn(x, groundY + 1, groundY + 2, landingZ);
+                }
+            }
+            addStandingLantern(centerX - 2, groundY + 2, landingZ);
+            addStandingLantern(centerX + 2, groundY + 2, landingZ);
+
+            int topZ = side == BlockFace.NORTH ? frameMinZ : frameMaxZ;
+            for (int x : new int[]{centerX - 2, centerX + 2}) {
+                putSimple(
+                        x,
+                        deckY + 1,
+                        topZ,
+                        Material.DARK_OAK_FENCE,
+                        PRIORITY_DECORATION
+                );
+                addStandingLantern(x, deckY + 2, topZ);
+            }
         }
 
         private void addCabinFloor() {
@@ -1549,6 +1705,7 @@ public final class MineCabinBuilder {
         private void addCabin() {
             addCabinWalls();
             addCabinDoors();
+            addShaftRoomAccess();
             addCabinCarpet();
             addInteriorLighting();
             addExteriorDoorLights();
@@ -1577,9 +1734,9 @@ public final class MineCabinBuilder {
                     && (z == cabinMinZ || z == cabinMaxZ);
             int along = horizontalWall ? x - cabinMinX : z - cabinMinZ;
             boolean verticalBeam = corner || Math.floorMod(along, 4) == 0;
-            boolean topBeam = y == wallTop;
+            boolean horizontalBeam = y == deckY + 1 || y == wallTop;
             boolean window = !verticalBeam
-                    && !topBeam
+                    && !horizontalBeam
                     && (y == deckY + 2 || y == deckY + 3)
                     && !isDoorColumn(x, z);
 
@@ -1592,7 +1749,13 @@ public final class MineCabinBuilder {
                         Axis.Y,
                         PRIORITY_FRAME
                 );
-            } else if (topBeam) {
+            } else if (horizontalBeam) {
+                /*
+                 * Une lisse basse et une lisse haute continues donnent un vrai
+                 * colombage à la façade et évitent l'effet de simple boîte en
+                 * planches. Les portes, posées avec une priorité supérieure,
+                 * remplacent ensuite proprement leur section de lisse.
+                 */
                 putOrientable(
                         x,
                         y,
@@ -1638,13 +1801,213 @@ public final class MineCabinBuilder {
             );
         }
 
+        /**
+         * Relie la salle des coffres au premier niveau de la carrière.
+         *
+         * <p>La trappe est entourée d'un petit chevalement intérieur : le
+         * garde-corps empêche une chute involontaire, la porte permet d'entrer
+         * avec une largeur complète et le luminaire rend l'accès immédiatement
+         * identifiable. Le poteau et l'échelle rejoignent exactement la
+         * géométrie utilisée ensuite par {@link MineShaftColumnBuilder}.</p>
+         */
+        private void addShaftRoomAccess() {
+            int ladderX = shaftLayout.ladderX();
+            int ladderZ = shaftLayout.ladderZ();
+            int supportX = shaftLayout.supportX();
+            int supportZ = shaftLayout.supportZ();
+
+            /*
+             * La couche baseY appartient encore à la mine et peut contenir un
+             * minerai. Elle sera équipée seulement après sa collecte par la
+             * colonne dynamique. La construction initiale s'arrête donc à
+             * groundY et ne détruit aucune ressource.
+             */
+            for (int y = groundY; y < deckY; y++) {
+                putOrientable(
+                        supportX,
+                        y,
+                        supportZ,
+                        Material.STRIPPED_DARK_OAK_LOG,
+                        Axis.Y,
+                        PRIORITY_SHAFT
+                );
+                putDirectional(
+                        ladderX,
+                        y,
+                        ladderZ,
+                        Material.LADDER,
+                        shaftLayout.ladderFacing(),
+                        PRIORITY_SHAFT
+                );
+            }
+
+            /*
+             * Le poteau traverse visuellement le plancher. La trappe s'ouvre
+             * vers lui, donc à l'opposé de la zone où le joueur termine sa
+             * montée : elle ne vient pas barrer l'échelle une fois ouverte.
+             */
+            putOrientable(
+                    supportX,
+                    deckY,
+                    supportZ,
+                    Material.STRIPPED_DARK_OAK_LOG,
+                    Axis.Y,
+                    PRIORITY_SHAFT
+            );
+            putTrapDoor(
+                    ladderX,
+                    deckY,
+                    ladderZ,
+                    shaftLayout.supportDirection(),
+                    Bisected.Half.TOP
+            );
+
+            int roomY = deckY + 1;
+            int postTopY = deckY + 3;
+            int entranceX = checkedCoordinate(
+                    (long) ladderX + shaftLayout.ladderFacing().getModX(),
+                    "entrée X du puits intérieur"
+            );
+            int entranceZ = checkedCoordinate(
+                    (long) ladderZ + shaftLayout.ladderFacing().getModZ(),
+                    "entrée Z du puits intérieur"
+            );
+
+            for (int dx = -1; dx <= 1; dx++) {
+                for (int dz = -1; dz <= 1; dz++) {
+                    if (Math.max(Math.abs(dx), Math.abs(dz)) != 1) {
+                        continue;
+                    }
+
+                    int x = checkedCoordinate((long) ladderX + dx, "cadre X du puits");
+                    int z = checkedCoordinate((long) ladderZ + dz, "cadre Z du puits");
+                    if (x == entranceX && z == entranceZ) {
+                        addFenceGate(
+                                x,
+                                roomY,
+                                z,
+                                shaftLayout.ladderFacing()
+                        );
+                        reserveColumn(x, roomY + 1, roomY + 2, z);
+                        continue;
+                    }
+
+                    boolean corner = Math.abs(dx) == 1 && Math.abs(dz) == 1;
+                    boolean mainSupport = x == supportX && z == supportZ;
+                    if (corner || mainSupport) {
+                        for (int y = roomY; y <= postTopY; y++) {
+                            putOrientable(
+                                    x,
+                                    y,
+                                    z,
+                                    Material.STRIPPED_DARK_OAK_LOG,
+                                    Axis.Y,
+                                    PRIORITY_SHAFT
+                            );
+                        }
+                    } else {
+                        putSimple(
+                                x,
+                                roomY,
+                                z,
+                                Material.DARK_OAK_FENCE,
+                                PRIORITY_SHAFT
+                        );
+                    }
+                }
+            }
+
+            /*
+             * Une traverse relie les deux côtés du garde-corps et porte une
+             * lanterne suspendue trois blocs au-dessus du plancher. Le passage
+             * conserve ainsi deux blocs de hauteur libre pour la montée.
+             */
+            int beamY = deckY + 4;
+            for (int dx = -1; dx <= 1; dx++) {
+                int x = checkedCoordinate((long) ladderX + dx, "ceinture X du puits");
+                putOrientable(
+                        x,
+                        beamY,
+                        ladderZ - 1,
+                        Material.STRIPPED_SPRUCE_LOG,
+                        Axis.X,
+                        PRIORITY_SHAFT
+                );
+                putOrientable(
+                        x,
+                        beamY,
+                        ladderZ + 1,
+                        Material.STRIPPED_SPRUCE_LOG,
+                        Axis.X,
+                        PRIORITY_SHAFT
+                );
+            }
+            for (int dz = -1; dz <= 1; dz++) {
+                int z = checkedCoordinate((long) ladderZ + dz, "ceinture Z du puits");
+                putOrientable(
+                        ladderX - 1,
+                        beamY,
+                        z,
+                        Material.STRIPPED_SPRUCE_LOG,
+                        Axis.Z,
+                        PRIORITY_SHAFT
+                );
+                putOrientable(
+                        ladderX + 1,
+                        beamY,
+                        z,
+                        Material.STRIPPED_SPRUCE_LOG,
+                        Axis.Z,
+                        PRIORITY_SHAFT
+                );
+            }
+
+            /*
+             * Une courte potence part du poteau principal vers le centre afin
+             * que la lanterne soit réellement suspendue à une pièce de bois.
+             */
+            putOrientable(
+                    ladderX,
+                    beamY,
+                    ladderZ,
+                    Material.STRIPPED_SPRUCE_LOG,
+                    shaftLayout.supportDirection().getModX() != 0 ? Axis.X : Axis.Z,
+                    PRIORITY_SHAFT
+            );
+            addHangingLantern(ladderX, deckY + 3, ladderZ);
+            reserveColumn(ladderX, deckY + 1, deckY + 2, ladderZ);
+        }
+
+        private boolean isShaftRoomFootprint(int x, int z) {
+            return Math.max(
+                    Math.abs((long) x - shaftLayout.ladderX()),
+                    Math.abs((long) z - shaftLayout.ladderZ())
+            ) <= 1L;
+        }
+
         private void addCabinCarpet() {
             for (int z = cabinMinZ + 1; z <= cabinMaxZ - 1; z++) {
-                putSimple(centerX, deckY + 1, z, Material.RED_CARPET, PRIORITY_DECORATION);
+                if (!isShaftRoomFootprint(centerX, z)) {
+                    putSimple(
+                            centerX,
+                            deckY + 1,
+                            z,
+                            Material.RED_CARPET,
+                            PRIORITY_DECORATION
+                    );
+                }
             }
             for (int x = centerX - 1; x <= centerX + 1; x++) {
                 for (int z = centerZ - 1; z <= centerZ + 1; z++) {
-                    putSimple(x, deckY + 1, z, Material.BROWN_CARPET, PRIORITY_DECORATION);
+                    if (!isShaftRoomFootprint(x, z)) {
+                        putSimple(
+                                x,
+                                deckY + 1,
+                                z,
+                                Material.BROWN_CARPET,
+                                PRIORITY_DECORATION
+                        );
+                    }
                 }
             }
         }
@@ -1723,7 +2086,27 @@ public final class MineCabinBuilder {
                 int y = roofBaseY + level;
                 int westX = eaveMinX + level;
                 int eastX = eaveMaxX - level;
+                int shellY = y - 1;
                 for (int z = eaveMinZ; z <= eaveMaxZ; z++) {
+                    /*
+                     * Une sous-toiture pleine ferme le volume visible entre
+                     * deux rangées d'escaliers. Le contraste épicéa/chêne noir
+                     * conserve une rive sombre tout en donnant un plafond chaud.
+                     */
+                    putSimple(
+                            westX,
+                            shellY,
+                            z,
+                            Material.SPRUCE_PLANKS,
+                            PRIORITY_ROOF_SHELL
+                    );
+                    putSimple(
+                            eastX,
+                            shellY,
+                            z,
+                            Material.SPRUCE_PLANKS,
+                            PRIORITY_ROOF_SHELL
+                    );
                     putStairs(
                             westX,
                             y,
@@ -1750,6 +2133,13 @@ public final class MineCabinBuilder {
             int ridgeX = eaveMinX + levels;
             int ridgeY = roofBaseY + levels;
             for (int z = eaveMinZ; z <= eaveMaxZ; z++) {
+                putSimple(
+                        ridgeX,
+                        ridgeY - 1,
+                        z,
+                        Material.SPRUCE_PLANKS,
+                        PRIORITY_ROOF_SHELL
+                );
                 putOrientable(
                         ridgeX,
                         ridgeY,
@@ -1808,7 +2198,22 @@ public final class MineCabinBuilder {
                 int y = roofBaseY + level;
                 int northZ = eaveMinZ + level;
                 int southZ = eaveMaxZ - level;
+                int shellY = y - 1;
                 for (int x = eaveMinX; x <= eaveMaxX; x++) {
+                    putSimple(
+                            x,
+                            shellY,
+                            northZ,
+                            Material.SPRUCE_PLANKS,
+                            PRIORITY_ROOF_SHELL
+                    );
+                    putSimple(
+                            x,
+                            shellY,
+                            southZ,
+                            Material.SPRUCE_PLANKS,
+                            PRIORITY_ROOF_SHELL
+                    );
                     putStairs(
                             x,
                             y,
@@ -1835,6 +2240,13 @@ public final class MineCabinBuilder {
             int ridgeZ = eaveMinZ + levels;
             int ridgeY = roofBaseY + levels;
             for (int x = eaveMinX; x <= eaveMaxX; x++) {
+                putSimple(
+                        x,
+                        ridgeY - 1,
+                        ridgeZ,
+                        Material.SPRUCE_PLANKS,
+                        PRIORITY_ROOF_SHELL
+                );
                 putOrientable(
                         x,
                         ridgeY,
@@ -2173,6 +2585,28 @@ public final class MineCabinBuilder {
                             door.setHinge(hinge);
                             door.setOpen(false);
                             door.setPowered(false);
+                        }
+                    }
+            ));
+        }
+
+        private void putTrapDoor(int x,
+                                 int y,
+                                 int z,
+                                 BlockFace facing,
+                                 Bisected.Half half) {
+            BlockPos position = new BlockPos(x, y, z);
+            put(new Placement(
+                    position,
+                    Material.SPRUCE_TRAPDOOR,
+                    PRIORITY_SHAFT,
+                    facing,
+                    data -> {
+                        if (data instanceof TrapDoor trapDoor) {
+                            trapDoor.setFacing(facing);
+                            trapDoor.setHalf(half);
+                            trapDoor.setOpen(false);
+                            trapDoor.setPowered(false);
                         }
                     }
             ));

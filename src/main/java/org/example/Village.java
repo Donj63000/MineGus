@@ -21,6 +21,7 @@ import org.bukkit.scheduler.BukkitRunnable;
 import org.bukkit.scheduler.BukkitTask;
 import org.example.village.Disposition;
 import org.example.village.GateGuardManager;
+import org.example.village.KeepBuilder;
 import org.example.village.VillageEntityManager;
 import org.example.village.VillageGenerationSession;
 import org.example.village.VillageLayoutPlan;
@@ -95,8 +96,14 @@ public final class Village implements CommandExecutor {
         int spacing = cfg.getInt("village.spacing", 20);
         int configuredPlazaSize = cfg.getInt("village.plazaSize", 13);
 
-        this.wallGap = Math.max(5,
-                cfg.getInt("village.wallGap", DEFAULT_WALL_GAP));
+        /*
+         * Le porche du donjon occupe les six premiers blocs devant la
+         * courtine nord. Une marge plus faible pourrait empiéter sur un lot.
+         */
+        this.wallGap = Math.max(
+                KeepBuilder.minimumWallGap(),
+                cfg.getInt("village.wallGap", DEFAULT_WALL_GAP)
+        );
         this.layoutSettings = new VillageLayoutSettings(
                 cfg.getString("village.layout-style", "semi_organic"),
                 rows,
@@ -196,10 +203,16 @@ public final class Village implements CommandExecutor {
                 centerZ,
                 requestedCenter.getBlockY() - 1
         );
-        if (baseY < world.getMinHeight() + 3
-                || baseY > world.getMaxHeight() - 24) {
+        if (!KeepBuilder.fitsVertically(world, baseY)) {
             plugin.getLogger().warning(
-                    "Altitude incompatible avec un village : y=" + baseY);
+                    "Altitude incompatible avec la forteresse : y="
+                            + baseY
+                            + " (fondations jusqu'à "
+                            + (baseY - KeepBuilder.foundationDepth())
+                            + ", sommet jusqu'à "
+                            + (baseY + KeepBuilder.maximumRelativeHeight())
+                            + ")."
+            );
             return false;
         }
 
@@ -253,6 +266,15 @@ public final class Village implements CommandExecutor {
                 baseY
         );
         session.getAnchors().put("gate", gateAnchor.clone());
+
+        Location keepAnchor = KeepBuilder.keepAnchor(
+                villageCenter,
+                rz,
+                baseY
+        );
+        if (keepAnchor != null) {
+            session.getAnchors().put("keep", keepAnchor.clone());
+        }
         currentSession = session;
         logLayoutSummary(layout);
 
@@ -348,6 +370,21 @@ public final class Village implements CommandExecutor {
         WallBuilder.build(
                 villageCenter,
                 rx,
+                rz,
+                baseY,
+                Material.STONE_BRICKS,
+                todo,
+                (x, y, z, material) ->
+                        setBlockTracked(session, world, x, y, z, material)
+        );
+
+        /*
+         * Le donjon est volontairement programmé après la courtine : ses tours
+         * méridionales absorbent le tronçon nord et recréent deux raccords
+         * praticables au niveau exact du chemin de ronde.
+         */
+        KeepBuilder.build(
+                villageCenter,
                 rz,
                 baseY,
                 Material.STONE_BRICKS,
@@ -910,11 +947,16 @@ public final class Village implements CommandExecutor {
         int clearTop = Math.min(
                 world.getMaxHeight() - 1,
                 /*
-                 * Les nouvelles tours et le châtelet culminent à environ
-                 * vingt-deux blocs au-dessus du sol. La marge de vingt-quatre
-                 * blocs évite qu'un tronc ou une canopée traverse leur toiture.
+                 * Le donjon domine désormais l'enceinte. La hauteur partagée
+                 * garantit que ni une canopée ni un ancien bâtiment ne traverse
+                 * ses créneaux ou son mât.
                  */
-                Math.max(highestY, targetY + 24)
+                Math.max(
+                        highestY,
+                        targetY
+                                + KeepBuilder.maximumRelativeHeight()
+                                + 1
+                )
         );
         for (int y = targetY + 1; y <= clearTop; y++) {
             Block block = world.getBlockAt(x, y, z);

@@ -1,0 +1,2589 @@
+diff --git a/src/main/java/org/example/Mineur.java b/src/main/java/org/example/Mineur.java
+index b7ea708..219a047 100644
+--- a/src/main/java/org/example/Mineur.java
++++ b/src/main/java/org/example/Mineur.java
+@@ -13,6 +13,8 @@ import org.bukkit.block.BlockState;
+ import org.bukkit.block.BlockFace;
+ import org.bukkit.block.Container;
+ import org.bukkit.block.DoubleChest;
++import org.bukkit.block.data.BlockData;
++import org.bukkit.block.data.Waterlogged;
+ import org.bukkit.command.Command;
+ import org.bukkit.command.CommandExecutor;
+ import org.bukkit.command.CommandSender;
+@@ -61,6 +63,7 @@ import org.example.mineur.QuarryIterator;
+ import org.example.mineur.TunnelIterator;
+ import org.example.mineur.VeinFirstIterator;
+ import org.example.mineur.builders.MineCabinBuilder;
++import org.example.mineur.builders.MineShaftColumnBuilder;
+ import org.example.mineur.builders.StairBuilder;
+ import org.example.mineur.builders.SupportBuilder;
+ import org.example.mineur.builders.TorchPlacer;
+@@ -77,6 +80,7 @@ import java.util.Map;
+ import java.util.Objects;
+ import java.util.Set;
+ import java.util.UUID;
++import java.util.function.Consumer;
+ import java.util.logging.Level;
+ 
+ public class Mineur implements CommandExecutor, Listener {
+@@ -165,7 +169,8 @@ public class Mineur implements CommandExecutor, Listener {
+         List<String> lines = new ArrayList<>();
+         lines.add(CMD_PREFIX + ChatColor.YELLOW + "Aide complete du mode mineur");
+         lines.add(ChatColor.GRAY + "Parametres actuels: stop-at-y=" + ChatColor.AQUA + stopAtY
+-                + ChatColor.GRAY + ", pose auto=" + ChatColor.AQUA + (placementAuto ? "activee" : "desactivee"));
++                + ChatColor.GRAY + ", decors secondaires=" + ChatColor.AQUA
++                + (placementAuto ? "actives" : "desactives"));
+         lines.add(ChatColor.DARK_GRAY + "--------------------------------------------------");
+ 
+         lines.add(ChatColor.GOLD + "/mineur" + ChatColor.GRAY
+@@ -432,7 +437,7 @@ public class Mineur implements CommandExecutor, Listener {
+         if (preparedCabinPlan != null) {
+             player.sendMessage(CMD_PREFIX + ChatColor.GOLD
+                     + "Chevalement construit : plateforme à Y " + preparedCabinPlan.deckY()
+-                    + ", cabane luxueuse et "
++                    + ", cabane de stockage, accès central au puits et "
+                     + preparedCabinPlan.chestPairs().size() + " coffres doubles.");
+         }
+         player.sendMessage(CMD_PREFIX + ChatColor.GRAY + "Mineurs actifs : " + ChatColor.GREEN
+@@ -766,11 +771,15 @@ public class Mineur implements CommandExecutor, Listener {
+             player.sendMessage(ChatColor.GRAY + " • Tunnel : direction " + ChatColor.AQUA + formatDirection(state.tunnelDirection)
+                     + ChatColor.GRAY + ", hauteur " + ChatColor.AQUA + Math.max(1, state.tunnelHeight));
+         }
+-        if (state.structureVersion >= MineCabinBuilder.STRUCTURE_VERSION) {
++        if (state.structureVersion >= MineCabinBuilder.FIRST_STRUCTURE_VERSION) {
+             player.sendMessage(ChatColor.GRAY + " • Stockage de la cabane : "
+                     + ChatColor.GOLD + (state.containers.size() / 2)
+                     + ChatColor.GRAY + " coffres doubles ("
+                     + state.containers.size() + " blocs de coffre).");
++            player.sendMessage(ChatColor.GRAY + " • Accès vertical : "
++                    + (hasIntegratedShaft(state)
++                    ? ChatColor.GREEN + "puits central éclairé"
++                    : ChatColor.YELLOW + "cabane héritée sans puits central"));
+         } else {
+             player.sendMessage(ChatColor.GRAY + " • Conteneurs : " + state.containers.size());
+         }
+@@ -1198,6 +1207,16 @@ public class Mineur implements CommandExecutor, Listener {
+             } else if (state.waitingStorage) {
+                 waitingStorage++;
+             }
++
++            /*
++             * Les poses protégées sont différées lorsque le propriétaire est
++             * hors ligne. Sa reconnexion fournit maintenant un acteur valide
++             * pour réparer d'un coup toute la colonne déjà excavée.
++             */
++            RuntimeSession runtime = runtimeOf(state.id);
++            if (runtime != null && runtime.decoration != null && !state.paused) {
++                runtime.decoration.synchronizeToCursor();
++            }
+         }
+         if (paused > 0) {
+             event.getPlayer().sendMessage(CMD_PREFIX + ChatColor.YELLOW
+@@ -1407,12 +1426,15 @@ public class Mineur implements CommandExecutor, Listener {
+ 
+             ensureContainers(state, runtime, freshlyCreated, preparedCabinPlan);
+             runtime.router = createInventoryRouter(runtime);
+-            runtime.decoration = allowBlockPlacement && state.pattern == MiningPattern.QUARRY
++            runtime.decoration = shouldUseQuarryDecoration(state)
+                     ? new DecorationDelegate(state)
+                     : null;
+ 
+             if (state.paused) {
+                 runtime.commitFreshConstruction();
++                if (runtime.decoration != null) {
++                    runtime.decoration.synchronizeToCursor();
++                }
+                 runtime.suspend();
+                 return;
+             }
+@@ -1424,12 +1446,15 @@ public class Mineur implements CommandExecutor, Listener {
+              * reçoit jamais ce cadre supplémentaire.
+              */
+             if (freshlyCreated
+-                    && state.structureVersion < MineCabinBuilder.STRUCTURE_VERSION
++                    && state.structureVersion < MineCabinBuilder.FIRST_STRUCTURE_VERSION
+                     && allowBlockPlacement
+                     && state.pattern == MiningPattern.QUARRY) {
+                 ensureFrame(state);
+             }
+             runtime.commitFreshConstruction();
++            if (runtime.decoration != null) {
++                runtime.decoration.synchronizeToCursor();
++            }
+         } catch (RuntimeException exception) {
+             runtime.rollbackFreshConstruction();
+             throw exception;
+@@ -1449,7 +1474,7 @@ public class Mineur implements CommandExecutor, Listener {
+         }
+         ensureGolems(runtime);
+ 
+-        if (allowMinerBlockPlacement() && runtime.state.pattern == MiningPattern.QUARRY) {
++        if (shouldUseQuarryDecoration(runtime.state)) {
+             if (runtime.decoration == null) {
+                 runtime.decoration = new DecorationDelegate(runtime.state);
+             }
+@@ -1457,6 +1482,20 @@ public class Mineur implements CommandExecutor, Listener {
+             runtime.decoration = null;
+         }
+ 
++        /*
++         * Une construction fraîche reste rollbackable jusqu'à la fin de
++         * startRuntime. Son puits dynamique ne démarre qu'après le commit ;
++         * les restaurations, elles, peuvent être réparées immédiatement.
++         */
++        if (runtime.decoration != null && runtime.freshConstruction == null) {
++            /*
++             * Une reprise répare aussi les niveaux déjà parcourus. Cela couvre
++             * une pose précédemment refusée, un bloc retiré pendant la pause ou
++             * une ancienne tâche interrompue entre deux callbacks.
++             */
++            runtime.decoration.synchronizeToCursor();
++        }
++
+         restartLoop(runtime);
+     }
+ 
+@@ -2226,7 +2265,7 @@ public class Mineur implements CommandExecutor, Listener {
+          * restaure, elle, ses cibles historiques bornées à 256 blocs.
+          */
+         int maximum = getMaximumStorageContainers();
+-        if (state.structureVersion >= MineCabinBuilder.STRUCTURE_VERSION) {
++        if (state.structureVersion >= MineCabinBuilder.FIRST_STRUCTURE_VERSION) {
+             maximum = Math.max(maximum, Math.min(256, persisted.size()));
+         }
+ 
+@@ -2989,6 +3028,8 @@ public class Mineur implements CommandExecutor, Listener {
+                 runtime.router,
+                 runtime.miner,
+                 createMiningTool(),
++                block -> currentRuntime.decoration == null
++                        || !currentRuntime.decoration.isManagedBlock(block),
+                 block -> canAutomatedMinerBreak(runtime.state, block),
+                 block -> {
+                     if (currentRuntime.decoration != null) {
+@@ -3033,6 +3074,15 @@ public class Mineur implements CommandExecutor, Listener {
+             MiningSessionState state = runtime.state;
+ 
+             try {
++                /*
++                 * L'itérateur peut terminer sur des couches entièrement vides,
++                 * donc sans callback de casse. Une dernière synchronisation
++                 * prolonge alors l'échelle jusqu'au stop-at-y exact.
++                 */
++                if (runtime.decoration != null) {
++                    runtime.decoration.synchronizeToCursor();
++                }
++
+                 if (runtime.miner == null
+                         || runtime.miner.isDead()
+                         || !runtime.miner.isValid()) {
+@@ -3049,6 +3099,15 @@ public class Mineur implements CommandExecutor, Listener {
+                 }
+ 
+                 if (continued) {
++                    /*
++                     * Le puits est lié au balayage vertical de la carrière. Une
++                     * fois le tunnel horizontal initialisé, conserver le
++                     * delegate ferait interpréter ses blocs comme de nouvelles
++                     * couches du puits et ajouterait un travail inutile.
++                     */
++                    if (!shouldUseQuarryDecoration(state)) {
++                        runtime.decoration = null;
++                    }
+                     refreshChunkTickets(state, runtime);
+                     restartLoop(runtime);
+                     return;
+@@ -3348,8 +3407,14 @@ public class Mineur implements CommandExecutor, Listener {
+                         "Le chevalement persisté dépasse les limites du monde."
+                 );
+             }
++            /*
++             * La présence de bornes prouve au minimum une structure v1. Ne pas
++             * promouvoir silencieusement une ancienne cabane vers la version
++             * courante : le puits v2 n'existe physiquement que s'il a été
++             * construit avec sa trappe et son garde-corps.
++             */
+             state.structureVersion = Math.max(
+-                    MineCabinBuilder.STRUCTURE_VERSION,
++                    MineCabinBuilder.FIRST_STRUCTURE_VERSION,
+                     state.structureVersion
+             );
+         } else {
+@@ -4224,6 +4289,184 @@ public class Mineur implements CommandExecutor, Listener {
+         };
+     }
+ 
++    private boolean hasIntegratedShaft(MiningSessionState state) {
++        return state != null
++                && state.structureBounds != null
++                && state.structureVersion
++                >= MineCabinBuilder.SHAFT_ACCESS_STRUCTURE_VERSION;
++    }
++
++    private boolean shouldUseQuarryDecoration(MiningSessionState state) {
++        return state != null
++                && state.pattern == MiningPattern.QUARRY
++                && (hasIntegratedShaft(state) || allowMinerBlockPlacement());
++    }
++
++    private int getShaftLightInterval() {
++        return MineShaftColumnBuilder.normalizeLightInterval(
++                plugin.getConfig().getInt(
++                        "mineur.structure.shaft-light-interval",
++                        MineShaftColumnBuilder.DEFAULT_LIGHT_INTERVAL
++                )
++        );
++    }
++
++    /**
++     * Pose un élément de la colonne verticale sans écraser le monde.
++     *
++     * <p>La méthode répète les contrôles de sûreté au moment exact de
++     * l'écriture, applique les BlockData avant l'événement synthétique puis
++     * restaure le snapshot si une protection refuse la pose. Une décoration
++     * dynamique ne peut ainsi ni contourner un claim, ni laisser un bloc à
++     * moitié configuré après une exception.</p>
++     */
++    private boolean placeShaftBlock(MiningSessionState state,
++                                    Block target,
++                                    Material material,
++                                    Consumer<BlockData> dataConfigurer) {
++        if (state == null
++                || state.base == null
++                || target == null
++                || material == null
++                || state.worldUid == null
++                || !state.worldUid.equals(target.getWorld().getUID())) {
++            return false;
++        }
++
++        World world = target.getWorld();
++        if (target.getY() < effectiveWorldMinHeight(world)
++                || target.getY() >= effectiveWorldMaxHeight(world)
++                || !world.isChunkLoaded(target.getX() >> 4, target.getZ() >> 4)
++                || !isInsideWorldBorder(target.getLocation().add(0.5D, 0.5D, 0.5D))) {
++            return false;
++        }
++
++        Material current = target.getType();
++        if (current == material) {
++            BlockData data = target.getBlockData();
++            if (dataConfigurer != null) {
++                dataConfigurer.accept(data);
++            }
++            if (data instanceof Waterlogged waterlogged) {
++                waterlogged.setWaterlogged(false);
++            }
++            target.setBlockData(data, false);
++            return true;
++        }
++        if (!current.isAir() && !MineShaftColumnBuilder.isManagedMaterial(current)) {
++            /*
++             * Minerai, roche, liquide ou construction du joueur : la colonne
++             * attend que la case soit réellement excavée au lieu de la forcer.
++             */
++            return false;
++        }
++
++        boolean fireEvents = fireStructureProtectionEvents();
++        Player actor = state.owner != null ? Bukkit.getPlayer(state.owner) : null;
++        if (fireEvents && actor == null) {
++            /*
++             * Un BlockPlaceEvent crédible exige un joueur. La réparation sera
++             * retentée au prochain bloc ou à la reconnexion du propriétaire.
++             */
++            return false;
++        }
++
++        BlockState replacedState = target.getState();
++        try {
++            target.setType(material, false);
++            BlockData data = target.getBlockData();
++            if (dataConfigurer != null) {
++                dataConfigurer.accept(data);
++            }
++            if (data instanceof Waterlogged waterlogged) {
++                waterlogged.setWaterlogged(false);
++            }
++            target.setBlockData(data, false);
++
++            if (fireEvents) {
++                BlockPlaceEvent event = new BlockPlaceEvent(
++                        target,
++                        replacedState,
++                        findShaftPlacedAgainst(target),
++                        new ItemStack(material, 1),
++                        actor,
++                        true,
++                        EquipmentSlot.HAND
++                );
++                AutomatedMiningContext.call(() -> {
++                    plugin.getServer().getPluginManager().callEvent(event);
++                    return null;
++                });
++                if (event.isCancelled() || !event.canBuild()) {
++                    restoreShaftSnapshot(replacedState, target);
++                    return false;
++                }
++            }
++
++            if (target.getType() != material) {
++                /*
++                 * Un autre plugin a transformé le bloc pendant l'événement.
++                 * Revenir au snapshot est plus sûr que d'adopter une matière
++                 * inconnue comme élément géré du puits.
++                 */
++                restoreShaftSnapshot(replacedState, target);
++                return false;
++            }
++            return true;
++        } catch (RuntimeException exception) {
++            restoreShaftSnapshot(replacedState, target);
++            throw exception;
++        }
++    }
++
++    private Block findShaftPlacedAgainst(Block block) {
++        Block below = block.getRelative(BlockFace.DOWN);
++        if (!below.getType().isAir()) {
++            return below;
++        }
++
++        Block above = block.getRelative(BlockFace.UP);
++        if (!above.getType().isAir()) {
++            return above;
++        }
++
++        for (BlockFace face : List.of(
++                BlockFace.NORTH,
++                BlockFace.SOUTH,
++                BlockFace.EAST,
++                BlockFace.WEST
++        )) {
++            Block adjacent = block.getRelative(face);
++            if (!adjacent.getType().isAir()) {
++                return adjacent;
++            }
++        }
++        return below;
++    }
++
++    private void restoreShaftSnapshot(BlockState snapshot, Block target) {
++        if (snapshot == null) {
++            return;
++        }
++        try {
++            if (!snapshot.update(true, false)) {
++                plugin.getLogger().warning(
++                        "[Mineur] Snapshot du puits non restauré en "
++                                + (target != null ? coords(target) : "position inconnue")
++                                + "."
++                );
++            }
++        } catch (RuntimeException restoreFailure) {
++            plugin.getLogger().log(
++                    Level.SEVERE,
++                    "[Mineur] Échec de restauration d'un bloc du puits en "
++                            + (target != null ? coords(target) : "position inconnue")
++                            + ".",
++                    restoreFailure
++            );
++        }
++    }
++
+     private boolean allowMinerBlockPlacement() {
+         return plugin.getConfig().getBoolean("mineur.allow-block-placement", false);
+     }
+@@ -4407,6 +4650,16 @@ public class Mineur implements CommandExecutor, Listener {
+ 
+     private final class DecorationDelegate {
+         private final MiningSessionState state;
++        private final boolean optionalDecorationsEnabled;
++        private final boolean integratedShaftEnabled;
++        private final MineShaftColumnBuilder.Layout shaftLayout;
++        private final int shaftLightInterval;
++
++        /*
++         * Paramètres de compatibilité de l'ancien accès périphérique. Ils ne
++         * sont utilisés que pour une cabane v1 ou lorsque la structure
++         * automatique est désactivée.
++         */
+         private final int supportSpacing;
+         private final int torchLayerInterval;
+         private final int ladderX;
+@@ -4417,27 +4670,84 @@ public class Mineur implements CommandExecutor, Listener {
+         private final int torchSupportZ;
+         private final BlockFace torchFacing = BlockFace.SOUTH;
+         private final int depthMarkerInterval = 5;
+-        private int minedBlocks = 0;
++
++        private int minedBlocks;
+         private int completedLayers;
+         private int currentLayerY;
++        private boolean initialized;
+ 
+         DecorationDelegate(MiningSessionState state) {
+-            this.state = state;
+-            this.supportSpacing = Math.max(0, plugin.getConfig().getInt("mineur.default.supports-every", 8));
+-            this.torchLayerInterval = Math.max(1, plugin.getConfig().getInt("mineur.default.torch-layers", 4));
+-            this.ladderX = state.base.getBlockX() + Math.max(state.width - 1, 0);
++            this.state = Objects.requireNonNull(state, "state");
++            if (state.base == null) {
++                throw new IllegalArgumentException("Base absente pour la décoration de mine.");
++            }
++
++            this.optionalDecorationsEnabled = allowMinerBlockPlacement();
++            this.integratedShaftEnabled = hasIntegratedShaft(state);
++            this.shaftLayout = integratedShaftEnabled
++                    ? MineShaftColumnBuilder.createLayout(
++                    state.base.getBlockX(),
++                    state.base.getBlockZ(),
++                    Math.max(1, state.width),
++                    Math.max(1, state.length)
++            )
++                    : null;
++            this.shaftLightInterval = getShaftLightInterval();
++
++            this.supportSpacing = Math.max(
++                    0,
++                    plugin.getConfig().getInt("mineur.default.supports-every", 8)
++            );
++            this.torchLayerInterval = Math.max(
++                    1,
++                    plugin.getConfig().getInt("mineur.default.torch-layers", 4)
++            );
++            this.ladderX = safeRectangleMaximum(
++                    state.base.getBlockX(),
++                    Math.max(1, state.width)
++            );
+             this.ladderZ = state.base.getBlockZ() + Math.max(state.length, 1) / 2;
+-            this.ladderSupportX = this.ladderX + 1;
++            this.ladderSupportX = this.ladderX < Integer.MAX_VALUE
++                    ? this.ladderX + 1
++                    : this.ladderX;
+             this.torchX = state.base.getBlockX() + Math.max(state.width, 1) / 2;
+-            this.torchSupportZ = state.base.getBlockZ() - 1;
+-            this.currentLayerY = state.cursor != null
+-                    ? state.cursor.y
+-                    : state.base.getBlockY();
+-            this.completedLayers = Math.max(0, state.base.getBlockY() - currentLayerY);
+-            prepareInitialAccess(state.base.getWorld());
++            this.torchSupportZ = state.base.getBlockZ() > Integer.MIN_VALUE
++                    ? state.base.getBlockZ() - 1
++                    : state.base.getBlockZ();
++
++            int baseY = state.base.getBlockY();
++            int cursorY = state.cursor != null ? state.cursor.y : baseY;
++            this.currentLayerY = Math.min(baseY, cursorY);
++            this.completedLayers = Math.max(0, baseY - currentLayerY);
++        }
++
++        void initialize() {
++            if (initialized) {
++                return;
++            }
++            initialized = true;
++            try {
++                prepareInitialAccess(state.base.getWorld());
++            } catch (RuntimeException exception) {
++                /*
++                 * La cabane statique est déjà transactionnelle. Une panne de
++                 * décoration profonde ne doit pas invalider son commit ni
++                 * supprimer une session qui peut continuer à miner.
++                 */
++                plugin.getLogger().log(
++                        Level.WARNING,
++                        "[Mineur] Initialisation du puits ignorée pour la session "
++                                + state.id + ".",
++                        exception
++                );
++            }
+         }
+ 
+         void afterBlock(Block block) {
++            initialize();
++            if (block == null) {
++                return;
++            }
+             minedBlocks++;
+ 
+             /*
+@@ -4448,69 +4758,208 @@ public class Mineur implements CommandExecutor, Listener {
+              */
+             advanceCompletedLayers(block.getWorld(), block.getY());
+ 
+-            /*
+-             * Si la case de l'échelle vient seulement d'être excavée, la poser
+-             * maintenant plutôt que d'écraser le minerai avant sa collecte.
+-             */
+-            if (block.getX() == ladderX && block.getZ() == ladderZ) {
+-                placeLadderAt(block.getWorld(), block.getY());
++            if (integratedShaftEnabled
++                    && shaftLayout.isRelevantHorizontal(block.getX(), block.getZ())) {
++                maintainIntegratedLayer(block.getWorld(), block.getY());
++            } else if (!integratedShaftEnabled
++                    && optionalDecorationsEnabled
++                    && block.getX() == ladderX
++                    && block.getZ() == ladderZ) {
++                /*
++                 * Compatibilité v1 : la case de l'échelle n'est équipée qu'après
++                 * sa collecte, jamais en remplaçant un minerai.
++                 */
++                placeLegacyLadderAt(block.getWorld(), block.getY());
+             }
+ 
+-            if (supportSpacing > 0 && minedBlocks % supportSpacing == 0) {
++            /*
++             * Les anciens piliers de pierre aléatoires restent disponibles pour
++             * les structures v1. Le puits v2 possède déjà une charpente lisible
++             * et ne reçoit pas ce décor dispersé qui brouillerait son identité.
++             */
++            if (!integratedShaftEnabled
++                    && optionalDecorationsEnabled
++                    && supportSpacing > 0
++                    && minedBlocks % supportSpacing == 0) {
+                 Block floor = block.getRelative(BlockFace.DOWN);
+                 SupportBuilder.placeSupportColumn(block.getWorld(), floor, 3);
+             }
+         }
+ 
++        /**
++         * Indique à la boucle quels blocs appartiennent au puits et doivent être
++         * validés sans nouvelle casse lors d'une reprise de checkpoint.
++         */
++        boolean isManagedBlock(Block block) {
++            if (block == null) {
++                return false;
++            }
++            if (integratedShaftEnabled) {
++                return MineShaftColumnBuilder.isManagedBlock(
++                        shaftLayout,
++                        state.base.getBlockY(),
++                        block
++                );
++            }
++            return optionalDecorationsEnabled
++                    && block.getX() == ladderX
++                    && block.getZ() == ladderZ
++                    && block.getY() <= state.base.getBlockY()
++                    && block.getType() == Material.LADDER;
++        }
++
++        /**
++         * Répare tout le tronçon déjà excavé, notamment après une reconnexion
++         * du propriétaire ou une fin de parcours composée uniquement d'air.
++         */
++        void synchronizeToCursor() {
++            initialize();
++            if (!integratedShaftEnabled) {
++                return;
++            }
++
++            World world = state.base.getWorld();
++            if (world == null) {
++                return;
++            }
++
++            int targetY = state.cursor != null
++                    ? Math.min(currentLayerY, state.cursor.y)
++                    : currentLayerY;
++            targetY = Math.max(
++                    effectiveWorldMinHeight(world),
++                    Math.min(state.base.getBlockY(), targetY)
++            );
++
++            try {
++                MineShaftColumnBuilder.maintainRange(
++                        world,
++                        shaftLayout,
++                        state.base.getBlockY(),
++                        targetY,
++                        shaftLightInterval,
++                        this::placeIntegratedShaftBlock
++                );
++                currentLayerY = targetY;
++                completedLayers = Math.max(
++                        0,
++                        state.base.getBlockY() - currentLayerY
++                );
++            } catch (RuntimeException exception) {
++                /*
++                 * Le puits est une amélioration d'accès : une erreur de pose ne
++                 * doit pas faire perdre un bloc déjà miné ni interrompre le
++                 * dépôt des ressources.
++                 */
++                plugin.getLogger().log(
++                        Level.WARNING,
++                        "[Mineur] Synchronisation du puits ignorée pour la session "
++                                + state.id + ".",
++                        exception
++                );
++            }
++        }
++
+         private void advanceCompletedLayers(World world, int minedY) {
+             while (currentLayerY > minedY) {
+                 currentLayerY--;
+                 completedLayers++;
+-                buildAccessStair(world, currentLayerY);
+-                extendAccessLadder(world, currentLayerY);
+-                if (shouldPlaceDepthMarker(currentLayerY)) {
+-                    placeDepthMarker(world, currentLayerY);
++
++                if (integratedShaftEnabled) {
++                    maintainIntegratedLayer(world, currentLayerY);
++                    continue;
++                }
++                if (!optionalDecorationsEnabled) {
++                    continue;
++                }
++
++                buildLegacyAccessStair(world, currentLayerY);
++                extendLegacyAccessLadder(world, currentLayerY);
++                if (shouldPlaceLegacyDepthMarker(currentLayerY)) {
++                    placeLegacyDepthMarker(world, currentLayerY);
+                 }
+                 if (completedLayers % torchLayerInterval == 0) {
+-                    placeWallTorch(world, currentLayerY);
++                    placeLegacyWallTorch(world, currentLayerY);
+                 }
+             }
+         }
+ 
+-        private void buildAccessStair(World world, int layerY) {
++        private void prepareInitialAccess(World world) {
++            if (world == null) {
++                return;
++            }
++            if (integratedShaftEnabled) {
++                MineShaftColumnBuilder.maintainRange(
++                        world,
++                        shaftLayout,
++                        state.base.getBlockY(),
++                        currentLayerY,
++                        shaftLightInterval,
++                        this::placeIntegratedShaftBlock
++                );
++            } else if (optionalDecorationsEnabled) {
++                extendLegacyAccessLadder(world, currentLayerY);
++            }
++        }
++
++        private void maintainIntegratedLayer(World world, int y) {
++            MineShaftColumnBuilder.maintainLayer(
++                    world,
++                    shaftLayout,
++                    state.base.getBlockY(),
++                    y,
++                    shaftLightInterval,
++                    this::placeIntegratedShaftBlock
++            );
++        }
++
++        private boolean placeIntegratedShaftBlock(Block target,
++                                                  Material material,
++                                                  Consumer<BlockData> dataConfigurer) {
++            return Mineur.this.placeShaftBlock(
++                    state,
++                    target,
++                    material,
++                    dataConfigurer
++            );
++        }
++
++        private void buildLegacyAccessStair(World world, int layerY) {
+             if (world == null
+                     || layerY < effectiveWorldMinHeight(world)
+                     || layerY >= effectiveWorldMaxHeight(world)) {
+                 return;
+             }
+             Location base = state.base;
+-            Block stairBlock = world.getBlockAt(base.getBlockX() - 1, layerY, base.getBlockZ());
++            Block stairBlock = world.getBlockAt(
++                    base.getBlockX() - 1,
++                    layerY,
++                    base.getBlockZ()
++            );
+             StairBuilder.ensureStair(world, stairBlock, BlockFace.SOUTH, 3);
+         }
+ 
+-        private void prepareInitialAccess(World world) {
+-            if (world == null) {
+-                return;
+-            }
+-            extendAccessLadder(world, currentLayerY);
+-        }
+-
+-        private void extendAccessLadder(World world, int targetY) {
++        private void extendLegacyAccessLadder(World world, int targetY) {
+             if (world == null) {
+                 return;
+             }
+             int minY = Math.max(targetY, effectiveWorldMinHeight(world));
+             int startY = state.base.getBlockY();
+             for (int y = startY; y >= minY; y--) {
+-                placeLadderAt(world, y);
++                placeLegacyLadderAt(world, y);
+             }
+         }
+ 
+-        private void placeLadderAt(World world, int y) {
++        private void placeLegacyLadderAt(World world, int y) {
+             if (world == null
+                     || y < effectiveWorldMinHeight(world)
+                     || y >= effectiveWorldMaxHeight(world)
+-                    || !ensureSupportBlock(world, ladderSupportX, y, ladderZ)) {
++                    || !ensureLegacySupportBlock(
++                    world,
++                    ladderSupportX,
++                    y,
++                    ladderZ
++            )) {
+                 return;
+             }
+ 
+@@ -4528,17 +4977,17 @@ public class Mineur implements CommandExecutor, Listener {
+             }
+         }
+ 
+-        private void placeWallTorch(World world, int y) {
++        private void placeLegacyWallTorch(World world, int y) {
+             if (world == null) {
+                 return;
+             }
+-            if (ensureSupportBlock(world, torchX, y, torchSupportZ)) {
++            if (ensureLegacySupportBlock(world, torchX, y, torchSupportZ)) {
+                 Block support = world.getBlockAt(torchX, y, torchSupportZ);
+                 TorchPlacer.placeWallTorch(world, support, torchFacing);
+             }
+         }
+ 
+-        private boolean shouldPlaceDepthMarker(int y) {
++        private boolean shouldPlaceLegacyDepthMarker(int y) {
+             if (depthMarkerInterval <= 0) {
+                 return false;
+             }
+@@ -4546,14 +4995,16 @@ public class Mineur implements CommandExecutor, Listener {
+             return delta > 0 && delta % depthMarkerInterval == 0;
+         }
+ 
+-        private void placeDepthMarker(World world, int y) {
+-            if (world == null) {
+-                return;
++        private void placeLegacyDepthMarker(World world, int y) {
++            if (world != null) {
++                ensureLegacySupportBlock(world, torchX, y, torchSupportZ);
+             }
+-            ensureSupportBlock(world, torchX, y, torchSupportZ);
+         }
+ 
+-        private boolean ensureSupportBlock(World world, int x, int y, int z) {
++        private boolean ensureLegacySupportBlock(World world,
++                                                 int x,
++                                                 int y,
++                                                 int z) {
+             if (world == null
+                     || y < effectiveWorldMinHeight(world)
+                     || y >= effectiveWorldMaxHeight(world)) {
+@@ -4575,4 +5026,5 @@ public class Mineur implements CommandExecutor, Listener {
+             return true;
+         }
+     }
++
+ }
+diff --git a/src/main/java/org/example/mineur/MiningLoop.java b/src/main/java/org/example/mineur/MiningLoop.java
+index 5ef1afc..3de269e 100644
+--- a/src/main/java/org/example/mineur/MiningLoop.java
++++ b/src/main/java/org/example/mineur/MiningLoop.java
+@@ -41,6 +41,7 @@ public final class MiningLoop extends BukkitRunnable {
+     private final InventoryRouter router;
+     private final Villager miner;
+     private final ItemStack miningTool;
++    private final Predicate<Block> candidateFilter;
+     private final Predicate<Block> breakPermission;
+     private final Consumer<Block> decorationCallback;
+     private final Runnable completionCallback;
+@@ -66,6 +67,7 @@ public final class MiningLoop extends BukkitRunnable {
+                       InventoryRouter router,
+                       Villager miner,
+                       ItemStack miningTool,
++                      Predicate<Block> candidateFilter,
+                       Predicate<Block> breakPermission,
+                       Consumer<Block> decorationCallback,
+                       Runnable completionCallback,
+@@ -82,6 +84,7 @@ public final class MiningLoop extends BukkitRunnable {
+         this.router = router;
+         this.miner = miner;
+         this.miningTool = miningTool != null ? miningTool.clone() : null;
++        this.candidateFilter = candidateFilter;
+         this.breakPermission = breakPermission;
+         this.decorationCallback = decorationCallback;
+         this.completionCallback = completionCallback;
+@@ -175,10 +178,14 @@ public final class MiningLoop extends BukkitRunnable {
+         state.pendingCursor = checkpoint;
+ 
+         Block candidate = iterator.next();
+-        if (candidate == null || !MiningBlockPolicy.isMineable(candidate)) {
++        if (candidate == null
++                || !MiningBlockPolicy.isMineable(candidate)
++                || (candidateFilter != null && !candidateFilter.test(candidate))) {
+             /*
+              * next() peut ne rien retourner après avoir consommé un budget de
+-             * blocs vides/protégés. Ce parcours est volontairement validé.
++             * blocs vides/protégés. Le filtre permet aussi de valider sans casse
++             * les blocs techniques que la session a posés dans une couche déjà
++             * parcourue, notamment l'échelle et les poutres du puits.
+              */
+             state.pendingCursor = null;
+             return;
+@@ -389,7 +396,9 @@ public final class MiningLoop extends BukkitRunnable {
+     }
+ 
+     private boolean refreshCurrentBlock() {
+-        if (current == null || !MiningBlockPolicy.isMineable(current)) {
++        if (current == null
++                || !MiningBlockPolicy.isMineable(current)
++                || (candidateFilter != null && !candidateFilter.test(current))) {
+             return false;
+         }
+ 
+diff --git a/src/main/java/org/example/mineur/builders/MineCabinBuilder.java b/src/main/java/org/example/mineur/builders/MineCabinBuilder.java
+index 1e54930..74089b7 100644
+--- a/src/main/java/org/example/mineur/builders/MineCabinBuilder.java
++++ b/src/main/java/org/example/mineur/builders/MineCabinBuilder.java
+@@ -20,6 +20,7 @@ import org.bukkit.block.data.type.Door;
+ import org.bukkit.block.data.type.Gate;
+ import org.bukkit.block.data.type.Lantern;
+ import org.bukkit.block.data.type.Stairs;
++import org.bukkit.block.data.type.TrapDoor;
+ import org.bukkit.entity.Player;
+ import org.bukkit.event.block.BlockBreakEvent;
+ import org.bukkit.event.block.BlockPlaceEvent;
+@@ -53,15 +54,19 @@ import java.util.logging.Logger;
+  */
+ public final class MineCabinBuilder {
+ 
+-    public static final int STRUCTURE_VERSION = 1;
++    public static final int FIRST_STRUCTURE_VERSION = 1;
++    public static final int SHAFT_ACCESS_STRUCTURE_VERSION = 2;
++    public static final int STRUCTURE_VERSION = SHAFT_ACCESS_STRUCTURE_VERSION;
+ 
+     private static final int PRIORITY_FLOOR = 10;
+     private static final int PRIORITY_ACCENT = 20;
+     private static final int PRIORITY_WALL = 30;
+     private static final int PRIORITY_FRAME = 40;
+     private static final int PRIORITY_DECORATION = 50;
++    private static final int PRIORITY_ROOF_SHELL = 55;
+     private static final int PRIORITY_ROOF = 60;
+     private static final int PRIORITY_ATTACHMENT = 70;
++    private static final int PRIORITY_SHAFT = 75;
+     private static final int PRIORITY_CONTAINER = 80;
+ 
+     /*
+@@ -221,6 +226,7 @@ public final class MineCabinBuilder {
+         private final int frameMinZ;
+         private final int frameMaxZ;
+         private final Settings settings;
++        private final MineShaftColumnBuilder.Layout shaftLayout;
+         private final Bounds bounds;
+         private final Map<BlockPos, Placement> placements;
+         private final Set<BlockPos> clearances;
+@@ -238,6 +244,7 @@ public final class MineCabinBuilder {
+                      int frameMinZ,
+                      int frameMaxZ,
+                      Settings settings,
++                     MineShaftColumnBuilder.Layout shaftLayout,
+                      Bounds bounds,
+                      Map<BlockPos, Placement> placements,
+                      Set<BlockPos> clearances,
+@@ -254,6 +261,7 @@ public final class MineCabinBuilder {
+             this.frameMinZ = frameMinZ;
+             this.frameMaxZ = frameMaxZ;
+             this.settings = settings;
++            this.shaftLayout = Objects.requireNonNull(shaftLayout, "shaftLayout");
+             this.bounds = bounds;
+             this.placements = Map.copyOf(placements);
+             this.clearances = Set.copyOf(clearances);
+@@ -305,6 +313,10 @@ public final class MineCabinBuilder {
+             return settings;
+         }
+ 
++        public MineShaftColumnBuilder.Layout shaftLayout() {
++            return shaftLayout;
++        }
++
+         public Bounds bounds() {
+             return bounds;
+         }
+@@ -449,6 +461,8 @@ public final class MineCabinBuilder {
+         int mineMaxX = checkedCoordinate((long) mineMinX + width - 1L, "X maximal de la mine");
+         int mineMaxZ = checkedCoordinate((long) mineMinZ + length - 1L, "Z maximal de la mine");
+         int deckY = checkedCoordinate((long) baseY + settings.platformHeight(), "hauteur de plateforme");
++        MineShaftColumnBuilder.Layout shaftLayout =
++                MineShaftColumnBuilder.createLayout(mineMinX, mineMinZ, width, length);
+ 
+         int scaledCabinWidth = scaledCabinSize(
+                 width,
+@@ -498,6 +512,15 @@ public final class MineCabinBuilder {
+         int frameMinZ = checkedCoordinate(Math.min((long) mineMinZ - 2L, (long) cabinMinZ - 2L), "Z minimal du cadre");
+         int frameMaxZ = checkedCoordinate(Math.max((long) mineMaxZ + 2L, (long) cabinMaxZ + 2L), "Z maximal du cadre");
+ 
++        /*
++         * Les deux escaliers principaux dépassent le cadre vers le nord et le
++         * sud. Valider leur palier extérieur ici évite tout débordement tardif
++         * au milieu de l'assemblage.
++         */
++        int staircaseReach = settings.platformHeight() + 1;
++        checkedCoordinate((long) frameMinZ - staircaseReach, "palier nord");
++        checkedCoordinate((long) frameMaxZ + staircaseReach, "palier sud");
++
+         /*
+          * Plusieurs boucles utilisent une borne inclusive. Refuser la valeur
+          * Integer.MAX_VALUE empêche le dernier incrément de reboucler vers
+@@ -524,7 +547,8 @@ public final class MineCabinBuilder {
+                 frameMaxX,
+                 frameMinZ,
+                 frameMaxZ,
+-                settings
++                settings,
++                shaftLayout
+         );
+         return assembler.assemble();
+     }
+@@ -1109,6 +1133,7 @@ public final class MineCabinBuilder {
+         private final int centerX;
+         private final int centerZ;
+         private final Settings settings;
++        private final MineShaftColumnBuilder.Layout shaftLayout;
+ 
+         private final LinkedHashMap<BlockPos, Placement> placements = new LinkedHashMap<>();
+         private final LinkedHashSet<BlockPos> clearances = new LinkedHashSet<>();
+@@ -1129,7 +1154,8 @@ public final class MineCabinBuilder {
+                               int frameMaxX,
+                               int frameMinZ,
+                               int frameMaxZ,
+-                              Settings settings) {
++                              Settings settings,
++                              MineShaftColumnBuilder.Layout shaftLayout) {
+             this.mineMinX = mineMinX;
+             this.mineMaxX = mineMaxX;
+             this.mineMinZ = mineMinZ;
+@@ -1148,6 +1174,7 @@ public final class MineCabinBuilder {
+             this.centerX = (int) Math.floorDiv((long) cabinMinX + cabinMaxX, 2L);
+             this.centerZ = (int) Math.floorDiv((long) cabinMinZ + cabinMaxZ, 2L);
+             this.settings = settings;
++            this.shaftLayout = Objects.requireNonNull(shaftLayout, "shaftLayout");
+         }
+ 
+         private Plan assemble() {
+@@ -1191,6 +1218,7 @@ public final class MineCabinBuilder {
+                     frameMinZ,
+                     frameMaxZ,
+                     settings,
++                    shaftLayout,
+                     bounds,
+                     placements,
+                     clearances,
+@@ -1423,6 +1451,134 @@ public final class MineCabinBuilder {
+             addOuterRailing(deckY, true);
+             addBalconyRailing();
+             addBridgeRailings();
++            addMainAccessStaircases();
++        }
++
++        /**
++         * Ajoute deux escaliers de cinq blocs de large alignés sur les portes.
++         *
++         * <p>Les trois marches centrales offrent un passage confortable ; les
++         * marches sombres latérales servent de limons et portent une rambarde.
++         * Le joueur n'est ainsi plus obligé de rejoindre un angle du grand
++         * chevalement pour grimper par une échelle étroite.</p>
++         */
++        private void addMainAccessStaircases() {
++            addMainAccessStaircase(BlockFace.NORTH);
++            addMainAccessStaircase(BlockFace.SOUTH);
++        }
++
++        private void addMainAccessStaircase(BlockFace side) {
++            if (side != BlockFace.NORTH && side != BlockFace.SOUTH) {
++                throw new IllegalArgumentException("Côté d'escalier principal invalide.");
++            }
++
++            int rise = deckY - groundY;
++            int directionZ = side == BlockFace.NORTH ? 1 : -1;
++            int bottomZ = side == BlockFace.NORTH
++                    ? checkedCoordinate((long) frameMinZ - rise, "bas de l'escalier nord")
++                    : checkedCoordinate((long) frameMaxZ + rise, "bas de l'escalier sud");
++            BlockFace facing = side == BlockFace.NORTH
++                    ? BlockFace.SOUTH
++                    : BlockFace.NORTH;
++
++            for (int step = 0; step < rise; step++) {
++                int y = checkedCoordinate((long) groundY + step, "hauteur d'escalier");
++                int z = checkedCoordinate(
++                        (long) bottomZ + (long) directionZ * step,
++                        "progression d'escalier"
++                );
++
++                for (int dx = -2; dx <= 2; dx++) {
++                    int x = checkedCoordinate((long) centerX + dx, "largeur d'escalier");
++
++                    /*
++                     * Le noyau minéral évite les marches flottantes lorsque la
++                     * plateforme est haute de six blocs.
++                     */
++                    for (int supportY = groundY; supportY < y; supportY++) {
++                        putSimple(
++                                x,
++                                supportY,
++                                z,
++                                Material.STONE_BRICKS,
++                                PRIORITY_FLOOR
++                        );
++                    }
++
++                    Material stairMaterial = Math.abs(dx) <= 1
++                            ? Material.SPRUCE_STAIRS
++                            : Material.DARK_OAK_STAIRS;
++                    putStairs(
++                            x,
++                            y,
++                            z,
++                            stairMaterial,
++                            facing,
++                            Stairs.Half.BOTTOM,
++                            PRIORITY_ACCENT
++                    );
++
++                    if (Math.abs(dx) <= 1) {
++                        reserveColumn(x, y + 1, y + 2, z);
++                    } else {
++                        putSimple(
++                                x,
++                                y + 1,
++                                z,
++                                Material.DARK_OAK_FENCE,
++                                PRIORITY_DECORATION
++                        );
++                    }
++                }
++            }
++
++            int landingZ = checkedCoordinate(
++                    (long) bottomZ - directionZ,
++                    "palier extérieur d'escalier"
++            );
++            for (int dx = -2; dx <= 2; dx++) {
++                int x = checkedCoordinate((long) centerX + dx, "largeur du palier");
++                if (Math.abs(dx) == 2) {
++                    putOrientable(
++                            x,
++                            groundY,
++                            landingZ,
++                            Material.STRIPPED_DARK_OAK_LOG,
++                            Axis.Z,
++                            PRIORITY_ACCENT
++                    );
++                    putSimple(
++                            x,
++                            groundY + 1,
++                            landingZ,
++                            Material.DARK_OAK_FENCE,
++                            PRIORITY_DECORATION
++                    );
++                } else {
++                    putSimple(
++                            x,
++                            groundY,
++                            landingZ,
++                            Material.SPRUCE_PLANKS,
++                            PRIORITY_FLOOR
++                    );
++                    reserveColumn(x, groundY + 1, groundY + 2, landingZ);
++                }
++            }
++            addStandingLantern(centerX - 2, groundY + 2, landingZ);
++            addStandingLantern(centerX + 2, groundY + 2, landingZ);
++
++            int topZ = side == BlockFace.NORTH ? frameMinZ : frameMaxZ;
++            for (int x : new int[]{centerX - 2, centerX + 2}) {
++                putSimple(
++                        x,
++                        deckY + 1,
++                        topZ,
++                        Material.DARK_OAK_FENCE,
++                        PRIORITY_DECORATION
++                );
++                addStandingLantern(x, deckY + 2, topZ);
++            }
+         }
+ 
+         private void addCabinFloor() {
+@@ -1549,6 +1705,7 @@ public final class MineCabinBuilder {
+         private void addCabin() {
+             addCabinWalls();
+             addCabinDoors();
++            addShaftRoomAccess();
+             addCabinCarpet();
+             addInteriorLighting();
+             addExteriorDoorLights();
+@@ -1577,9 +1734,9 @@ public final class MineCabinBuilder {
+                     && (z == cabinMinZ || z == cabinMaxZ);
+             int along = horizontalWall ? x - cabinMinX : z - cabinMinZ;
+             boolean verticalBeam = corner || Math.floorMod(along, 4) == 0;
+-            boolean topBeam = y == wallTop;
++            boolean horizontalBeam = y == deckY + 1 || y == wallTop;
+             boolean window = !verticalBeam
+-                    && !topBeam
++                    && !horizontalBeam
+                     && (y == deckY + 2 || y == deckY + 3)
+                     && !isDoorColumn(x, z);
+ 
+@@ -1592,7 +1749,13 @@ public final class MineCabinBuilder {
+                         Axis.Y,
+                         PRIORITY_FRAME
+                 );
+-            } else if (topBeam) {
++            } else if (horizontalBeam) {
++                /*
++                 * Une lisse basse et une lisse haute continues donnent un vrai
++                 * colombage à la façade et évitent l'effet de simple boîte en
++                 * planches. Les portes, posées avec une priorité supérieure,
++                 * remplacent ensuite proprement leur section de lisse.
++                 */
+                 putOrientable(
+                         x,
+                         y,
+@@ -1638,13 +1801,213 @@ public final class MineCabinBuilder {
+             );
+         }
+ 
++        /**
++         * Relie la salle des coffres au premier niveau de la carrière.
++         *
++         * <p>La trappe est entourée d'un petit chevalement intérieur : le
++         * garde-corps empêche une chute involontaire, la porte permet d'entrer
++         * avec une largeur complète et le luminaire rend l'accès immédiatement
++         * identifiable. Le poteau et l'échelle rejoignent exactement la
++         * géométrie utilisée ensuite par {@link MineShaftColumnBuilder}.</p>
++         */
++        private void addShaftRoomAccess() {
++            int ladderX = shaftLayout.ladderX();
++            int ladderZ = shaftLayout.ladderZ();
++            int supportX = shaftLayout.supportX();
++            int supportZ = shaftLayout.supportZ();
++
++            /*
++             * La couche baseY appartient encore à la mine et peut contenir un
++             * minerai. Elle sera équipée seulement après sa collecte par la
++             * colonne dynamique. La construction initiale s'arrête donc à
++             * groundY et ne détruit aucune ressource.
++             */
++            for (int y = groundY; y < deckY; y++) {
++                putOrientable(
++                        supportX,
++                        y,
++                        supportZ,
++                        Material.STRIPPED_DARK_OAK_LOG,
++                        Axis.Y,
++                        PRIORITY_SHAFT
++                );
++                putDirectional(
++                        ladderX,
++                        y,
++                        ladderZ,
++                        Material.LADDER,
++                        shaftLayout.ladderFacing(),
++                        PRIORITY_SHAFT
++                );
++            }
++
++            /*
++             * Le poteau traverse visuellement le plancher. La trappe s'ouvre
++             * vers lui, donc à l'opposé de la zone où le joueur termine sa
++             * montée : elle ne vient pas barrer l'échelle une fois ouverte.
++             */
++            putOrientable(
++                    supportX,
++                    deckY,
++                    supportZ,
++                    Material.STRIPPED_DARK_OAK_LOG,
++                    Axis.Y,
++                    PRIORITY_SHAFT
++            );
++            putTrapDoor(
++                    ladderX,
++                    deckY,
++                    ladderZ,
++                    shaftLayout.supportDirection(),
++                    Bisected.Half.TOP
++            );
++
++            int roomY = deckY + 1;
++            int postTopY = deckY + 3;
++            int entranceX = checkedCoordinate(
++                    (long) ladderX + shaftLayout.ladderFacing().getModX(),
++                    "entrée X du puits intérieur"
++            );
++            int entranceZ = checkedCoordinate(
++                    (long) ladderZ + shaftLayout.ladderFacing().getModZ(),
++                    "entrée Z du puits intérieur"
++            );
++
++            for (int dx = -1; dx <= 1; dx++) {
++                for (int dz = -1; dz <= 1; dz++) {
++                    if (Math.max(Math.abs(dx), Math.abs(dz)) != 1) {
++                        continue;
++                    }
++
++                    int x = checkedCoordinate((long) ladderX + dx, "cadre X du puits");
++                    int z = checkedCoordinate((long) ladderZ + dz, "cadre Z du puits");
++                    if (x == entranceX && z == entranceZ) {
++                        addFenceGate(
++                                x,
++                                roomY,
++                                z,
++                                shaftLayout.ladderFacing()
++                        );
++                        reserveColumn(x, roomY + 1, roomY + 2, z);
++                        continue;
++                    }
++
++                    boolean corner = Math.abs(dx) == 1 && Math.abs(dz) == 1;
++                    boolean mainSupport = x == supportX && z == supportZ;
++                    if (corner || mainSupport) {
++                        for (int y = roomY; y <= postTopY; y++) {
++                            putOrientable(
++                                    x,
++                                    y,
++                                    z,
++                                    Material.STRIPPED_DARK_OAK_LOG,
++                                    Axis.Y,
++                                    PRIORITY_SHAFT
++                            );
++                        }
++                    } else {
++                        putSimple(
++                                x,
++                                roomY,
++                                z,
++                                Material.DARK_OAK_FENCE,
++                                PRIORITY_SHAFT
++                        );
++                    }
++                }
++            }
++
++            /*
++             * Une traverse relie les deux côtés du garde-corps et porte une
++             * lanterne suspendue trois blocs au-dessus du plancher. Le passage
++             * conserve ainsi deux blocs de hauteur libre pour la montée.
++             */
++            int beamY = deckY + 4;
++            for (int dx = -1; dx <= 1; dx++) {
++                int x = checkedCoordinate((long) ladderX + dx, "ceinture X du puits");
++                putOrientable(
++                        x,
++                        beamY,
++                        ladderZ - 1,
++                        Material.STRIPPED_SPRUCE_LOG,
++                        Axis.X,
++                        PRIORITY_SHAFT
++                );
++                putOrientable(
++                        x,
++                        beamY,
++                        ladderZ + 1,
++                        Material.STRIPPED_SPRUCE_LOG,
++                        Axis.X,
++                        PRIORITY_SHAFT
++                );
++            }
++            for (int dz = -1; dz <= 1; dz++) {
++                int z = checkedCoordinate((long) ladderZ + dz, "ceinture Z du puits");
++                putOrientable(
++                        ladderX - 1,
++                        beamY,
++                        z,
++                        Material.STRIPPED_SPRUCE_LOG,
++                        Axis.Z,
++                        PRIORITY_SHAFT
++                );
++                putOrientable(
++                        ladderX + 1,
++                        beamY,
++                        z,
++                        Material.STRIPPED_SPRUCE_LOG,
++                        Axis.Z,
++                        PRIORITY_SHAFT
++                );
++            }
++
++            /*
++             * Une courte potence part du poteau principal vers le centre afin
++             * que la lanterne soit réellement suspendue à une pièce de bois.
++             */
++            putOrientable(
++                    ladderX,
++                    beamY,
++                    ladderZ,
++                    Material.STRIPPED_SPRUCE_LOG,
++                    shaftLayout.supportDirection().getModX() != 0 ? Axis.X : Axis.Z,
++                    PRIORITY_SHAFT
++            );
++            addHangingLantern(ladderX, deckY + 3, ladderZ);
++            reserveColumn(ladderX, deckY + 1, deckY + 2, ladderZ);
++        }
++
++        private boolean isShaftRoomFootprint(int x, int z) {
++            return Math.max(
++                    Math.abs((long) x - shaftLayout.ladderX()),
++                    Math.abs((long) z - shaftLayout.ladderZ())
++            ) <= 1L;
++        }
++
+         private void addCabinCarpet() {
+             for (int z = cabinMinZ + 1; z <= cabinMaxZ - 1; z++) {
+-                putSimple(centerX, deckY + 1, z, Material.RED_CARPET, PRIORITY_DECORATION);
++                if (!isShaftRoomFootprint(centerX, z)) {
++                    putSimple(
++                            centerX,
++                            deckY + 1,
++                            z,
++                            Material.RED_CARPET,
++                            PRIORITY_DECORATION
++                    );
++                }
+             }
+             for (int x = centerX - 1; x <= centerX + 1; x++) {
+                 for (int z = centerZ - 1; z <= centerZ + 1; z++) {
+-                    putSimple(x, deckY + 1, z, Material.BROWN_CARPET, PRIORITY_DECORATION);
++                    if (!isShaftRoomFootprint(x, z)) {
++                        putSimple(
++                                x,
++                                deckY + 1,
++                                z,
++                                Material.BROWN_CARPET,
++                                PRIORITY_DECORATION
++                        );
++                    }
+                 }
+             }
+         }
+@@ -1723,7 +2086,27 @@ public final class MineCabinBuilder {
+                 int y = roofBaseY + level;
+                 int westX = eaveMinX + level;
+                 int eastX = eaveMaxX - level;
++                int shellY = y - 1;
+                 for (int z = eaveMinZ; z <= eaveMaxZ; z++) {
++                    /*
++                     * Une sous-toiture pleine ferme le volume visible entre
++                     * deux rangées d'escaliers. Le contraste épicéa/chêne noir
++                     * conserve une rive sombre tout en donnant un plafond chaud.
++                     */
++                    putSimple(
++                            westX,
++                            shellY,
++                            z,
++                            Material.SPRUCE_PLANKS,
++                            PRIORITY_ROOF_SHELL
++                    );
++                    putSimple(
++                            eastX,
++                            shellY,
++                            z,
++                            Material.SPRUCE_PLANKS,
++                            PRIORITY_ROOF_SHELL
++                    );
+                     putStairs(
+                             westX,
+                             y,
+@@ -1750,6 +2133,13 @@ public final class MineCabinBuilder {
+             int ridgeX = eaveMinX + levels;
+             int ridgeY = roofBaseY + levels;
+             for (int z = eaveMinZ; z <= eaveMaxZ; z++) {
++                putSimple(
++                        ridgeX,
++                        ridgeY - 1,
++                        z,
++                        Material.SPRUCE_PLANKS,
++                        PRIORITY_ROOF_SHELL
++                );
+                 putOrientable(
+                         ridgeX,
+                         ridgeY,
+@@ -1808,7 +2198,22 @@ public final class MineCabinBuilder {
+                 int y = roofBaseY + level;
+                 int northZ = eaveMinZ + level;
+                 int southZ = eaveMaxZ - level;
++                int shellY = y - 1;
+                 for (int x = eaveMinX; x <= eaveMaxX; x++) {
++                    putSimple(
++                            x,
++                            shellY,
++                            northZ,
++                            Material.SPRUCE_PLANKS,
++                            PRIORITY_ROOF_SHELL
++                    );
++                    putSimple(
++                            x,
++                            shellY,
++                            southZ,
++                            Material.SPRUCE_PLANKS,
++                            PRIORITY_ROOF_SHELL
++                    );
+                     putStairs(
+                             x,
+                             y,
+@@ -1835,6 +2240,13 @@ public final class MineCabinBuilder {
+             int ridgeZ = eaveMinZ + levels;
+             int ridgeY = roofBaseY + levels;
+             for (int x = eaveMinX; x <= eaveMaxX; x++) {
++                putSimple(
++                        x,
++                        ridgeY - 1,
++                        ridgeZ,
++                        Material.SPRUCE_PLANKS,
++                        PRIORITY_ROOF_SHELL
++                );
+                 putOrientable(
+                         x,
+                         ridgeY,
+@@ -2178,6 +2590,28 @@ public final class MineCabinBuilder {
+             ));
+         }
+ 
++        private void putTrapDoor(int x,
++                                 int y,
++                                 int z,
++                                 BlockFace facing,
++                                 Bisected.Half half) {
++            BlockPos position = new BlockPos(x, y, z);
++            put(new Placement(
++                    position,
++                    Material.SPRUCE_TRAPDOOR,
++                    PRIORITY_SHAFT,
++                    facing,
++                    data -> {
++                        if (data instanceof TrapDoor trapDoor) {
++                            trapDoor.setFacing(facing);
++                            trapDoor.setHalf(half);
++                            trapDoor.setOpen(false);
++                            trapDoor.setPowered(false);
++                        }
++                    }
++            ));
++        }
++
+         private void putChest(BlockPos position,
+                               BlockFace facing,
+                               Chest.Type type) {
+diff --git a/src/main/java/org/example/mineur/builders/MineShaftColumnBuilder.java b/src/main/java/org/example/mineur/builders/MineShaftColumnBuilder.java
+new file mode 100644
+index 0000000..b46518e
+--- /dev/null
++++ b/src/main/java/org/example/mineur/builders/MineShaftColumnBuilder.java
+@@ -0,0 +1,491 @@
++package org.example.mineur.builders;
++
++import org.bukkit.Axis;
++import org.bukkit.Material;
++import org.bukkit.World;
++import org.bukkit.block.Block;
++import org.bukkit.block.BlockFace;
++import org.bukkit.block.data.BlockData;
++import org.bukkit.block.data.Directional;
++import org.bukkit.block.data.Orientable;
++import org.bukkit.block.data.type.Lantern;
++
++import java.util.Collections;
++import java.util.EnumSet;
++import java.util.Objects;
++import java.util.Set;
++import java.util.function.Consumer;
++
++/**
++ * Entretient la colonne d'accès verticale située sous la salle des coffres.
++ *
++ * <p>La classe ne casse jamais de bloc. Elle complète uniquement les volumes
++ * déjà excavés par le mineur : une ressource encore présente, un liquide ou un
++ * bloc placé par le joueur reste donc intact. La géométrie est déterministe
++ * afin qu'un redémarrage puisse reconstruire les éléments manquants sans
++ * persister une seconde copie des coordonnées.</p>
++ */
++public final class MineShaftColumnBuilder {
++
++    public static final int DEFAULT_LIGHT_INTERVAL = 5;
++    public static final int MINIMUM_LIGHT_INTERVAL = 3;
++    public static final int MAXIMUM_LIGHT_INTERVAL = 16;
++
++    private static final Set<Material> MANAGED_MATERIALS = Collections.unmodifiableSet(
++            EnumSet.of(
++                    Material.STRIPPED_DARK_OAK_LOG,
++                    Material.STRIPPED_SPRUCE_LOG,
++                    Material.LADDER,
++                    Material.LANTERN,
++                    Material.SHROOMLIGHT
++            )
++    );
++
++    private MineShaftColumnBuilder() {
++        // Classe utilitaire.
++    }
++
++    /**
++     * Géométrie horizontale persistante du puits.
++     *
++     * <p>Le bloc d'échelle reste dans l'emprise minée. Son support est lui aussi
++     * placé dans cette emprise dès que la sélection fait au moins deux blocs.
++     * Une sélection 1x1 conserve un repli sûr : l'échelle s'appuie sur la paroi
++     * naturelle voisine, sans que le plugin ne creuse hors de la zone choisie.</p>
++     */
++    public record Layout(int mineMinX,
++                         int mineMaxX,
++                         int mineMinZ,
++                         int mineMaxZ,
++                         int ladderX,
++                         int ladderZ,
++                         int supportX,
++                         int supportZ,
++                         BlockFace supportDirection,
++                         BlockFace ladderFacing,
++                         boolean sideLantern,
++                         int lightX,
++                         int lightZ,
++                         Axis lightBeamAxis) {
++
++        public Layout {
++            Objects.requireNonNull(supportDirection, "supportDirection");
++            Objects.requireNonNull(ladderFacing, "ladderFacing");
++            Objects.requireNonNull(lightBeamAxis, "lightBeamAxis");
++
++            if (mineMinX > mineMaxX || mineMinZ > mineMaxZ) {
++                throw new IllegalArgumentException("Emprise horizontale de puits invalide.");
++            }
++            if (!isHorizontal(supportDirection)
++                    || ladderFacing != supportDirection.getOppositeFace()) {
++                throw new IllegalArgumentException("Orientation de l'échelle incohérente.");
++            }
++            if (Math.abs((long) supportX - ladderX)
++                    + Math.abs((long) supportZ - ladderZ) != 1L) {
++                throw new IllegalArgumentException(
++                        "Le support doit être adjacent au bloc d'échelle."
++                );
++            }
++            if (ladderX < mineMinX || ladderX > mineMaxX
++                    || ladderZ < mineMinZ || ladderZ > mineMaxZ) {
++                throw new IllegalArgumentException(
++                        "L'échelle doit rester dans l'emprise de la mine."
++                );
++            }
++            if (sideLantern) {
++                if (lightX < mineMinX || lightX > mineMaxX
++                        || lightZ < mineMinZ || lightZ > mineMaxZ
++                        || Math.abs((long) lightX - supportX)
++                        + Math.abs((long) lightZ - supportZ) != 1L
++                        || (lightX == ladderX && lightZ == ladderZ)) {
++                    throw new IllegalArgumentException(
++                            "La console lumineuse du puits est invalide."
++                    );
++                }
++            }
++        }
++
++        public boolean contains(int x, int z) {
++            return x >= mineMinX && x <= mineMaxX
++                    && z >= mineMinZ && z <= mineMaxZ;
++        }
++
++        public boolean isRelevantHorizontal(int x, int z) {
++            return (x == ladderX && z == ladderZ)
++                    || (x == supportX && z == supportZ)
++                    || (sideLantern && x == lightX && z == lightZ);
++        }
++    }
++
++    /**
++     * Écrit un bloc après les contrôles propres au serveur (claims, bordure,
++     * propriétaire connecté, etc.).
++     */
++    @FunctionalInterface
++    public interface PlacementHandler {
++
++        boolean place(Block target,
++                      Material material,
++                      Consumer<BlockData> dataConfigurer);
++    }
++
++    /**
++     * Calcule une échelle centrale et choisit la paroi offrant le plus de place
++     * pour son poteau. Les calculs utilisent des {@code long} afin de refuser
++     * proprement les coordonnées qui déborderaient un entier.
++     */
++    public static Layout createLayout(int mineMinX,
++                                      int mineMinZ,
++                                      int width,
++                                      int length) {
++        if (width < 1 || length < 1) {
++            throw new IllegalArgumentException("Dimensions de puits invalides.");
++        }
++
++        int mineMaxX = checkedCoordinate(
++                (long) mineMinX + width - 1L,
++                "X maximal du puits"
++        );
++        int mineMaxZ = checkedCoordinate(
++                (long) mineMinZ + length - 1L,
++                "Z maximal du puits"
++        );
++        int ladderX = checkedCoordinate(
++                Math.floorDiv((long) mineMinX + mineMaxX, 2L),
++                "X de l'échelle"
++        );
++        int ladderZ = checkedCoordinate(
++                Math.floorDiv((long) mineMinZ + mineMaxZ, 2L),
++                "Z de l'échelle"
++        );
++
++        BlockFace supportDirection = chooseSupportDirection(
++                mineMinX,
++                mineMaxX,
++                mineMinZ,
++                mineMaxZ,
++                ladderX,
++                ladderZ
++        );
++        int supportX = checkedCoordinate(
++                (long) ladderX + supportDirection.getModX(),
++                "X du poteau"
++        );
++        int supportZ = checkedCoordinate(
++                (long) ladderZ + supportDirection.getModZ(),
++                "Z du poteau"
++        );
++
++        BlockFace firstSide = clockwise(supportDirection);
++        BlockFace secondSide = firstSide.getOppositeFace();
++        BlockFace lightDirection = null;
++        for (BlockFace candidate : new BlockFace[]{firstSide, secondSide}) {
++            int candidateX = checkedCoordinate(
++                    (long) supportX + candidate.getModX(),
++                    "X de la console lumineuse"
++            );
++            int candidateZ = checkedCoordinate(
++                    (long) supportZ + candidate.getModZ(),
++                    "Z de la console lumineuse"
++            );
++            if (candidateX >= mineMinX && candidateX <= mineMaxX
++                    && candidateZ >= mineMinZ && candidateZ <= mineMaxZ
++                    && (candidateX != ladderX || candidateZ != ladderZ)) {
++                lightDirection = candidate;
++                break;
++            }
++        }
++
++        boolean sideLantern = lightDirection != null;
++        int lightX = supportX;
++        int lightZ = supportZ;
++        Axis beamAxis = Axis.X;
++        if (sideLantern) {
++            lightX = checkedCoordinate(
++                    (long) supportX + lightDirection.getModX(),
++                    "X de la lumière"
++            );
++            lightZ = checkedCoordinate(
++                    (long) supportZ + lightDirection.getModZ(),
++                    "Z de la lumière"
++            );
++            beamAxis = lightDirection.getModX() != 0 ? Axis.X : Axis.Z;
++        }
++
++        return new Layout(
++                mineMinX,
++                mineMaxX,
++                mineMinZ,
++                mineMaxZ,
++                ladderX,
++                ladderZ,
++                supportX,
++                supportZ,
++                supportDirection,
++                supportDirection.getOppositeFace(),
++                sideLantern,
++                lightX,
++                lightZ,
++                beamAxis
++        );
++    }
++
++    public static int normalizeLightInterval(int configured) {
++        return Math.max(
++                MINIMUM_LIGHT_INTERVAL,
++                Math.min(MAXIMUM_LIGHT_INTERVAL, configured)
++        );
++    }
++
++    /**
++     * Répare ou prolonge toutes les couches déjà excavées, du niveau de départ
++     * jusqu'à la profondeur demandée. La boucle est bornée par la hauteur réelle
++     * du monde, ce qui rend l'opération sûre lors d'une reprise après crash.
++     */
++    public static void maintainRange(World world,
++                                     Layout layout,
++                                     int baseY,
++                                     int minimumY,
++                                     int lightInterval,
++                                     PlacementHandler placer) {
++        if (world == null || layout == null || placer == null) {
++            return;
++        }
++
++        int safeBaseY = Math.min(baseY, world.getMaxHeight() - 1);
++        int safeMinimumY = Math.max(minimumY, world.getMinHeight());
++        if (safeMinimumY > safeBaseY) {
++            return;
++        }
++
++        for (int y = safeBaseY; y >= safeMinimumY; y--) {
++            maintainLayer(world, layout, baseY, y, lightInterval, placer);
++        }
++    }
++
++    /**
++     * Complète une couche sans remplacer de roche non minée.
++     *
++     * <p>Le poteau sombre porte l'échelle. Tous les cinq niveaux par défaut,
++     * une console en épicéa reçoit une lanterne suspendue. Lorsque la sélection
++     * est trop étroite pour cette console, un shroomlight chaud est intégré au
++     * poteau : l'accès reste éclairé sans élargir artificiellement la mine.</p>
++     */
++    public static void maintainLayer(World world,
++                                     Layout layout,
++                                     int baseY,
++                                     int y,
++                                     int lightInterval,
++                                     PlacementHandler placer) {
++        if (world == null
++                || layout == null
++                || placer == null
++                || y < world.getMinHeight()
++                || y >= world.getMaxHeight()) {
++            return;
++        }
++
++        int safeLightInterval = normalizeLightInterval(lightInterval);
++        boolean lightLevel = isLightLevel(baseY, y, safeLightInterval);
++        Material supportMaterial = lightLevel && !layout.sideLantern()
++                ? Material.SHROOMLIGHT
++                : Material.STRIPPED_DARK_OAK_LOG;
++
++        Block support = world.getBlockAt(layout.supportX(), y, layout.supportZ());
++        ensureBlock(
++                support,
++                supportMaterial,
++                data -> setAxis(data, Axis.Y),
++                placer
++        );
++
++        /*
++         * Dans l'emprise de la carrière, l'échelle attend le poteau en bois :
++         * l'accrocher temporairement à la roche la ferait tomber (et produire
++         * un objet gratuit) lorsque cette roche sera minée quelques instants
++         * plus tard. Le repli 1x1 peut, lui, utiliser la paroi extérieure qui
++         * ne sera jamais parcourue par l'itérateur.
++         */
++        Material resolvedSupport = support.getType();
++        boolean timberSupport = resolvedSupport == Material.STRIPPED_DARK_OAK_LOG
++                || resolvedSupport == Material.SHROOMLIGHT;
++        boolean permanentOuterWall = !layout.contains(
++                layout.supportX(),
++                layout.supportZ()
++        ) && resolvedSupport.isSolid();
++        if (timberSupport || permanentOuterWall) {
++            Block ladder = world.getBlockAt(layout.ladderX(), y, layout.ladderZ());
++            ensureBlock(
++                    ladder,
++                    Material.LADDER,
++                    data -> setFacing(data, layout.ladderFacing()),
++                    placer
++            );
++        }
++
++        if (!lightLevel || !layout.sideLantern() || y + 1 >= world.getMaxHeight()) {
++            return;
++        }
++
++        Block beam = world.getBlockAt(layout.lightX(), y + 1, layout.lightZ());
++        boolean beamReady = ensureBlock(
++                beam,
++                Material.STRIPPED_SPRUCE_LOG,
++                data -> setAxis(data, layout.lightBeamAxis()),
++                placer
++        );
++        if (!beamReady || !beam.getType().isSolid()) {
++            return;
++        }
++
++        Block lantern = world.getBlockAt(layout.lightX(), y, layout.lightZ());
++        ensureBlock(
++                lantern,
++                Material.LANTERN,
++                data -> {
++                    if (data instanceof Lantern lanternData) {
++                        lanternData.setHanging(true);
++                    }
++                },
++                placer
++        );
++    }
++
++    /**
++     * Empêche l'itérateur de carrière de sélectionner de nouveau un bloc posé
++     * par le puits après une reprise sur un ancien checkpoint.
++     */
++    public static boolean isManagedBlock(Layout layout,
++                                         int baseY,
++                                         Block block) {
++        if (layout == null || block == null || block.getY() > baseY) {
++            return false;
++        }
++
++        Material material = block.getType();
++        if (block.getX() == layout.ladderX()
++                && block.getZ() == layout.ladderZ()) {
++            return material == Material.LADDER;
++        }
++        if (block.getX() == layout.supportX()
++                && block.getZ() == layout.supportZ()) {
++            return material == Material.STRIPPED_DARK_OAK_LOG
++                    || material == Material.SHROOMLIGHT;
++        }
++        return layout.sideLantern()
++                && block.getX() == layout.lightX()
++                && block.getZ() == layout.lightZ()
++                && (material == Material.STRIPPED_SPRUCE_LOG
++                || material == Material.LANTERN);
++    }
++
++    public static boolean isManagedMaterial(Material material) {
++        return material != null && MANAGED_MATERIALS.contains(material);
++    }
++
++    static boolean isLightLevel(int baseY, int y, int interval) {
++        int safeInterval = normalizeLightInterval(interval);
++        long depth = (long) baseY - y;
++        return depth > 0L && depth % safeInterval == 0L;
++    }
++
++    private static boolean ensureBlock(Block block,
++                                       Material material,
++                                       Consumer<BlockData> configurer,
++                                       PlacementHandler placer) {
++        Material current = block.getType();
++        if (current == material) {
++            configureExisting(block, configurer);
++            return true;
++        }
++        if (!current.isAir() && !isManagedMaterial(current)) {
++            return false;
++        }
++        return placer.place(block, material, configurer);
++    }
++
++    private static void configureExisting(Block block,
++                                          Consumer<BlockData> configurer) {
++        if (configurer == null) {
++            return;
++        }
++        BlockData data = block.getBlockData();
++        configurer.accept(data);
++        block.setBlockData(data, false);
++    }
++
++    private static void setAxis(BlockData data, Axis axis) {
++        if (data instanceof Orientable orientable
++                && orientable.getAxes().contains(axis)) {
++            orientable.setAxis(axis);
++        }
++    }
++
++    private static void setFacing(BlockData data, BlockFace facing) {
++        if (data instanceof Directional directional
++                && directional.getFaces().contains(facing)) {
++            directional.setFacing(facing);
++        }
++    }
++
++    private static BlockFace chooseSupportDirection(int minX,
++                                                    int maxX,
++                                                    int minZ,
++                                                    int maxZ,
++                                                    int centerX,
++                                                    int centerZ) {
++        BlockFace best = null;
++        long bestRoom = Long.MIN_VALUE;
++
++        BlockFace[] preference = {
++                BlockFace.EAST,
++                BlockFace.SOUTH,
++                BlockFace.WEST,
++                BlockFace.NORTH
++        };
++        for (BlockFace face : preference) {
++            long room = switch (face) {
++                case EAST -> (long) maxX - centerX;
++                case WEST -> (long) centerX - minX;
++                case SOUTH -> (long) maxZ - centerZ;
++                case NORTH -> (long) centerZ - minZ;
++                default -> Long.MIN_VALUE;
++            };
++            if (room > bestRoom) {
++                bestRoom = room;
++                best = face;
++            }
++        }
++
++        /*
++         * En 1x1 aucune paroi voisine n'appartient à la sélection. Le poteau
++         * reste à l'est et n'est matérialisé que si ce bloc devient de l'air ;
++         * la roche naturelle n'est jamais remplacée silencieusement.
++         */
++        return bestRoom > 0L ? best : BlockFace.EAST;
++    }
++
++    private static BlockFace clockwise(BlockFace face) {
++        return switch (face) {
++            case NORTH -> BlockFace.EAST;
++            case EAST -> BlockFace.SOUTH;
++            case SOUTH -> BlockFace.WEST;
++            case WEST -> BlockFace.NORTH;
++            default -> throw new IllegalArgumentException("Face non horizontale.");
++        };
++    }
++
++    private static boolean isHorizontal(BlockFace face) {
++        return face == BlockFace.NORTH
++                || face == BlockFace.SOUTH
++                || face == BlockFace.EAST
++                || face == BlockFace.WEST;
++    }
++
++    private static int checkedCoordinate(long value, String label) {
++        if (value < Integer.MIN_VALUE || value > Integer.MAX_VALUE) {
++            throw new IllegalArgumentException(label + " hors limites entières.");
++        }
++        return (int) value;
++    }
++}
+diff --git a/src/main/resources/config.yml b/src/main/resources/config.yml
+index 0f0d29a..0761196 100644
+--- a/src/main/resources/config.yml
++++ b/src/main/resources/config.yml
+@@ -8,8 +8,9 @@ mineur:
+   # true reproduit les mises à jour naturelles (sable/gravier, fluides, redstone).
+   apply-physics: true
+ 
+-  # Décorations internes de la carrière (torches, supports et escalier).
+-  # La cabane de surface possède son propre interrupteur ci-dessous.
++  # Décors secondaires des anciennes carrières (supports de pierre,
++  # torches murales et escalier périphérique). Le puits central sécurisé des
++  # cabanes v2 reste actif indépendamment de cette option.
+   allow-block-placement: false
+   default:
+     pattern: QUARRY
+@@ -53,6 +54,10 @@ mineur:
+     cabin-max-size: 17
+     wall-height: 5
+ 
++    # Espacement vertical entre les éclairages du puits central. La valeur est
++    # automatiquement bornée entre 3 et 16 blocs.
++    shaft-light-interval: 5
++
+     # 16 coffres doubles = 864 emplacements d'inventaire.
+     # La valeur effective respecte aussi storage.max-containers.
+     double-chests: 16
+diff --git a/src/test/java/org/example/mineur/MiningLoopTest.java b/src/test/java/org/example/mineur/MiningLoopTest.java
+index 3d411a5..d7fe182 100644
+--- a/src/test/java/org/example/mineur/MiningLoopTest.java
++++ b/src/test/java/org/example/mineur/MiningLoopTest.java
+@@ -1,6 +1,9 @@
+ package org.example.mineur;
+ 
+ import org.bukkit.Location;
++import org.bukkit.Material;
++import org.bukkit.block.Block;
++import org.bukkit.block.BlockState;
+ import org.bukkit.entity.Villager;
+ import org.bukkit.plugin.java.JavaPlugin;
+ import org.junit.jupiter.api.Test;
+@@ -13,6 +16,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
+ import static org.junit.jupiter.api.Assertions.assertFalse;
+ import static org.junit.jupiter.api.Assertions.assertNull;
+ import static org.junit.jupiter.api.Assertions.assertTrue;
++import static org.mockito.ArgumentMatchers.anyList;
+ import static org.mockito.Mockito.mock;
+ import static org.mockito.Mockito.when;
+ 
+@@ -47,6 +51,7 @@ class MiningLoopTest {
+                 null,
+                 null,
+                 null,
++                null,
+                 () -> completed.set(true),
+                 null,
+                 null,
+@@ -98,6 +103,7 @@ class MiningLoopTest {
+                 null,
+                 null,
+                 null,
++                null,
+                 () -> completed.set(true),
+                 () -> storageBlocked.set(true),
+                 null,
+@@ -115,6 +121,78 @@ class MiningLoopTest {
+         assertFalse(failed.get());
+     }
+ 
++    @Test
++    void managedShaftBlockAdvancesTheCheckpointWithoutBreakingIt() {
++        JavaPlugin plugin = mock(JavaPlugin.class);
++        when(plugin.getLogger()).thenReturn(Logger.getAnonymousLogger());
++
++        MiningSessionState state = new MiningSessionState();
++        state.base = new Location(null, 0, 64, 0);
++        state.width = 1;
++        state.length = 1;
++        state.cursor = new MiningCursor(state.base, 1, 1);
++
++        MiningIterator iterator = mock(MiningIterator.class);
++        when(iterator.hasNext()).thenReturn(true);
++        when(iterator.cursor()).thenReturn(state.cursor);
++
++        Block managedBlock = mock(Block.class);
++        when(managedBlock.getType()).thenReturn(Material.STRIPPED_DARK_OAK_LOG);
++        when(managedBlock.isLiquid()).thenReturn(false);
++        when(managedBlock.getState()).thenReturn(mock(BlockState.class));
++        when(iterator.next()).thenReturn(managedBlock);
++
++        InventoryRouter router = mock(InventoryRouter.class);
++        when(router.hasTargets()).thenReturn(true);
++        when(router.canFitAll(anyList())).thenReturn(true);
++
++        Villager miner = mock(Villager.class);
++        when(miner.isDead()).thenReturn(false);
++        when(miner.isValid()).thenReturn(true);
++
++        AtomicBoolean breakPermissionChecked = new AtomicBoolean(false);
++        AtomicBoolean decorated = new AtomicBoolean(false);
++        AtomicBoolean completed = new AtomicBoolean(false);
++        AtomicBoolean failed = new AtomicBoolean(false);
++
++        MiningLoop loop = new MiningLoop(
++                plugin,
++                state,
++                iterator,
++                router,
++                miner,
++                null,
++                block -> false,
++                block -> {
++                    breakPermissionChecked.set(true);
++                    return true;
++                },
++                block -> decorated.set(true),
++                () -> completed.set(true),
++                null,
++                null,
++                null,
++                exception -> failed.set(true),
++                true,
++                false,
++                1.0D
++        );
++
++        loop.run();
++
++        /*
++         * Le bloc technique a bien été consommé par l'itérateur, mais il reste
++         * intact : le filtre intervient avant le calcul des drops, l'animation,
++         * les protections de casse et le callback de décoration.
++         */
++        assertNull(state.pendingCursor);
++        assertFalse(state.paused);
++        assertFalse(breakPermissionChecked.get());
++        assertFalse(decorated.get());
++        assertFalse(completed.get());
++        assertFalse(failed.get());
++    }
++
+     @Test
+     void depositingPhaseFinishesEvenWhenStorageBecameFull() throws Exception {
+         JavaPlugin plugin = mock(JavaPlugin.class);
+@@ -142,6 +220,7 @@ class MiningLoopTest {
+                 null,
+                 null,
+                 null,
++                null,
+                 () -> storageBlocked.set(true),
+                 null,
+                 null,
+diff --git a/src/test/java/org/example/mineur/builders/MineCabinBuilderTest.java b/src/test/java/org/example/mineur/builders/MineCabinBuilderTest.java
+index 32dd789..acf6937 100644
+--- a/src/test/java/org/example/mineur/builders/MineCabinBuilderTest.java
++++ b/src/test/java/org/example/mineur/builders/MineCabinBuilderTest.java
+@@ -197,6 +197,109 @@ class MineCabinBuilderTest {
+         );
+     }
+ 
++    @Test
++    void closesEveryRoofStairWithAContinuousTimberShell() {
++        Plan plan = MineCabinBuilder.createPlan(40, 72, -20, 12, 9, DEFAULTS);
++        int roofBaseY = plan.deckY() + DEFAULTS.wallHeight() + 1;
++        int checkedRoofStairs = 0;
++
++        for (BlockPos position : plan.placedPositions()) {
++            if (position.y() < roofBaseY
++                    || plan.materialAt(position) != Material.DARK_OAK_STAIRS) {
++                continue;
++            }
++
++            checkedRoofStairs++;
++            assertEquals(
++                    Material.SPRUCE_PLANKS,
++                    plan.materialAt(position.offset(0, -1, 0)),
++                    "Chaque escalier du toit doit masquer sa diagonale depuis l'intérieur"
++            );
++        }
++
++        assertTrue(checkedRoofStairs >= 100, "La toiture principale doit rester complète");
++    }
++
++    @Test
++    void providesWideLitStairsAlignedWithBothCabinDoors() {
++        Plan plan = MineCabinBuilder.createPlan(20, 64, 30, 18, 14, DEFAULTS);
++        int groundY = plan.baseY() + 1;
++        int rise = plan.deckY() - groundY;
++        int centerX = (plan.cabinMinX() + plan.cabinMaxX()) / 2;
++
++        assertMainStaircase(
++                plan,
++                centerX,
++                groundY,
++                rise,
++                plan.frameMinZ() - rise,
++                1,
++                BlockFace.SOUTH
++        );
++        assertMainStaircase(
++                plan,
++                centerX,
++                groundY,
++                rise,
++                plan.frameMaxZ() + rise,
++                -1,
++                BlockFace.NORTH
++        );
++
++        assertTrue(
++                countMaterial(plan, Material.LANTERN) >= 12,
++                "Les deux accès principaux doivent rester clairement éclairés"
++        );
++    }
++
++    @Test
++    void alignsTheChestRoomHatchWithThePersistentShaftColumn() {
++        Plan plan = MineCabinBuilder.createPlan(40, 72, -20, 12, 9, DEFAULTS);
++        MineShaftColumnBuilder.Layout shaft = plan.shaftLayout();
++
++        assertEquals(40, shaft.mineMinX());
++        assertEquals(51, shaft.mineMaxX());
++        assertEquals(-20, shaft.mineMinZ());
++        assertEquals(-12, shaft.mineMaxZ());
++
++        BlockPos hatch = new BlockPos(shaft.ladderX(), plan.deckY(), shaft.ladderZ());
++        assertEquals(Material.SPRUCE_TRAPDOOR, plan.materialAt(hatch));
++        assertEquals(shaft.supportDirection(), plan.facingAt(hatch));
++
++        for (int y = plan.baseY() + 1; y < plan.deckY(); y++) {
++            BlockPos ladder = new BlockPos(shaft.ladderX(), y, shaft.ladderZ());
++            BlockPos support = new BlockPos(shaft.supportX(), y, shaft.supportZ());
++
++            assertEquals(Material.LADDER, plan.materialAt(ladder));
++            assertEquals(shaft.ladderFacing(), plan.facingAt(ladder));
++            assertEquals(Material.STRIPPED_DARK_OAK_LOG, plan.materialAt(support));
++        }
++
++        assertEquals(
++                Material.STRIPPED_DARK_OAK_LOG,
++                plan.materialAt(new BlockPos(
++                        shaft.supportX(),
++                        plan.deckY(),
++                        shaft.supportZ()
++                ))
++        );
++
++        /*
++         * Le garde-corps occupe un carré 3x3 au centre. Aucun coffre ne doit
++         * donc empiéter sur l'accès, même si la capacité configurée est pleine.
++         */
++        for (BlockPos chest : plan.chestPositions()) {
++            long distance = Math.max(
++                    Math.abs((long) chest.x() - shaft.ladderX()),
++                    Math.abs((long) chest.z() - shaft.ladderZ())
++            );
++            assertTrue(distance > 1L, "Un coffre bloque le garde-corps du puits");
++        }
++
++        assertEquals(1, countMaterial(plan, Material.SPRUCE_TRAPDOOR));
++        assertTrue(countMaterial(plan, Material.SPRUCE_FENCE_GATE) >= 5);
++    }
++
+     @Test
+     void rejectsCoordinatesThatWouldOverflowInclusiveLoops() {
+         assertThrows(
+@@ -275,6 +378,36 @@ class MineCabinBuilderTest {
+         }
+     }
+ 
++    private void assertMainStaircase(Plan plan,
++                                     int centerX,
++                                     int groundY,
++                                     int rise,
++                                     int bottomZ,
++                                     int directionZ,
++                                     BlockFace facing) {
++        for (int step = 0; step < rise; step++) {
++            int y = groundY + step;
++            int z = bottomZ + directionZ * step;
++
++            for (int dx = -2; dx <= 2; dx++) {
++                BlockPos position = new BlockPos(centerX + dx, y, z);
++                Material expected = Math.abs(dx) <= 1
++                        ? Material.SPRUCE_STAIRS
++                        : Material.DARK_OAK_STAIRS;
++                assertEquals(expected, plan.materialAt(position));
++                assertEquals(facing, plan.facingAt(position));
++            }
++        }
++
++        int landingZ = bottomZ - directionZ;
++        for (int dx = -1; dx <= 1; dx++) {
++            assertEquals(
++                    Material.SPRUCE_PLANKS,
++                    plan.materialAt(new BlockPos(centerX + dx, groundY, landingZ))
++            );
++        }
++    }
++
+     private boolean isHorizontal(BlockFace face) {
+         return face == BlockFace.NORTH
+                 || face == BlockFace.SOUTH
+diff --git a/src/test/java/org/example/mineur/builders/MineShaftColumnBuilderTest.java b/src/test/java/org/example/mineur/builders/MineShaftColumnBuilderTest.java
+new file mode 100644
+index 0000000..89e15cb
+--- /dev/null
++++ b/src/test/java/org/example/mineur/builders/MineShaftColumnBuilderTest.java
+@@ -0,0 +1,302 @@
++package org.example.mineur.builders;
++
++import org.bukkit.Axis;
++import org.bukkit.Material;
++import org.bukkit.World;
++import org.bukkit.block.Block;
++import org.bukkit.block.BlockFace;
++import org.junit.jupiter.api.Test;
++
++import java.util.ArrayList;
++import java.util.HashMap;
++import java.util.List;
++import java.util.Map;
++import java.util.concurrent.atomic.AtomicReference;
++
++import static org.junit.jupiter.api.Assertions.assertEquals;
++import static org.junit.jupiter.api.Assertions.assertFalse;
++import static org.junit.jupiter.api.Assertions.assertThrows;
++import static org.junit.jupiter.api.Assertions.assertTrue;
++import static org.mockito.ArgumentMatchers.anyInt;
++import static org.mockito.Mockito.mock;
++import static org.mockito.Mockito.when;
++
++class MineShaftColumnBuilderTest {
++
++    @Test
++    void choosesADeterministicCentralLayoutWithRoomForLighting() {
++        MineShaftColumnBuilder.Layout layout =
++                MineShaftColumnBuilder.createLayout(-4, 11, 9, 7);
++
++        assertEquals(0, layout.ladderX());
++        assertEquals(14, layout.ladderZ());
++        assertEquals(BlockFace.EAST, layout.supportDirection());
++        assertEquals(BlockFace.WEST, layout.ladderFacing());
++        assertEquals(1, layout.supportX());
++        assertEquals(14, layout.supportZ());
++
++        assertTrue(layout.sideLantern());
++        assertEquals(1, layout.lightX());
++        assertEquals(15, layout.lightZ());
++        assertEquals(Axis.Z, layout.lightBeamAxis());
++        assertTrue(layout.contains(layout.ladderX(), layout.ladderZ()));
++        assertTrue(layout.contains(layout.supportX(), layout.supportZ()));
++        assertTrue(layout.contains(layout.lightX(), layout.lightZ()));
++    }
++
++    @Test
++    void keepsTheLadderInsideEveryNarrowSelection() {
++        int[][] dimensions = {
++                {1, 1},
++                {1, 64},
++                {64, 1},
++                {2, 1},
++                {1, 2},
++                {2, 2}
++        };
++
++        for (int[] dimension : dimensions) {
++            MineShaftColumnBuilder.Layout layout =
++                    MineShaftColumnBuilder.createLayout(
++                            100,
++                            -40,
++                            dimension[0],
++                            dimension[1]
++                    );
++
++            assertTrue(layout.contains(layout.ladderX(), layout.ladderZ()));
++            assertEquals(
++                    1L,
++                    Math.abs((long) layout.supportX() - layout.ladderX())
++                            + Math.abs((long) layout.supportZ() - layout.ladderZ())
++            );
++
++            if ((long) dimension[0] * dimension[1] > 1L) {
++                assertTrue(
++                        layout.contains(layout.supportX(), layout.supportZ()),
++                        "Le poteau doit rester dans toute sélection de plus d'un bloc"
++                );
++            }
++        }
++
++        MineShaftColumnBuilder.Layout single =
++                MineShaftColumnBuilder.createLayout(100, -40, 1, 1);
++        assertFalse(single.contains(single.supportX(), single.supportZ()));
++        assertFalse(single.sideLantern());
++    }
++
++    @Test
++    void clampsTheLightIntervalAndUsesStableDepthMarkers() {
++        assertEquals(3, MineShaftColumnBuilder.normalizeLightInterval(-20));
++        assertEquals(5, MineShaftColumnBuilder.normalizeLightInterval(5));
++        assertEquals(16, MineShaftColumnBuilder.normalizeLightInterval(100));
++
++        assertFalse(MineShaftColumnBuilder.isLightLevel(64, 64, 5));
++        assertFalse(MineShaftColumnBuilder.isLightLevel(64, 63, 5));
++        assertTrue(MineShaftColumnBuilder.isLightLevel(64, 59, 5));
++        assertTrue(MineShaftColumnBuilder.isLightLevel(64, 54, 5));
++    }
++
++    @Test
++    void neverOverwritesNaturalRockBeforeItsTurnIsMined() {
++        MineShaftColumnBuilder.Layout layout =
++                MineShaftColumnBuilder.createLayout(0, 0, 5, 5);
++        FakeBlocks fake = new FakeBlocks();
++        fake.set(
++                layout.supportX(),
++                63,
++                layout.supportZ(),
++                Material.STONE
++        );
++
++        List<PlacedBlock> placements = new ArrayList<>();
++        MineShaftColumnBuilder.maintainLayer(
++                fake.world(),
++                layout,
++                64,
++                63,
++                5,
++                fake.handler(placements)
++        );
++
++        assertTrue(
++                placements.isEmpty(),
++                "Le poteau et l'échelle doivent attendre l'excavation du support"
++        );
++        assertEquals(
++                Material.STONE,
++                fake.typeAt(layout.supportX(), 63, layout.supportZ())
++        );
++    }
++
++    @Test
++    void buildsTimberLadderAndSuspendedLightOnlyInsideExcavatedAir() {
++        MineShaftColumnBuilder.Layout layout =
++                MineShaftColumnBuilder.createLayout(0, 0, 5, 5);
++        FakeBlocks fake = new FakeBlocks();
++        List<PlacedBlock> placements = new ArrayList<>();
++
++        MineShaftColumnBuilder.maintainLayer(
++                fake.world(),
++                layout,
++                64,
++                59,
++                5,
++                fake.handler(placements)
++        );
++
++        assertEquals(
++                Material.STRIPPED_DARK_OAK_LOG,
++                fake.typeAt(layout.supportX(), 59, layout.supportZ())
++        );
++        assertEquals(
++                Material.LADDER,
++                fake.typeAt(layout.ladderX(), 59, layout.ladderZ())
++        );
++        assertTrue(layout.sideLantern());
++        assertEquals(
++                Material.STRIPPED_SPRUCE_LOG,
++                fake.typeAt(layout.lightX(), 60, layout.lightZ())
++        );
++        assertEquals(
++                Material.LANTERN,
++                fake.typeAt(layout.lightX(), 59, layout.lightZ())
++        );
++
++        assertEquals(
++                List.of(
++                        Material.STRIPPED_DARK_OAK_LOG,
++                        Material.LADDER,
++                        Material.STRIPPED_SPRUCE_LOG,
++                        Material.LANTERN
++                ),
++                placements.stream().map(PlacedBlock::material).toList()
++        );
++    }
++
++    @Test
++    void usesAnIntegratedLightForAShaftTooNarrowForALanternBracket() {
++        MineShaftColumnBuilder.Layout layout =
++                MineShaftColumnBuilder.createLayout(8, 12, 1, 4);
++        FakeBlocks fake = new FakeBlocks();
++        List<PlacedBlock> placements = new ArrayList<>();
++
++        MineShaftColumnBuilder.maintainLayer(
++                fake.world(),
++                layout,
++                40,
++                35,
++                5,
++                fake.handler(placements)
++        );
++
++        assertFalse(layout.sideLantern());
++        assertEquals(
++                Material.SHROOMLIGHT,
++                fake.typeAt(layout.supportX(), 35, layout.supportZ())
++        );
++        assertEquals(
++                Material.LADDER,
++                fake.typeAt(layout.ladderX(), 35, layout.ladderZ())
++        );
++        assertEquals(2, placements.size());
++    }
++
++    @Test
++    void rejectsInvalidOrOverflowingDimensions() {
++        assertThrows(
++                IllegalArgumentException.class,
++                () -> MineShaftColumnBuilder.createLayout(0, 0, 0, 1)
++        );
++        assertThrows(
++                IllegalArgumentException.class,
++                () -> MineShaftColumnBuilder.createLayout(
++                        Integer.MAX_VALUE,
++                        0,
++                        2,
++                        1
++                )
++        );
++    }
++
++    private record Coordinate(int x, int y, int z) {
++    }
++
++    private record PlacedBlock(Coordinate coordinate, Material material) {
++    }
++
++    /**
++     * Petit monde simulé ciblé : chaque bloc possède une matière mutable afin
++     * de reproduire le contrat du PlacementHandler sans démarrer un serveur.
++     */
++    private static final class FakeBlocks {
++        private final Map<Coordinate, AtomicReference<Material>> types = new HashMap<>();
++        private final Map<Coordinate, Block> blocks = new HashMap<>();
++        private final World world;
++
++        private FakeBlocks() {
++            world = mock(World.class);
++            when(world.getMinHeight()).thenReturn(-64);
++            when(world.getMaxHeight()).thenReturn(320);
++            when(world.getBlockAt(anyInt(), anyInt(), anyInt())).thenAnswer(invocation -> blockAt(
++                    invocation.getArgument(0),
++                    invocation.getArgument(1),
++                    invocation.getArgument(2)
++            ));
++        }
++
++        private World world() {
++            return world;
++        }
++
++        private void set(int x, int y, int z, Material material) {
++            referenceAt(new Coordinate(x, y, z)).set(material);
++        }
++
++        private Material typeAt(int x, int y, int z) {
++            return referenceAt(new Coordinate(x, y, z)).get();
++        }
++
++        private MineShaftColumnBuilder.PlacementHandler handler(
++                List<PlacedBlock> placements
++        ) {
++            return (block, material, dataConfigurer) -> {
++                Coordinate coordinate = new Coordinate(
++                        block.getX(),
++                        block.getY(),
++                        block.getZ()
++                );
++                Material current = referenceAt(coordinate).get();
++                if (!current.isAir()
++                        && !MineShaftColumnBuilder.isManagedMaterial(current)) {
++                    return false;
++                }
++
++                referenceAt(coordinate).set(material);
++                placements.add(new PlacedBlock(coordinate, material));
++                return true;
++            };
++        }
++
++        private Block blockAt(int x, int y, int z) {
++            Coordinate coordinate = new Coordinate(x, y, z);
++            return blocks.computeIfAbsent(coordinate, ignored -> {
++                Block block = mock(Block.class);
++                when(block.getX()).thenReturn(x);
++                when(block.getY()).thenReturn(y);
++                when(block.getZ()).thenReturn(z);
++                when(block.getType()).thenAnswer(
++                        invocation -> referenceAt(coordinate).get()
++                );
++                return block;
++            });
++        }
++
++        private AtomicReference<Material> referenceAt(Coordinate coordinate) {
++            return types.computeIfAbsent(
++                    coordinate,
++                    ignored -> new AtomicReference<>(Material.AIR)
++            );
++        }
++    }
++}

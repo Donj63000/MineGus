@@ -91,6 +91,16 @@ class VillageLightingBuilderTest {
                             && Math.abs(anchor.x() - center.getBlockX()) <= 6
             );
 
+            // Le porche et les quatre tours du donjon restent libres.
+            assertFalse(KeepBuilder.reservesGround(
+                    center.getBlockX(),
+                    center.getBlockZ(),
+                    rz,
+                    anchor.x(),
+                    anchor.z(),
+                    2
+            ));
+
             for (VillageLayoutPlan.LotPlan lot : layout.lots()) {
                 boolean overlaps = anchor.x() >= lot.siteMinX() - 2
                         && anchor.x() <= lot.siteMaxX() + 2

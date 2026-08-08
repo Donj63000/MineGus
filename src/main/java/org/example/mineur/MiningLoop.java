@@ -41,6 +41,7 @@ public final class MiningLoop extends BukkitRunnable {
     private final InventoryRouter router;
     private final Villager miner;
     private final ItemStack miningTool;
+    private final Predicate<Block> candidateFilter;
     private final Predicate<Block> breakPermission;
     private final Consumer<Block> decorationCallback;
     private final Runnable completionCallback;
@@ -66,6 +67,7 @@ public final class MiningLoop extends BukkitRunnable {
                       InventoryRouter router,
                       Villager miner,
                       ItemStack miningTool,
+                      Predicate<Block> candidateFilter,
                       Predicate<Block> breakPermission,
                       Consumer<Block> decorationCallback,
                       Runnable completionCallback,
@@ -82,6 +84,7 @@ public final class MiningLoop extends BukkitRunnable {
         this.router = router;
         this.miner = miner;
         this.miningTool = miningTool != null ? miningTool.clone() : null;
+        this.candidateFilter = candidateFilter;
         this.breakPermission = breakPermission;
         this.decorationCallback = decorationCallback;
         this.completionCallback = completionCallback;
@@ -175,10 +178,14 @@ public final class MiningLoop extends BukkitRunnable {
         state.pendingCursor = checkpoint;
 
         Block candidate = iterator.next();
-        if (candidate == null || !MiningBlockPolicy.isMineable(candidate)) {
+        if (candidate == null
+                || !MiningBlockPolicy.isMineable(candidate)
+                || (candidateFilter != null && !candidateFilter.test(candidate))) {
             /*
              * next() peut ne rien retourner après avoir consommé un budget de
-             * blocs vides/protégés. Ce parcours est volontairement validé.
+             * blocs vides/protégés. Le filtre permet aussi de valider sans casse
+             * les blocs techniques que la session a posés dans une couche déjà
+             * parcourue, notamment l'échelle et les poutres du puits.
              */
             state.pendingCursor = null;
             return;
@@ -389,7 +396,9 @@ public final class MiningLoop extends BukkitRunnable {
     }
 
     private boolean refreshCurrentBlock() {
-        if (current == null || !MiningBlockPolicy.isMineable(current)) {
+        if (current == null
+                || !MiningBlockPolicy.isMineable(current)
+                || (candidateFilter != null && !candidateFilter.test(current))) {
             return false;
         }
 

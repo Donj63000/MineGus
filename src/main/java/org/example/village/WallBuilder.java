@@ -22,8 +22,12 @@ import java.util.Queue;
  */
 public final class WallBuilder {
 
-    private static final int WALL_HEIGHT = 9;
-    private static final int WALL_THICKNESS = 3;
+    /*
+     * Ces deux cotes sont partagées avec KeepBuilder afin que le plancher du
+     * donjon et les raccords de courtine restent parfaitement alignés.
+     */
+    static final int WALL_HEIGHT = 9;
+    static final int WALL_THICKNESS = 3;
     private static final int FOUNDATION_DEPTH = 3;
     private static final int BUTTRESS_SPACING = 8;
 
@@ -77,11 +81,12 @@ public final class WallBuilder {
                 safeRz + 1 + GATEHOUSE_HALF_DEPTH + 1
         );
 
+        int[] keepBounds = KeepBuilder.outerBounds(center, safeRz);
         return new int[]{
-                cx - extentX,
-                cx + extentX,
-                cz - extentZ,
-                cz + extentZ
+                Math.min(cx - extentX, keepBounds[0]),
+                Math.max(cx + extentX, keepBounds[1]),
+                Math.min(cz - extentZ, keepBounds[2]),
+                Math.max(cz + extentZ, keepBounds[3])
         };
     }
 
@@ -210,6 +215,32 @@ public final class WallBuilder {
                 setBlock,
                 maxX,
                 maxZ,
+                cx,
+                cz,
+                baseY
+        );
+
+        /*
+         * Deux tours de flanquement interrompent les longues courtines
+         * latérales. Elles possèdent chacune deux passages nord/sud au niveau
+         * du chemin de ronde ; elles ne créent donc jamais d'impasse.
+         */
+        buildTower(
+                queue,
+                world,
+                setBlock,
+                minX,
+                cz,
+                cx,
+                cz,
+                baseY
+        );
+        buildTower(
+                queue,
+                world,
+                setBlock,
+                maxX,
+                cz,
                 cx,
                 cz,
                 baseY
@@ -864,40 +895,94 @@ public final class WallBuilder {
         int inwardZ = Integer.compare(villageCenterZ, centerZ);
 
         /*
+         * Une tour située au milieu d'une courtine doit être traversante. Les
+         * ouvertures suivent donc l'axe du mur, tandis que leur largeur se
+         * décale vers l'intérieur pour coïncider avec les trois blocs du chemin
+         * de ronde.
+         */
+        boolean lateralFlankingTower = centerZ == villageCenterZ
+                && centerX != villageCenterX;
+        if (lateralFlankingTower) {
+            for (int side : new int[]{-1, 1}) {
+                int doorZ = centerZ + side * TOWER_RADIUS;
+                for (int depth = 0; depth < WALL_THICKNESS; depth++) {
+                    int x = centerX + inwardX * depth;
+                    openTowerDoorCell(
+                            queue,
+                            setBlock,
+                            x,
+                            doorZ,
+                            walkY
+                    );
+                }
+            }
+            return;
+        }
+
+        /*
+         * Le cas symétrique est conservé pour une future tour centrale au nord
+         * ou au sud : les deux passages suivent alors l'axe est/ouest.
+         */
+        boolean longitudinalFlankingTower = centerX == villageCenterX
+                && centerZ != villageCenterZ;
+        if (longitudinalFlankingTower) {
+            for (int side : new int[]{-1, 1}) {
+                int doorX = centerX + side * TOWER_RADIUS;
+                for (int depth = 0; depth < WALL_THICKNESS; depth++) {
+                    int z = centerZ + inwardZ * depth;
+                    openTowerDoorCell(
+                            queue,
+                            setBlock,
+                            doorX,
+                            z,
+                            walkY
+                    );
+                }
+            }
+            return;
+        }
+
+        /*
          * Chaque tour d'angle reçoit deux portes : une vers chaque courtine.
          * Le niveau du plancher correspond exactement au chemin de ronde.
          */
         if (inwardX != 0) {
             int doorX = centerX + inwardX * TOWER_RADIUS;
             for (int dz = -1; dz <= 1; dz++) {
-                for (int y = walkY + 1; y <= walkY + 3; y++) {
-                    int fy = y;
-                    int z = centerZ + dz;
-                    place(queue, setBlock,
-                            doorX,
-                            fy,
-                            z,
-                            Material.AIR
-                    );
-                }
+                openTowerDoorCell(
+                        queue,
+                        setBlock,
+                        doorX,
+                        centerZ + dz,
+                        walkY
+                );
             }
         }
         if (inwardZ != 0) {
             int doorZ = centerZ + inwardZ * TOWER_RADIUS;
             for (int dx = -1; dx <= 1; dx++) {
-                for (int y = walkY + 1; y <= walkY + 3; y++) {
-                    int fy = y;
-                    int x = centerX + dx;
-                    place(queue, setBlock,
-                            x,
-                            fy,
-                            doorZ,
-                            Material.AIR
-                    );
-                }
+                openTowerDoorCell(
+                        queue,
+                        setBlock,
+                        centerX + dx,
+                        doorZ,
+                        walkY
+                );
             }
         }
     }
+
+    private static void openTowerDoorCell(
+            Queue<Runnable> queue,
+            TerrainManager.SetBlock setBlock,
+            int x,
+            int z,
+            int walkY) {
+        for (int y = walkY + 1; y <= walkY + 3; y++) {
+            place(queue, setBlock, x, y, z, Material.AIR);
+        }
+    }
+
 
     private static void addTowerExteriorDetails(
             Queue<Runnable> queue,

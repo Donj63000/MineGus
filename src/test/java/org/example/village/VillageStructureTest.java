@@ -45,7 +45,8 @@ class VillageStructureTest {
         );
         assertEquals(-16, bounds[0]);
         assertEquals(16, bounds[1]);
-        assertEquals(-16, bounds[2]);
+        // L'emprise nord inclut désormais le donjon relié à la courtine.
+        assertEquals(-28, bounds[2]);
         assertEquals(16, bounds[3]);
         assertEquals(Material.DARK_OAK_STAIRS,
                 blocks.get(key(-16, 78, -16)));
