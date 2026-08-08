@@ -697,7 +697,12 @@ public final class KeepBuilder {
             }
         }
 
-        int doorZ = facadeZ - 2;
+        /*
+         * Ici, je place les battants dans le plan exact de la façade. Reculés
+         * dans le vestibule, ils pouvaient être contournés puisque aucun mur
+         * latéral ne fermait la grande salle à cet endroit.
+         */
+        int doorZ = facadeZ;
         doubleDoor(
                 queue,
                 world,

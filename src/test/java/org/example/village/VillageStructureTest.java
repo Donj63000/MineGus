@@ -220,6 +220,27 @@ class VillageStructureTest {
         assertTrue(blocks.values().contains(Material.DARK_OAK_STAIRS));
         assertTrue(blocks.values().contains(Material.DARK_OAK_SLAB));
         assertTrue(blocks.values().contains(Material.GOLD_BLOCK));
+
+        /*
+         * Ici, je vérifie que la porte occupe toute sa baie : les blocs de
+         * façade immédiatement voisins doivent rester maçonnés sur les deux
+         * niveaux, sans passage latéral possible.
+         */
+        int centerX = (lot.minX() + lot.maxX()) / 2;
+        for (int y = 65; y <= 66; y++) {
+            assertEquals(
+                    Material.SPRUCE_DOOR,
+                    blocks.get(key(centerX, y, lot.maxZ()))
+            );
+            assertEquals(
+                    Material.STONE_BRICKS,
+                    blocks.get(key(centerX - 1, y, lot.maxZ()))
+            );
+            assertEquals(
+                    Material.STONE_BRICKS,
+                    blocks.get(key(centerX + 1, y, lot.maxZ()))
+            );
+        }
     }
 
     @Test

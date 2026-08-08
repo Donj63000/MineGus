@@ -76,8 +76,8 @@ class KeepBuilderTest {
     void keepHasUsableEntranceRaisedPortcullisAndFurnishedFloors() {
         Map<String, Material> blocks = buildKeep();
 
-        // Ouverture de cinq blocs de haut tournée vers la cour au sud.
-        for (int y = BASE_Y + 1; y <= BASE_Y + 5; y++) {
+        // L'arc reste ouvert sur cinq blocs, hormis les deux niveaux de porte.
+        for (int y = BASE_Y + 3; y <= BASE_Y + 5; y++) {
             assertTrue(isAir(blocks, -1, y, -9));
             assertTrue(isAir(blocks, 0, y, -9));
         }
@@ -90,15 +90,30 @@ class KeepBuilderTest {
                 blocks.get(key(-1, BASE_Y + 7, -9))
         );
 
-        // Les deux battants intérieurs ferment le vestibule sans bloquer l'arc.
-        assertEquals(
-                Material.DARK_OAK_DOOR,
-                blocks.get(key(-1, BASE_Y + 1, -11))
-        );
-        assertEquals(
-                Material.DARK_OAK_DOOR,
-                blocks.get(key(0, BASE_Y + 2, -11))
-        );
+        /*
+         * Ici, je vérifie les quatre moitiés de porte sur le plan de façade et
+         * les jambages qui interdisent tout passage sur leurs côtés.
+         */
+        for (int x = -1; x <= 0; x++) {
+            for (int y = BASE_Y + 1; y <= BASE_Y + 2; y++) {
+                assertEquals(
+                        Material.DARK_OAK_DOOR,
+                        blocks.get(key(x, y, -9))
+                );
+            }
+        }
+        for (int jambX : new int[]{-2, 1}) {
+            for (int y = BASE_Y + 1; y <= BASE_Y + 2; y++) {
+                assertEquals(
+                        Material.POLISHED_ANDESITE,
+                        blocks.get(key(jambX, y, -9))
+                );
+            }
+        }
+
+        // L'ancien emplacement intérieur ne contient plus de porte contournable.
+        assertTrue(isAir(blocks, -1, BASE_Y + 1, -11));
+        assertTrue(isAir(blocks, 0, BASE_Y + 1, -11));
 
         // Trois planchers et la terrasse restent continus hors des escaliers.
         assertFalse(isAir(blocks, 5, BASE_Y + 9, -16));

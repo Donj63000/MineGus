@@ -55,7 +55,12 @@ public final class SpecialBuildings {
                     if (!shell) {
                         continue;
                     }
-                    boolean frontDoor = z == maxZ && Math.abs(x - centerX) <= 1 && y <= baseY + 2;
+                    /*
+                     * Ici, je limite la baie à la largeur réelle de la porte.
+                     * Les deux cellules latérales restent ainsi maçonnées et
+                     * empêchent de contourner le battant lorsqu'il est fermé.
+                     */
+                    boolean frontDoor = z == maxZ && x == centerX && y <= baseY + 2;
                     boolean stained = (x == minX || x == maxX)
                             && y >= baseY + 2 && y <= baseY + 5
                             && ((z == minZ + 4) || (z == maxZ - 4) || (z == centerZ));
