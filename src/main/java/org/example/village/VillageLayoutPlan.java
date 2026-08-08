@@ -18,6 +18,7 @@ import java.util.Map;
 public record VillageLayoutPlan(
         List<LotPlan> lots,
         List<StreetPlan> streets,
+        List<PassagePlan> passages,
         Bounds bounds,
         Map<String, Location> anchors,
         int houseCount,
@@ -28,6 +29,9 @@ public record VillageLayoutPlan(
         FORGE,
         INN,
         BAKERY,
+        TOWN_HALL,
+        CARPENTER,
+        STABLE,
         HOUSE_SINGLE,
         HOUSE_TWO_STORY,
         FARM,
@@ -47,7 +51,16 @@ public record VillageLayoutPlan(
     public enum StreetType {
         MAIN,
         SIDE,
+        ALLEY,
         FOOTPATH
+    }
+
+    /**
+     * Aspect architectural d'un passage couvert.
+     */
+    public enum PassageStyle {
+        TIMBER,
+        STONE
     }
 
     public enum HouseArchetype {
@@ -139,6 +152,105 @@ public record VillageLayoutPlan(
             return z >= minZ() - extra
                     && z <= maxZ() + extra
                     && Math.abs(x - startX) <= halfWidth + extra;
+        }
+    }
+
+    /**
+     * Petit passage couvert construit au-dessus d'une ruelle.
+     *
+     * <p>{@code streetDirection} décrit l'axe de circulation. Les deux piles
+     * sont automatiquement placées perpendiculairement à cet axe, à
+     * {@code halfWidth + 2} blocs du centre, afin de conserver une largeur
+     * praticable et de ne jamais poser un poteau au milieu de la chaussée.</p>
+     */
+    public record PassagePlan(
+            int centerX,
+            int centerZ,
+            BlockFace streetDirection,
+            int halfWidth,
+            PassageStyle style
+    ) {
+        public PassagePlan {
+            if (!isHorizontalFacing(streetDirection)) {
+                throw new IllegalArgumentException(
+                        "L'axe d'un passage doit être horizontal."
+                );
+            }
+            halfWidth = Math.max(0, halfWidth);
+            style = style == null ? PassageStyle.TIMBER : style;
+        }
+
+        public boolean horizontalStreet() {
+            return streetDirection == BlockFace.EAST
+                    || streetDirection == BlockFace.WEST;
+        }
+
+        public int postOffset() {
+            return halfWidth + 2;
+        }
+
+        public int firstPostX() {
+            return horizontalStreet() ? centerX : centerX - postOffset();
+        }
+
+        public int firstPostZ() {
+            return horizontalStreet() ? centerZ - postOffset() : centerZ;
+        }
+
+        public int secondPostX() {
+            return horizontalStreet() ? centerX : centerX + postOffset();
+        }
+
+        public int secondPostZ() {
+            return horizontalStreet() ? centerZ + postOffset() : centerZ;
+        }
+
+        /**
+         * Bornes de l'ouvrage complet, contreforts et débords de toiture
+         * compris. Elles servent à la fois au contrôle des collisions et au
+         * calcul de l'enceinte.
+         */
+        public int structureMinX() {
+            return horizontalStreet()
+                    ? centerX - 2
+                    : firstPostX() - 1;
+        }
+
+        public int structureMaxX() {
+            return horizontalStreet()
+                    ? centerX + 2
+                    : secondPostX() + 1;
+        }
+
+        public int structureMinZ() {
+            return horizontalStreet()
+                    ? firstPostZ() - 1
+                    : centerZ - 2;
+        }
+
+        public int structureMaxZ() {
+            return horizontalStreet()
+                    ? secondPostZ() + 1
+                    : centerZ + 2;
+        }
+
+        /**
+         * Indique si une cellule appartient à l'emprise de l'ouvrage, avec une
+         * marge optionnelle.
+         */
+        public boolean containsGround(int x, int z, int extra) {
+            int margin = Math.max(0, extra);
+            return x >= structureMinX() - margin
+                    && x <= structureMaxX() + margin
+                    && z >= structureMinZ() - margin
+                    && z <= structureMaxZ() + margin;
+        }
+
+        private static boolean isHorizontalFacing(BlockFace face) {
+            return face == BlockFace.NORTH
+                    || face == BlockFace.SOUTH
+                    || face == BlockFace.EAST
+                    || face == BlockFace.WEST;
         }
     }
 

@@ -1,7 +1,7 @@
 package org.example;
 
-import be.seeseemelk.mockbukkit.MockBukkit;
-import be.seeseemelk.mockbukkit.ServerMock;
+import org.mockbukkit.mockbukkit.MockBukkit;
+import org.mockbukkit.mockbukkit.ServerMock;
 import org.bukkit.ChatColor;
 import org.bukkit.command.CommandSender;
 import org.bukkit.permissions.Permission;
@@ -47,6 +47,7 @@ class MinegusCommandTest {
         assertTrue(help.contains("/village"));
         assertTrue(help.contains("/armure"));
         assertTrue(help.contains("/marchand"));
+        assertTrue(help.contains("/niveau"));
         assertTrue(help.contains("/job"));
         assertTrue(help.contains("/minegus fix <forestier|golems>"));
         assertTrue(help.contains("[permission]"));
@@ -93,6 +94,13 @@ class MinegusCommandTest {
         assertNull(plugin.getCommand("minegus").getPermission());
         assertNotNull(plugin.getCommand("garde"));
         assertEquals("mineplugin.garde.use", plugin.getCommand("garde").getPermission());
+        assertNotNull(plugin.getCommand("niveau"));
+        assertNotNull(plugin.getGlobalProgressionManager());
+        Permission progressionAdmin =
+                server.getPluginManager().getPermission(
+                        "mineplugin.progression.admin");
+        assertNotNull(progressionAdmin);
+        assertEquals(PermissionDefault.OP, progressionAdmin.getDefault());
         Permission guardPermission = server.getPluginManager().getPermission("mineplugin.garde.use");
         assertNotNull(guardPermission);
         assertEquals(PermissionDefault.TRUE, guardPermission.getDefault());

@@ -31,7 +31,10 @@ import org.bukkit.event.block.BlockExplodeEvent;
 import org.bukkit.event.block.BlockPistonExtendEvent;
 import org.bukkit.event.block.BlockPistonRetractEvent;
 import org.bukkit.event.block.BlockPlaceEvent;
+import org.bukkit.event.entity.EntityDamageEvent;
+import org.bukkit.event.entity.EntityDeathEvent;
 import org.bukkit.event.entity.EntityExplodeEvent;
+import org.bukkit.event.entity.EntityTransformEvent;
 import org.bukkit.event.world.ChunkLoadEvent;
 import org.bukkit.event.inventory.InventoryMoveItemEvent;
 import org.bukkit.event.inventory.InventoryOpenEvent;
@@ -48,6 +51,7 @@ import org.bukkit.persistence.PersistentDataContainer;
 import org.bukkit.persistence.PersistentDataType;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.bukkit.scheduler.BukkitRunnable;
+import org.bukkit.scheduler.BukkitTask;
 import org.bukkit.util.Vector;
 import org.example.mineur.AutomatedMiningContext;
 import org.example.mineur.BranchIterator;
@@ -87,6 +91,8 @@ public class Mineur implements CommandExecutor, Listener {
 
     private static final String SELECTOR_NAME = ChatColor.GOLD + "Sélecteur de mine";
     private static final String CMD_PREFIX = ChatColor.GRAY + "[Mineur] " + ChatColor.RESET;
+    private static final long DEFAULT_ENTITY_WATCHDOG_INTERVAL_TICKS = 20L;
+    private static final long DEFAULT_ENTITY_RECOVERY_DELAY_TICKS = 2L;
 
     private final JavaPlugin plugin;
     private final SessionStore sessionStore;
@@ -101,6 +107,10 @@ public class Mineur implements CommandExecutor, Listener {
     private final Map<UUID, RuntimeSession> runtimes = new HashMap<>();
     private final Map<UUID, List<UUID>> ownerSessions = new HashMap<>();
     private final Map<UUID, UUID> selectedSessions = new HashMap<>();
+    private final Set<UUID> pendingMinerRecoveries = new HashSet<>();
+
+    private BukkitTask entityWatchdogTask;
+    private boolean shuttingDown;
 
     public Mineur(JavaPlugin plugin) {
         this.plugin = plugin;
@@ -529,7 +539,7 @@ public class Mineur implements CommandExecutor, Listener {
             try {
                 restartLoop(runtime);
             } catch (RuntimeException exception) {
-                state.paused = true;
+                state.pause(MiningSessionState.PauseReason.ERROR);
                 runtime.suspend();
                 plugin.getLogger().log(Level.WARNING,
                         "[Mineur] Changement de vitesse impossible pour la session "
@@ -650,7 +660,7 @@ public class Mineur implements CommandExecutor, Listener {
             try {
                 activateRuntime(runtime);
             } catch (RuntimeException exception) {
-                state.paused = true;
+                state.pause(MiningSessionState.PauseReason.ERROR);
                 runtime.suspend();
                 plugin.getLogger().log(Level.WARNING,
                         "[Mineur] Nouveau pattern impossible pour la session "
@@ -681,7 +691,11 @@ public class Mineur implements CommandExecutor, Listener {
         }
 
         RuntimeSession runtime = runtimeOf(state.id);
-        state.paused = pause;
+        if (pause) {
+            state.pause(MiningSessionState.PauseReason.MANUAL);
+        } else {
+            state.resume();
+        }
         if (pause) {
             if (runtime != null) {
                 runtime.suspend();
@@ -705,7 +719,7 @@ public class Mineur implements CommandExecutor, Listener {
                     activateRuntime(runtime);
                 }
             } catch (RuntimeException exception) {
-                state.paused = true;
+                state.pause(MiningSessionState.PauseReason.ERROR);
                 RuntimeSession failedRuntime = runtimeOf(state.id);
                 if (failedRuntime != null) {
                     failedRuntime.suspend();
@@ -1217,6 +1231,15 @@ public class Mineur implements CommandExecutor, Listener {
             if (runtime != null && runtime.decoration != null && !state.paused) {
                 runtime.decoration.synchronizeToCursor();
             }
+            if (runtime != null
+                    && !state.paused
+                    && (!isHealthyMiner(runtime) || !isLoopActive(runtime))) {
+                requestMinerRecovery(
+                        state.id,
+                        runtime.loopGeneration,
+                        "reconnexion du propriétaire"
+                );
+            }
         }
         if (paused > 0) {
             event.getPlayer().sendMessage(CMD_PREFIX + ChatColor.YELLOW
@@ -1226,6 +1249,75 @@ public class Mineur implements CommandExecutor, Listener {
             event.getPlayer().sendMessage(CMD_PREFIX + ChatColor.RED
                     + waitingStorage + " mineur(s) attendent de la place dans leur stockage.");
         }
+    }
+
+    /**
+     * Les dégâts ordinaires ne doivent jamais détruire le représentant visuel
+     * d'une session persistante. Le superviseur reste néanmoins nécessaire pour
+     * couvrir /kill, Entity#remove et les suppressions provenant d'autres plugins.
+     */
+    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
+    public void onMinerDamage(EntityDamageEvent event) {
+        if (!(event.getEntity() instanceof Villager villager)) {
+            return;
+        }
+        UUID sessionId = entitySessionId(villager);
+        if (sessionId != null && findSessionById(sessionId) != null) {
+            event.setCancelled(true);
+        }
+    }
+
+    /**
+     * Empêche notamment la zombification d'un mineur. Une transformation
+     * remplacerait l'entité sans conserver de référence runtime fiable.
+     */
+    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
+    public void onMinerTransform(EntityTransformEvent event) {
+        if (!(event.getEntity() instanceof Villager villager)) {
+            return;
+        }
+        UUID sessionId = entitySessionId(villager);
+        if (sessionId != null && findSessionById(sessionId) != null) {
+            event.setCancelled(true);
+        }
+    }
+
+    /**
+     * Une mort forcée est réparée au tick suivant. Les drops sont supprimés pour
+     * éviter qu'une commande répétée duplique l'équipement cosmétique du PNJ.
+     */
+    @EventHandler(priority = EventPriority.HIGHEST)
+    public void onMinerDeath(EntityDeathEvent event) {
+        if (!(event.getEntity() instanceof Villager villager)) {
+            return;
+        }
+
+        UUID sessionId = entitySessionId(villager);
+        MiningSessionState state = findSessionById(sessionId);
+        if (state == null) {
+            return;
+        }
+
+        /*
+         * Le nettoyage vaut aussi pour un ancien doublon signé qui serait tué
+         * avant le passage de réconciliation.
+         */
+        event.getDrops().clear();
+        event.setDroppedExp(0);
+
+        RuntimeSession runtime = runtimeOf(sessionId);
+        if (runtime == null || runtime.state.paused || shuttingDown) {
+            return;
+        }
+        if (runtime.miner != null
+                && runtime.miner.getUniqueId().equals(villager.getUniqueId())) {
+            runtime.miner = null;
+        }
+        requestMinerRecovery(
+                sessionId,
+                runtime.loopGeneration,
+                "mort forcée du PNJ"
+        );
     }
 
     @EventHandler
@@ -1254,13 +1346,13 @@ public class Mineur implements CommandExecutor, Listener {
             try {
                 sessionId = UUID.fromString(rawSession);
             } catch (IllegalArgumentException exception) {
-                entity.remove();
+                removeEntitySafely(entity);
                 continue;
             }
 
             RuntimeSession runtime = runtimeOf(sessionId);
             if (!isExpectedRuntimeEntity(runtime, entity)) {
-                entity.remove();
+                removeEntitySafely(entity);
             }
         }
     }
@@ -1295,11 +1387,453 @@ public class Mineur implements CommandExecutor, Listener {
         }
     }
 
+    /**
+     * Lit l'identifiant persistant d'un acteur de mine sans faire confiance à
+     * une donnée NBT/PDC malformée.
+     */
+    private UUID entitySessionId(Entity entity) {
+        if (entity == null) {
+            return null;
+        }
+        String rawSession = entity.getPersistentDataContainer()
+                .get(entitySessionKey, PersistentDataType.STRING);
+        if (rawSession == null || rawSession.isBlank()) {
+            return null;
+        }
+        try {
+            return UUID.fromString(rawSession.trim());
+        } catch (IllegalArgumentException ignored) {
+            return null;
+        }
+    }
+
+    /**
+     * Vérifie que la référence runtime désigne bien l'unique PNJ signé de la
+     * session, dans le bon monde et encore utilisable par Bukkit.
+     */
+    private boolean isHealthyMiner(RuntimeSession runtime) {
+        if (runtime == null
+                || runtime.state == null
+                || runtime.state.id == null
+                || runtime.state.worldUid == null
+                || runtime.miner == null) {
+            return false;
+        }
+        try {
+            return !runtime.miner.isDead()
+                    && runtime.miner.isValid()
+                    && runtime.miner.getWorld() != null
+                    && runtime.state.worldUid.equals(runtime.miner.getWorld().getUID())
+                    && runtime.state.id.equals(entitySessionId(runtime.miner));
+        } catch (RuntimeException exception) {
+            return false;
+        }
+    }
+
+    /**
+     * Une référence non nulle ne garantit pas que la tâche Bukkit tourne
+     * encore : elle peut avoir été annulée par une erreur ou un plugin tiers.
+     */
+    private boolean isLoopActive(RuntimeSession runtime) {
+        if (runtime == null || runtime.loop == null) {
+            return false;
+        }
+        try {
+            return !runtime.loop.isCancelled();
+        } catch (IllegalStateException exception) {
+            return false;
+        }
+    }
+
+    /**
+     * Retire une entité sans laisser une implémentation tierce interrompre la
+     * réconciliation des autres sessions.
+     */
+    private boolean removeEntitySafely(Entity entity) {
+        if (entity == null) {
+            return false;
+        }
+        try {
+            entity.remove();
+            return true;
+        } catch (RuntimeException exception) {
+            plugin.getLogger().log(
+                    Level.FINE,
+                    "[Mineur] Suppression d'un ancien acteur impossible.",
+                    exception
+            );
+            return false;
+        }
+    }
+
+    /**
+     * Réapplique les propriétés critiques. Un autre plugin peut les modifier
+     * sans supprimer l'entité ; la surveillance doit aussi réparer ce cas.
+     */
+    private void enforceMinerProperties(RuntimeSession runtime) {
+        if (!isHealthyMiner(runtime)) {
+            return;
+        }
+        Villager villager = runtime.miner;
+        villager.setCustomName(ChatColor.GOLD + "Mineur");
+        villager.setCustomNameVisible(true);
+        villager.setProfession(Villager.Profession.ARMORER);
+        villager.setAI(false);
+        villager.setGravity(false);
+        villager.setInvulnerable(true);
+        villager.setCollidable(false);
+        villager.setRemoveWhenFarAway(false);
+        villager.setPersistent(true);
+        villager.getPersistentDataContainer().set(
+                entitySessionKey,
+                PersistentDataType.STRING,
+                runtime.state.id.toString()
+        );
+    }
+
+    /**
+     * Supprime tous les PNJ mineurs chargés d'une session, sauf l'UUID
+     * explicitement conservé. La recherche couvre tous les mondes chargés afin
+     * qu'une téléportation externe ne puisse laisser un doublon ailleurs.
+     */
+    private int removeLoadedMinersForSession(UUID sessionId, UUID keptEntityId) {
+        if (sessionId == null) {
+            return 0;
+        }
+
+        int removed = 0;
+        for (World world : Bukkit.getWorlds()) {
+            for (Villager villager : new ArrayList<>(world.getEntitiesByClass(Villager.class))) {
+                if (!sessionId.equals(entitySessionId(villager))
+                        || Objects.equals(keptEntityId, villager.getUniqueId())) {
+                    continue;
+                }
+                if (removeEntitySafely(villager)) {
+                    removed++;
+                }
+            }
+        }
+        return removed;
+    }
+
+    /**
+     * Passe globale anti-doublon. Les acteurs sans runtime, ceux d'une session
+     * en pause et tout exemplaire autre que la référence canonique sont retirés.
+     */
+    private void reconcileLoadedMinerEntities() {
+        for (World world : Bukkit.getWorlds()) {
+            for (Villager villager : new ArrayList<>(world.getEntitiesByClass(Villager.class))) {
+                String rawSession = villager.getPersistentDataContainer()
+                        .get(entitySessionKey, PersistentDataType.STRING);
+                if (rawSession == null || rawSession.isBlank()) {
+                    continue;
+                }
+
+                UUID sessionId = entitySessionId(villager);
+                if (sessionId == null) {
+                    removeEntitySafely(villager);
+                    continue;
+                }
+
+                RuntimeSession runtime = runtimeOf(sessionId);
+                boolean canonical = runtime != null
+                        && !runtime.state.paused
+                        && isHealthyMiner(runtime)
+                        && runtime.miner.getUniqueId().equals(villager.getUniqueId());
+                if (!canonical) {
+                    removeEntitySafely(villager);
+                }
+            }
+        }
+    }
+
+    private long getEntityWatchdogIntervalTicks() {
+        long configured = plugin.getConfig().getLong(
+                "mineur.persistence.entity-watchdog-interval-ticks",
+                DEFAULT_ENTITY_WATCHDOG_INTERVAL_TICKS
+        );
+        return Math.max(5L, Math.min(1_200L, configured));
+    }
+
+    private long getEntityRecoveryDelayTicks() {
+        long configured = plugin.getConfig().getLong(
+                "mineur.persistence.entity-recovery-delay-ticks",
+                DEFAULT_ENTITY_RECOVERY_DELAY_TICKS
+        );
+        return Math.max(1L, Math.min(200L, configured));
+    }
+
+    /**
+     * Démarre une unique tâche de réconciliation. Elle couvre les suppressions
+     * qui ne déclenchent aucun événement Bukkit standard, notamment
+     * {@link Entity#remove()} appelé par un autre plugin.
+     */
+    private void startEntityWatchdog() {
+        stopEntityWatchdog();
+        if (shuttingDown) {
+            return;
+        }
+
+        long interval = getEntityWatchdogIntervalTicks();
+        entityWatchdogTask = Bukkit.getScheduler().runTaskTimer(
+                plugin,
+                this::superviseMinerEntities,
+                interval,
+                interval
+        );
+    }
+
+    private void stopEntityWatchdog() {
+        if (entityWatchdogTask != null) {
+            entityWatchdogTask.cancel();
+            entityWatchdogTask = null;
+        }
+    }
+
+    private void superviseMinerEntities() {
+        if (shuttingDown) {
+            return;
+        }
+
+        /*
+         * Cette passe est effectuée avant les respawns : un ancien exemplaire
+         * chargé ne peut donc jamais coexister avec celui qui va être créé.
+         */
+        try {
+            reconcileLoadedMinerEntities();
+        } catch (RuntimeException exception) {
+            /*
+             * Le contrôle des runtimes reste utile même si l'énumération globale
+             * d'un monde en cours de déchargement échoue temporairement.
+             */
+            plugin.getLogger().log(
+                    Level.WARNING,
+                    "[Mineur] Réconciliation globale des PNJ impossible.",
+                    exception
+            );
+        }
+
+        for (RuntimeSession runtime : new ArrayList<>(runtimes.values())) {
+            if (runtime == null || runtime.state.paused) {
+                continue;
+            }
+
+            try {
+                if (isHealthyMiner(runtime)) {
+                    enforceMinerProperties(runtime);
+                    try {
+                        ensureGolems(runtime);
+                    } catch (RuntimeException exception) {
+                        plugin.getLogger().log(
+                                Level.FINE,
+                                "[Mineur] Surveillance des golems impossible pour la session "
+                                        + runtime.state.id + ".",
+                                exception
+                        );
+                    }
+                }
+
+                if (!isHealthyMiner(runtime) || !isLoopActive(runtime)) {
+                    requestMinerRecovery(
+                            runtime.state.id,
+                            runtime.loopGeneration,
+                            "surveillance périodique"
+                    );
+                }
+            } catch (RuntimeException exception) {
+                /*
+                 * Une session défectueuse ne doit jamais interrompre la
+                 * surveillance de toutes les autres.
+                 */
+                plugin.getLogger().log(
+                        Level.WARNING,
+                        "[Mineur] Surveillance impossible pour la session "
+                                + runtime.state.id + ".",
+                        exception
+                );
+            }
+        }
+    }
+
+    /**
+     * Sérialise les demandes de réparation par session. Plusieurs événements
+     * survenus dans le même tick ne peuvent donc produire qu'un seul respawn.
+     */
+    private void requestMinerRecovery(UUID sessionId,
+                                      long expectedGeneration,
+                                      String reason) {
+        if (sessionId == null || shuttingDown || !pendingMinerRecoveries.add(sessionId)) {
+            return;
+        }
+
+        long delay = getEntityRecoveryDelayTicks();
+        try {
+            Bukkit.getScheduler().runTaskLater(plugin, () -> {
+                try {
+                    if (shuttingDown) {
+                        return;
+                    }
+
+                    RuntimeSession runtime = runtimeOf(sessionId);
+                    if (runtime == null || runtime.state.paused) {
+                        return;
+                    }
+
+                    /*
+                     * Une commande a peut-être déjà créé une nouvelle boucle entre
+                     * la demande et son exécution. On ne touche pas à ce runtime sain.
+                     * Si le PNJ manque toujours, la réparation reste prioritaire.
+                     */
+                    if (runtime.loopGeneration != expectedGeneration
+                            && isHealthyMiner(runtime)
+                            && isLoopActive(runtime)) {
+                        return;
+                    }
+                    recoverMinerRuntime(runtime, reason);
+                } catch (RuntimeException exception) {
+                    plugin.getLogger().log(
+                            Level.WARNING,
+                            "[Mineur] Restauration inattendue impossible pour la session "
+                                    + sessionId + ".",
+                            exception
+                    );
+                } finally {
+                    /*
+                     * Le verrou reste détenu pendant toute la réparation : un
+                     * événement déclenché synchroniquement par le respawn ne peut
+                     * pas programmer un second PNJ.
+                     */
+                    pendingMinerRecoveries.remove(sessionId);
+                }
+            }, delay);
+        } catch (RuntimeException exception) {
+            pendingMinerRecoveries.remove(sessionId);
+            if (!shuttingDown) {
+                plugin.getLogger().log(
+                        Level.WARNING,
+                        "[Mineur] Impossible de planifier la restauration de la session "
+                                + sessionId + ".",
+                        exception
+                );
+            }
+        }
+    }
+
+    /**
+     * Répare atomiquement le couple « PNJ + boucle ». Le curseur est restauré
+     * avant toute création, puis les anciens acteurs chargés sont supprimés.
+     * En cas d'échec temporaire, la session reste active et le watchdog réessaie.
+     */
+    private void recoverMinerRuntime(RuntimeSession runtime, String reason) {
+        if (runtime == null || runtime.state.paused || shuttingDown) {
+            return;
+        }
+
+        boolean minerWasMissing = !isHealthyMiner(runtime);
+        boolean loopWasMissing = !isLoopActive(runtime);
+
+        if (minerWasMissing) {
+            /*
+             * Invalide immédiatement tous les callbacks de l'ancienne boucle.
+             * Le checkpoint non validé est restauré avant de créer un acteur.
+             */
+            runtime.loopGeneration++;
+            if (runtime.loop != null) {
+                runtime.loop.cancelAndRollback();
+                runtime.loop = null;
+            } else {
+                runtime.state.rollbackPendingCursor();
+            }
+
+            try {
+                refreshChunkTickets(runtime.state, runtime);
+                replaceRuntimeMiner(runtime);
+                runtime.minerRecoveryFailures = 0;
+            } catch (RuntimeException exception) {
+                int failures = ++runtime.minerRecoveryFailures;
+                if (failures == 1 || failures % 30 == 0) {
+                    plugin.getLogger().log(
+                            Level.WARNING,
+                            "[Mineur] Restauration du PNJ impossible pour la session "
+                                    + runtime.state.id + " (tentative " + failures + ").",
+                            exception
+                    );
+                }
+                return;
+            }
+        } else {
+            try {
+                enforceMinerProperties(runtime);
+            } catch (RuntimeException exception) {
+                plugin.getLogger().log(
+                        Level.FINE,
+                        "[Mineur] Propriétés du PNJ non réappliquées pour la session "
+                                + runtime.state.id + ".",
+                        exception
+                );
+            }
+        }
+
+        /*
+         * isLoopActive() détecte également une BukkitRunnable annulée dont la
+         * référence n'a pas encore été remise à null.
+         */
+        if (!isLoopActive(runtime)) {
+            try {
+                restartLoop(runtime);
+                runtime.minerRecoveryFailures = 0;
+            } catch (RuntimeException exception) {
+                runtime.state.rollbackPendingCursor();
+                runtime.loop = null;
+                int failures = ++runtime.minerRecoveryFailures;
+                if (failures == 1 || failures % 30 == 0) {
+                    plugin.getLogger().log(
+                            Level.WARNING,
+                            "[Mineur] Boucle non restaurée pour la session "
+                                    + runtime.state.id + " (tentative " + failures + ").",
+                            exception
+                    );
+                }
+                return;
+            }
+        }
+
+        try {
+            ensureGolems(runtime);
+        } catch (RuntimeException exception) {
+            /*
+             * Les gardes sont auxiliaires : leur échec ne doit jamais annuler
+             * la restauration réussie du mineur principal.
+             */
+            plugin.getLogger().log(
+                    Level.FINE,
+                    "[Mineur] Golems non restaurés pour la session "
+                            + runtime.state.id + ".",
+                    exception
+            );
+        }
+
+        removeLoadedMinersForSession(
+                runtime.state.id,
+                runtime.miner != null ? runtime.miner.getUniqueId() : null
+        );
+        saveAllSessions();
+
+        if (minerWasMissing || loopWasMissing) {
+            plugin.getLogger().info("[Mineur] Runtime de la session " + runtime.state.id
+                    + " restauré automatiquement (" + reason + ").");
+        }
+    }
+
     public void saveAllSessions() {
         sessionStore.saveAll(sessions);
     }
 
     public void loadSavedSessions() {
+        stopEntityWatchdog();
+        shuttingDown = false;
+        pendingMinerRecoveries.clear();
+
         for (RuntimeSession runtime : new ArrayList<>(runtimes.values())) {
             runtime.stop(false);
         }
@@ -1317,6 +1851,17 @@ public class Mineur implements CommandExecutor, Listener {
         List<MiningSessionState> loaded = sessionStore.load();
         for (MiningSessionState state : loaded) {
             try {
+                if (state.resumeLegacyUnknownPause()) {
+                    /*
+                     * Avant le schéma 6, une simple absence du propriétaire au
+                     * démarrage pouvait être persistée comme une pause définitive.
+                     * La cause étant inconnue dans ces anciens fichiers, cette
+                     * migration réactive la session une seule fois ; toutes les
+                     * nouvelles pauses possèdent ensuite une cause fiable.
+                     */
+                    plugin.getLogger().info("[Mineur] Session " + state.id
+                            + " réactivée lors de la migration de persistance.");
+                }
                 normalizeLoadedState(state);
                 if (!hasValidDimensions(state.width, state.length)) {
                     plugin.getLogger().warning("[Mineur] Session " + state.id
@@ -1352,7 +1897,7 @@ public class Mineur implements CommandExecutor, Listener {
                     );
                 }
                 if (overlap != null) {
-                    state.paused = true;
+                    state.pause(MiningSessionState.PauseReason.SAFETY);
                     plugin.getLogger().warning("[Mineur] Session " + state.id
                             + " chargée en pause : chevauchement avec "
                             + overlap.id + ".");
@@ -1362,7 +1907,7 @@ public class Mineur implements CommandExecutor, Listener {
                 registerOwnerSession(state, false);
                 startRuntime(state, false);
             } catch (RuntimeException exception) {
-                state.paused = true;
+                state.pause(MiningSessionState.PauseReason.ERROR);
                 RuntimeSession failed = runtimes.remove(state.id);
                 if (failed != null) {
                     failed.stop(false);
@@ -1378,10 +1923,15 @@ public class Mineur implements CommandExecutor, Listener {
         }
 
         saveAllSessions();
+        startEntityWatchdog();
         plugin.getLogger().info("Mineur : " + sessions.size() + " session(s) rechargée(s).");
     }
 
     public void stopAllSessions() {
+        shuttingDown = true;
+        stopEntityWatchdog();
+        pendingMinerRecoveries.clear();
+
         for (RuntimeSession runtime : new ArrayList<>(runtimes.values())) {
             /*
              * À l'arrêt du serveur, les coffres restent associés aux sessions
@@ -1469,8 +2019,8 @@ public class Mineur implements CommandExecutor, Listener {
         refreshChunkTickets(runtime.state, runtime);
         runtime.router = createInventoryRouter(runtime);
 
-        if (runtime.miner == null || runtime.miner.isDead() || !runtime.miner.isValid()) {
-            runtime.miner = spawnMiner(runtime.state);
+        if (!isHealthyMiner(runtime)) {
+            replaceRuntimeMiner(runtime);
         }
         ensureGolems(runtime);
 
@@ -1662,7 +2212,7 @@ public class Mineur implements CommandExecutor, Listener {
                  * joueur. Une erreur de chunk ou d'acteur ne doit ni remonter
                  * dans cet événement ni laisser une session annoncée active.
                  */
-                state.paused = true;
+                state.pause(MiningSessionState.PauseReason.ERROR);
                 runtime.suspend();
                 plugin.getLogger().log(
                         Level.WARNING,
@@ -2300,7 +2850,7 @@ public class Mineur implements CommandExecutor, Listener {
 
         if (runtime.containerLocations.isEmpty()) {
             state.waitingStorage = true;
-            state.paused = true;
+            state.pause(MiningSessionState.PauseReason.SAFETY);
             plugin.getLogger().warning("[Mineur] Session " + state.id
                     + " chargée en pause : aucun stockage persistant valide.");
             notifyOwner(state.owner, ChatColor.RED
@@ -2612,6 +3162,38 @@ public class Mineur implements CommandExecutor, Listener {
             }
         }
         state.containers.clear();
+    }
+
+    /**
+     * Crée le PNJ canonique d'une session après avoir supprimé tout ancien
+     * exemplaire chargé portant le même identifiant persistant.
+     */
+    private Villager spawnSingleMiner(MiningSessionState state) {
+        if (state == null || state.id == null) {
+            throw new IllegalArgumentException("Session mineur invalide.");
+        }
+        removeLoadedMinersForSession(state.id, null);
+        return spawnMiner(state);
+    }
+
+    /**
+     * Remplace la référence runtime non canonique avant le respawn. Cela couvre
+     * aussi une entité encore valide que quelqu'un aurait déplacée dans un autre
+     * monde ou dont la donnée persistante aurait été altérée.
+     */
+    private Villager replaceRuntimeMiner(RuntimeSession runtime) {
+        if (runtime == null || runtime.state == null) {
+            throw new IllegalArgumentException("Runtime mineur invalide.");
+        }
+        Villager previous = runtime.miner;
+        runtime.miner = null;
+        if (previous != null && !removeEntitySafely(previous)) {
+            throw new IllegalStateException(
+                    "L'ancien PNJ n'a pas pu être supprimé sans risque de doublon."
+            );
+        }
+        runtime.miner = spawnSingleMiner(runtime.state);
+        return runtime.miner;
     }
 
     private Villager spawnMiner(MiningSessionState state) {
@@ -2997,8 +3579,8 @@ public class Mineur implements CommandExecutor, Listener {
             runtime.state.rollbackPendingCursor();
         }
 
-        if (runtime.miner == null || runtime.miner.isDead() || !runtime.miner.isValid()) {
-            runtime.miner = spawnMiner(runtime.state);
+        if (!isHealthyMiner(runtime)) {
+            replaceRuntimeMiner(runtime);
         }
         if (runtime.state.cursor == null) {
             runtime.state.cursor = new MiningCursor(
@@ -3030,7 +3612,7 @@ public class Mineur implements CommandExecutor, Listener {
                 createMiningTool(),
                 block -> currentRuntime.decoration == null
                         || !currentRuntime.decoration.isManagedBlock(block),
-                block -> canAutomatedMinerBreak(runtime.state, block),
+                block -> evaluateAutomatedMinerBreak(runtime.state, block),
                 block -> {
                     if (currentRuntime.decoration != null) {
                         currentRuntime.decoration.afterBlock(block);
@@ -3048,6 +3630,11 @@ public class Mineur implements CommandExecutor, Listener {
                         currentRuntime.state,
                         exception,
                         loopGeneration
+                ),
+                () -> requestMinerRecovery(
+                        currentRuntime.state.id,
+                        loopGeneration,
+                        "la boucle a détecté la disparition du PNJ"
                 ),
                 plugin.getConfig().getBoolean("mineur.apply-physics", true),
                 runtime.state.waitingStorage,
@@ -3122,7 +3709,7 @@ public class Mineur implements CommandExecutor, Listener {
                  * rester non interceptée avec une session affichée « active »
                  * alors qu'aucune tâche ne tourne.
                  */
-                state.paused = true;
+                state.pause(MiningSessionState.PauseReason.ERROR);
                 runtime.suspend();
                 saveAllSessions();
                 notifyOwner(state.owner, ChatColor.RED
@@ -4030,7 +4617,9 @@ public class Mineur implements CommandExecutor, Listener {
         return new ItemStack(material);
     }
 
-    private boolean canAutomatedMinerBreak(MiningSessionState state, Block block) {
+    private MiningLoop.BreakPermissionResult evaluateAutomatedMinerBreak(
+            MiningSessionState state,
+            Block block) {
         if (state == null
                 || block == null
                 || state.paused
@@ -4039,7 +4628,7 @@ public class Mineur implements CommandExecutor, Listener {
                 || !MiningBlockPolicy.isMineable(block)
                 || !isInsideActiveCursor(state, block)
                 || !isInsideWorldBorder(block.getLocation())) {
-            return false;
+            return MiningLoop.BreakPermissionResult.DENIED;
         }
 
         Player owner = state.owner != null ? Bukkit.getPlayer(state.owner) : null;
@@ -4047,22 +4636,28 @@ public class Mineur implements CommandExecutor, Listener {
                 "mineur.protection.require-owner-online",
                 true
         );
-        if (owner == null) {
-            return !ownerRequired
-                    && !plugin.getConfig().getBoolean(
-                    "mineur.protection.fire-block-break-event",
-                    true
-            );
-        }
-
-        if (!plugin.getConfig().getBoolean(
+        boolean fireBreakEvent = plugin.getConfig().getBoolean(
                 "mineur.protection.fire-block-break-event",
                 true
-        )) {
-            return true;
+        );
+
+        if (owner == null) {
+            /*
+             * Au démarrage du serveur, les joueurs ne sont pas encore connectés.
+             * Cette absence est temporaire : elle doit seulement suspendre la
+             * casse, jamais mettre la session persistante en pause ni retirer
+             * son PNJ. L'événement synthétique requiert lui aussi un vrai Player.
+             */
+            return ownerRequired || fireBreakEvent
+                    ? MiningLoop.BreakPermissionResult.RETRY_LATER
+                    : MiningLoop.BreakPermissionResult.ALLOWED;
         }
 
-        return AutomatedMiningContext.call(() -> {
+        if (!fireBreakEvent) {
+            return MiningLoop.BreakPermissionResult.ALLOWED;
+        }
+
+        boolean allowed = AutomatedMiningContext.call(() -> {
             BlockBreakEvent syntheticEvent = new BlockBreakEvent(block, owner);
             syntheticEvent.setDropItems(false);
             syntheticEvent.setExpToDrop(0);
@@ -4073,6 +4668,9 @@ public class Mineur implements CommandExecutor, Listener {
              */
             return !syntheticEvent.isCancelled();
         });
+        return allowed
+                ? MiningLoop.BreakPermissionResult.ALLOWED
+                : MiningLoop.BreakPermissionResult.DENIED;
     }
 
     private boolean isInsideActiveCursor(MiningSessionState state, Block block) {
@@ -4105,12 +4703,12 @@ public class Mineur implements CommandExecutor, Listener {
             if (runtime == null || runtime.loopGeneration != expectedGeneration) {
                 return;
             }
-            state.paused = true;
+            state.pause(MiningSessionState.PauseReason.PROTECTION);
             runtime.suspend();
             saveAllSessions();
             notifyOwner(state.owner, ChatColor.RED
                     + "Minage refusé en " + coords(block)
-                    + " par une protection ou parce que le propriétaire est hors ligne. Session en pause.");
+                    + " par une protection. Session en pause.");
         });
     }
 
@@ -4122,7 +4720,7 @@ public class Mineur implements CommandExecutor, Listener {
             if (runtime == null || runtime.loopGeneration != expectedGeneration) {
                 return;
             }
-            state.paused = true;
+            state.pause(MiningSessionState.PauseReason.ERROR);
             runtime.suspend();
             saveAllSessions();
             notifyOwner(state.owner, ChatColor.RED
@@ -4568,6 +5166,11 @@ public class Mineur implements CommandExecutor, Listener {
         private DecorationDelegate decoration;
         private Hologram storageHologram;
         private MineCabinBuilder.BuildResult freshConstruction;
+        /**
+         * Compteur uniquement destiné à limiter les journaux lors d'un
+         * environnement temporairement impossible à restaurer.
+         */
+        private int minerRecoveryFailures;
 
         RuntimeSession(MiningSessionState state) {
             this.state = state;
@@ -4591,13 +5194,21 @@ public class Mineur implements CommandExecutor, Listener {
 
         void removeActors() {
             if (miner != null) {
-                if (!miner.isDead()) {
-                    miner.remove();
-                }
+                removeEntitySafely(miner);
                 miner = null;
             }
             for (Golem golem : new ArrayList<>(golems)) {
-                golem.remove();
+                try {
+                    if (golem != null) {
+                        golem.remove();
+                    }
+                } catch (RuntimeException exception) {
+                    plugin.getLogger().log(
+                            Level.FINE,
+                            "[Mineur] Suppression d'un golem auxiliaire impossible.",
+                            exception
+                    );
+                }
             }
             golems.clear();
         }

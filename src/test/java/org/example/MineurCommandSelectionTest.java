@@ -1,13 +1,17 @@
 package org.example;
 
-import be.seeseemelk.mockbukkit.MockBukkit;
-import be.seeseemelk.mockbukkit.ServerMock;
+import org.mockbukkit.mockbukkit.MockBukkit;
+import org.mockbukkit.mockbukkit.ServerMock;
 import org.bukkit.Location;
+import org.bukkit.Material;
 import org.bukkit.World;
+import org.bukkit.WorldBorder;
 import org.bukkit.block.Block;
+import org.bukkit.block.BlockState;
 import org.bukkit.block.Container;
 import org.bukkit.entity.Player;
 import org.example.mineur.MiningCursor;
+import org.example.mineur.MiningLoop;
 import org.example.mineur.MiningSessionState;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -21,9 +25,11 @@ import java.util.UUID;
 
 import org.bukkit.util.Vector;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
@@ -161,6 +167,50 @@ class MineurCommandSelectionTest {
         mineur.onCommand(player, null, "mineur", new String[]{"stop"});
         assertTrue(messages.stream().anyMatch(line -> line.contains("Seul le propriétaire")));
         assertTrue(sessions.contains(shared));
+    }
+
+    @Test
+    void offlineOwnerDefersMiningInsteadOfPersistingAFalsePause() throws Exception {
+        server = MockBukkit.mock();
+        MinePlugin plugin = MockBukkit.load(MinePlugin.class);
+        Mineur mineur = plugin.getMineur();
+
+        UUID worldUid = UUID.randomUUID();
+        World world = mock(World.class);
+        WorldBorder worldBorder = mock(WorldBorder.class);
+        when(world.getUID()).thenReturn(worldUid);
+        when(world.getWorldBorder()).thenReturn(worldBorder);
+        when(worldBorder.isInside(any(Location.class))).thenReturn(true);
+
+        Block block = mock(Block.class);
+        when(block.getWorld()).thenReturn(world);
+        when(block.getX()).thenReturn(10);
+        when(block.getY()).thenReturn(64);
+        when(block.getZ()).thenReturn(10);
+        when(block.getType()).thenReturn(Material.STONE);
+        when(block.isLiquid()).thenReturn(false);
+        when(block.getState()).thenReturn(mock(BlockState.class));
+        when(block.getLocation()).thenReturn(new Location(world, 10, 64, 10));
+
+        MiningSessionState state = new MiningSessionState();
+        state.worldUid = worldUid;
+        state.base = new Location(world, 10, 64, 10);
+        state.width = 1;
+        state.length = 1;
+        state.owner = UUID.randomUUID();
+        state.cursor = new MiningCursor(state.base, 1, 1);
+
+        Method evaluate = mineur.getClass().getDeclaredMethod(
+                "evaluateAutomatedMinerBreak",
+                MiningSessionState.class,
+                Block.class
+        );
+        evaluate.setAccessible(true);
+
+        Object result = evaluate.invoke(mineur, state, block);
+
+        assertEquals(MiningLoop.BreakPermissionResult.RETRY_LATER, result);
+        assertFalse(state.paused);
     }
 
     @Test

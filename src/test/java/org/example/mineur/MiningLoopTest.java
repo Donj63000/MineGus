@@ -10,6 +10,7 @@ import org.junit.jupiter.api.Test;
 
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.logging.Logger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -18,12 +19,14 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class MiningLoopTest {
 
     @Test
-    void missingMinerTriggersFailureWithoutCompletingTheWorksite() {
+    void missingMinerRequestsRecoveryWithoutPausingOrCompletingTheWorksite() {
         JavaPlugin plugin = mock(JavaPlugin.class);
         when(plugin.getLogger()).thenReturn(Logger.getAnonymousLogger());
 
@@ -42,6 +45,7 @@ class MiningLoopTest {
 
         AtomicBoolean completed = new AtomicBoolean(false);
         AtomicBoolean failed = new AtomicBoolean(false);
+        AtomicBoolean recoveryRequested = new AtomicBoolean(false);
         MiningLoop loop = new MiningLoop(
                 plugin,
                 state,
@@ -57,6 +61,7 @@ class MiningLoopTest {
                 null,
                 null,
                 exception -> failed.set(true),
+                () -> recoveryRequested.set(true),
                 true,
                 false,
                 1.0D
@@ -64,8 +69,9 @@ class MiningLoopTest {
 
         loop.run();
 
-        assertTrue(state.paused);
-        assertTrue(failed.get());
+        assertFalse(state.paused);
+        assertFalse(failed.get());
+        assertTrue(recoveryRequested.get());
         assertFalse(completed.get());
         assertFalse(state.cursor.exhausted);
         assertTrue(state.pendingCursor == null);
@@ -109,6 +115,7 @@ class MiningLoopTest {
                 null,
                 null,
                 exception -> failed.set(true),
+                null,
                 true,
                 false,
                 1.0D
@@ -165,7 +172,7 @@ class MiningLoopTest {
                 block -> false,
                 block -> {
                     breakPermissionChecked.set(true);
-                    return true;
+                    return MiningLoop.BreakPermissionResult.ALLOWED;
                 },
                 block -> decorated.set(true),
                 () -> completed.set(true),
@@ -173,6 +180,7 @@ class MiningLoopTest {
                 null,
                 null,
                 exception -> failed.set(true),
+                null,
                 true,
                 false,
                 1.0D
@@ -191,6 +199,143 @@ class MiningLoopTest {
         assertFalse(decorated.get());
         assertFalse(completed.get());
         assertFalse(failed.get());
+    }
+
+    @Test
+    void temporaryPermissionFailureWaitsWithoutPausingOrLosingTheCheckpoint() throws Exception {
+        JavaPlugin plugin = mock(JavaPlugin.class);
+        when(plugin.getLogger()).thenReturn(Logger.getAnonymousLogger());
+
+        MiningSessionState state = new MiningSessionState();
+        state.base = new Location(null, 0, 64, 0);
+        state.width = 1;
+        state.length = 1;
+        state.cursor = new MiningCursor(state.base, 1, 1);
+        state.pendingCursor = state.cursor.copy();
+
+        Block block = mock(Block.class);
+        when(block.getType()).thenReturn(Material.STONE);
+        when(block.isLiquid()).thenReturn(false);
+        when(block.getState()).thenReturn(mock(BlockState.class));
+        when(block.getDrops()).thenReturn(List.of());
+
+        InventoryRouter router = mock(InventoryRouter.class);
+        when(router.hasTargets()).thenReturn(true);
+        when(router.canFitAll(anyList())).thenReturn(true);
+
+        Villager miner = mock(Villager.class);
+        when(miner.isDead()).thenReturn(false);
+        when(miner.isValid()).thenReturn(true);
+
+        AtomicInteger permissionChecks = new AtomicInteger();
+        AtomicBoolean protectionBlocked = new AtomicBoolean(false);
+        AtomicBoolean failed = new AtomicBoolean(false);
+        MiningLoop loop = new MiningLoop(
+                plugin,
+                state,
+                mock(MiningIterator.class),
+                router,
+                miner,
+                null,
+                null,
+                ignored -> {
+                    permissionChecks.incrementAndGet();
+                    return MiningLoop.BreakPermissionResult.RETRY_LATER;
+                },
+                null,
+                null,
+                null,
+                null,
+                ignored -> protectionBlocked.set(true),
+                ignored -> failed.set(true),
+                null,
+                true,
+                false,
+                1.0D
+        );
+
+        setField(loop, "phase", MiningLoop.Phase.BREAKING);
+        setField(loop, "current", block);
+        setField(loop, "currentType", Material.STONE);
+        setField(loop, "currentDrops", List.of());
+        setField(loop, "phaseProgress", 1.0D);
+
+        loop.run();
+
+        assertEquals(1, permissionChecks.get());
+        assertFalse(state.paused);
+        assertTrue(state.pendingCursor != null);
+        assertFalse(protectionBlocked.get());
+        assertFalse(failed.get());
+        assertEquals(MiningLoop.Phase.BREAKING, field(loop, "phase"));
+        verify(block, never()).setType(Material.AIR, true);
+    }
+
+    @Test
+    void definitivePermissionRefusalStillPausesAndRollsBackSafely() throws Exception {
+        JavaPlugin plugin = mock(JavaPlugin.class);
+        when(plugin.getLogger()).thenReturn(Logger.getAnonymousLogger());
+
+        MiningSessionState state = new MiningSessionState();
+        state.base = new Location(null, 0, 64, 0);
+        state.width = 2;
+        state.length = 1;
+        state.cursor = new MiningCursor(state.base, 2, 1);
+        state.pendingCursor = state.cursor.copy();
+        state.cursor.x = 1;
+
+        Block block = mock(Block.class);
+        when(block.getType()).thenReturn(Material.STONE);
+        when(block.isLiquid()).thenReturn(false);
+        when(block.getState()).thenReturn(mock(BlockState.class));
+        when(block.getDrops()).thenReturn(List.of());
+
+        InventoryRouter router = mock(InventoryRouter.class);
+        when(router.hasTargets()).thenReturn(true);
+        when(router.canFitAll(anyList())).thenReturn(true);
+
+        Villager miner = mock(Villager.class);
+        when(miner.isDead()).thenReturn(false);
+        when(miner.isValid()).thenReturn(true);
+
+        AtomicBoolean protectionBlocked = new AtomicBoolean(false);
+        AtomicBoolean failed = new AtomicBoolean(false);
+        MiningLoop loop = new MiningLoop(
+                plugin,
+                state,
+                mock(MiningIterator.class),
+                router,
+                miner,
+                null,
+                null,
+                ignored -> MiningLoop.BreakPermissionResult.DENIED,
+                null,
+                null,
+                null,
+                null,
+                ignored -> protectionBlocked.set(true),
+                ignored -> failed.set(true),
+                null,
+                true,
+                false,
+                1.0D
+        );
+
+        setField(loop, "phase", MiningLoop.Phase.BREAKING);
+        setField(loop, "current", block);
+        setField(loop, "currentType", Material.STONE);
+        setField(loop, "currentDrops", List.of());
+        setField(loop, "phaseProgress", 1.0D);
+
+        loop.run();
+
+        assertTrue(state.paused);
+        assertEquals(MiningSessionState.PauseReason.PROTECTION, state.pauseReason);
+        assertTrue(protectionBlocked.get());
+        assertFalse(failed.get());
+        assertNull(state.pendingCursor);
+        assertEquals(0, state.cursor.x);
+        verify(block, never()).setType(Material.AIR, true);
     }
 
     @Test
@@ -225,6 +370,7 @@ class MiningLoopTest {
                 null,
                 null,
                 exception -> failed.set(true),
+                null,
                 true,
                 false,
                 1.0D
@@ -248,6 +394,18 @@ class MiningLoopTest {
         assertNull(current.get(loop));
         assertFalse(storageBlocked.get());
         assertFalse(failed.get());
+    }
+
+    private static void setField(Object target, String name, Object value) throws Exception {
+        java.lang.reflect.Field field = target.getClass().getDeclaredField(name);
+        field.setAccessible(true);
+        field.set(target, value);
+    }
+
+    private static Object field(Object target, String name) throws Exception {
+        java.lang.reflect.Field field = target.getClass().getDeclaredField(name);
+        field.setAccessible(true);
+        return field.get(target);
     }
 
 }

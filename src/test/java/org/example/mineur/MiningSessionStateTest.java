@@ -11,9 +11,11 @@ import java.util.Map;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -92,6 +94,52 @@ class MiningSessionStateTest {
 
         assertEquals(0, restored.structureVersion);
         assertNull(restored.structureBounds);
+    }
+
+    @Test
+    void marksLegacyPauseForOneTimeRecovery() {
+        World world = world();
+        Map<String, Object> serialized = baseMap(world);
+        serialized.put("schemaVersion", 5);
+        serialized.put("paused", true);
+
+        MiningSessionState state = MiningSessionState.fromMap(world, serialized);
+
+        assertTrue(state.paused);
+        assertEquals(MiningSessionState.PauseReason.LEGACY_UNKNOWN, state.pauseReason);
+        assertTrue(state.resumeLegacyUnknownPause());
+        assertFalse(state.paused);
+        assertEquals(MiningSessionState.PauseReason.NONE, state.pauseReason);
+        assertFalse(state.resumeLegacyUnknownPause());
+    }
+
+    @Test
+    void keepsCorruptedModernPauseDisabledInsteadOfAutoResumingIt() {
+        World world = world();
+        Map<String, Object> serialized = baseMap(world);
+        serialized.put("paused", true);
+
+        MiningSessionState state = MiningSessionState.fromMap(world, serialized);
+
+        assertTrue(state.paused);
+        assertEquals(MiningSessionState.PauseReason.ERROR, state.pauseReason);
+        assertFalse(state.resumeLegacyUnknownPause());
+    }
+
+    @Test
+    void roundTripsExplicitManualPauseReason() {
+        World world = world();
+        MiningSessionState state = new MiningSessionState();
+        state.worldUid = world.getUID();
+        state.base = new Location(world, 10, 64, 12);
+        state.width = 4;
+        state.length = 4;
+        state.pause(MiningSessionState.PauseReason.MANUAL);
+
+        MiningSessionState restored = MiningSessionState.fromMap(world, state.toMap());
+
+        assertTrue(restored.paused);
+        assertEquals(MiningSessionState.PauseReason.MANUAL, restored.pauseReason);
     }
 
     @Test

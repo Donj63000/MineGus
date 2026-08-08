@@ -20,6 +20,7 @@ import java.util.Set;
 import static org.example.village.VillageLayoutPlan.Bounds;
 import static org.example.village.VillageLayoutPlan.LotPlan;
 import static org.example.village.VillageLayoutPlan.LotRole;
+import static org.example.village.VillageLayoutPlan.PassagePlan;
 import static org.example.village.VillageLayoutPlan.StreetPlan;
 
 /**
@@ -216,6 +217,20 @@ public final class VillageDecorationBuilder {
                         street.maxZ() + 1
                 );
             }
+        }
+
+        /*
+         * Les passages débordent légèrement de la chaussée par leurs
+         * contreforts et leur toiture. Cette réserve explicite empêche un arbre,
+         * une charrette ou un autre décor de traverser l'ouvrage.
+         */
+        for (PassagePlan passage : layout.passages()) {
+            occupancy.reserve(
+                    passage.structureMinX() - 1,
+                    passage.structureMaxX() + 1,
+                    passage.structureMinZ() - 1,
+                    passage.structureMaxZ() + 1
+            );
         }
 
         for (LotPlan lot : layout.lots()) {

@@ -19,6 +19,7 @@ import java.util.List;
 import java.util.UUID;
 
 import org.example.merchant.MerchantManager;
+import org.example.progression.GlobalProgressionManager;
 import org.example.village.VillageEntityManager;
 
 /**
@@ -73,6 +74,11 @@ public class MinePlugin extends JavaPlugin implements Listener {
      */
     private JobManager jobManager;
 
+    /**
+     * Gère le niveau global, indépendant des métiers.
+     */
+    private GlobalProgressionManager globalProgressionManager;
+
     private MerchantManager merchantManager;
 
     /**
@@ -85,6 +91,7 @@ public class MinePlugin extends JavaPlugin implements Listener {
     public Foret getForet() { return foret; }
     public Eleveur getEleveur() { return eleveur; }
     public JobManager getJobManager() { return jobManager; }
+    public GlobalProgressionManager getGlobalProgressionManager() { return globalProgressionManager; }
     public MerchantManager getMerchantManager() { return merchantManager; }
     public RoyalGuardManager getRoyalGuardManager() { return royalGuardManager; }
 
@@ -121,6 +128,13 @@ public class MinePlugin extends JavaPlugin implements Listener {
         jobManager = new JobManager(this);
         jobManager.initializeOnlinePlayers();
 
+        /*
+         * Le niveau global est volontairement instancié séparément du métier
+         * Mineur : données, courbe, bonus et commande ne se mélangent pas.
+         */
+        globalProgressionManager = new GlobalProgressionManager(this);
+        globalProgressionManager.initializeOnlinePlayers();
+
         // Instancie /mineur
         mineur = new Mineur(this);
         mineur.loadSavedSessions(); // Restaure les sessions de minage
@@ -150,8 +164,9 @@ public class MinePlugin extends JavaPlugin implements Listener {
             getLogger().warning("MerchantManager desactive dans cet environnement: " + throwable.getClass().getSimpleName());
         }
 
-        // Tâche de surveillance des marchands de village
+        // Population persistante et surveillance des marchands du village.
         try {
+            VillageEntityManager.initializePopulationListener(this);
             VillageEntityManager.startMerchantGuardTask(this);
         } catch (Throwable throwable) {
             getLogger().warning("VillageEntityManager desactive dans cet environnement: " + throwable.getClass().getSimpleName());
@@ -179,6 +194,9 @@ public class MinePlugin extends JavaPlugin implements Listener {
         }
         if (jobManager != null) {
             jobManager.shutdown();
+        }
+        if (globalProgressionManager != null) {
+            globalProgressionManager.shutdown();
         }
         if (merchantManager != null) {
             merchantManager.shutdown();

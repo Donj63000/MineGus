@@ -16,6 +16,7 @@ import org.example.TeleportUtils;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.function.Consumer;
+import java.util.function.Function;
 import java.util.function.Predicate;
 
 /**
@@ -27,6 +28,21 @@ public final class MiningLoop extends BukkitRunnable {
     private static final double BREAK_STAGE = 1.0D;
     private static final double DEPOSIT_STAGE = 1.0D;
     private static final int STORAGE_RECHECK_TICKS = 20;
+    private static final int PERMISSION_RECHECK_TICKS = 20;
+
+    /**
+     * Résultat détaillé du contrôle de casse.
+     *
+     * <p>{@link #RETRY_LATER} représente une indisponibilité temporaire, par
+     * exemple un propriétaire hors ligne requis par la configuration. Cette
+     * situation ne doit jamais transformer une session persistante en pause
+     * définitive.</p>
+     */
+    public enum BreakPermissionResult {
+        ALLOWED,
+        RETRY_LATER,
+        DENIED
+    }
 
     public enum Phase {
         IDLE,
@@ -42,18 +58,20 @@ public final class MiningLoop extends BukkitRunnable {
     private final Villager miner;
     private final ItemStack miningTool;
     private final Predicate<Block> candidateFilter;
-    private final Predicate<Block> breakPermission;
+    private final Function<Block, BreakPermissionResult> breakPermission;
     private final Consumer<Block> decorationCallback;
     private final Runnable completionCallback;
     private final Runnable storageBlockedCallback;
     private final Runnable storageFreedCallback;
     private final Consumer<Block> protectionBlockedCallback;
     private final Consumer<Exception> failureCallback;
+    private final Runnable minerUnavailableCallback;
     private final boolean applyPhysics;
     private final double progressPerTick;
 
     private boolean storageBlockedNotified;
     private int storageRecheckCooldown;
+    private int permissionRecheckCooldown;
 
     private Block current;
     private Material currentType;
@@ -68,13 +86,14 @@ public final class MiningLoop extends BukkitRunnable {
                       Villager miner,
                       ItemStack miningTool,
                       Predicate<Block> candidateFilter,
-                      Predicate<Block> breakPermission,
+                      Function<Block, BreakPermissionResult> breakPermission,
                       Consumer<Block> decorationCallback,
                       Runnable completionCallback,
                       Runnable storageBlockedCallback,
                       Runnable storageFreedCallback,
                       Consumer<Block> protectionBlockedCallback,
                       Consumer<Exception> failureCallback,
+                      Runnable minerUnavailableCallback,
                       boolean applyPhysics,
                       boolean initiallyBlocked,
                       double progressPerTick) {
@@ -92,6 +111,7 @@ public final class MiningLoop extends BukkitRunnable {
         this.storageFreedCallback = storageFreedCallback;
         this.protectionBlockedCallback = protectionBlockedCallback;
         this.failureCallback = failureCallback;
+        this.minerUnavailableCallback = minerUnavailableCallback;
         this.applyPhysics = applyPhysics;
         this.storageBlockedNotified = initiallyBlocked;
         this.progressPerTick = Double.isFinite(progressPerTick)
@@ -105,7 +125,7 @@ public final class MiningLoop extends BukkitRunnable {
             runSafely();
         } catch (Exception exception) {
             cancelAndRollback();
-            state.paused = true;
+            state.pause(MiningSessionState.PauseReason.ERROR);
             plugin.getLogger().severe("[Mineur] Session " + state.id
                     + " suspendue après une erreur : " + exception.getMessage());
             if (failureCallback != null) {
@@ -120,10 +140,15 @@ public final class MiningLoop extends BukkitRunnable {
         }
         if (miner == null || miner.isDead() || !miner.isValid()) {
             /*
-             * La disparition du PNJ n'est jamais une preuve de fin de parcours.
-             * La traiter comme une complétion pouvait enchaîner vers le tunnel
-             * ou supprimer la session alors que des blocs restaient à miner.
+             * La disparition du PNJ n'est ni une fin de parcours, ni une erreur
+             * métier. Le checkpoint courant est restauré puis le gestionnaire
+             * de session recrée exactement un acteur et une nouvelle boucle.
              */
+            cancelAndRollback();
+            if (minerUnavailableCallback != null) {
+                minerUnavailableCallback.run();
+                return;
+            }
             throw new IllegalStateException("Le PNJ mineur n'est plus disponible.");
         }
 
@@ -250,21 +275,45 @@ public final class MiningLoop extends BukkitRunnable {
             return;
         }
 
+        if (permissionRecheckCooldown > 0) {
+            permissionRecheckCooldown--;
+            return;
+        }
+
         miner.swingMainHand();
         phaseProgress += progressPerTick;
         if (phaseProgress < BREAK_STAGE) {
             return;
         }
 
-        if (breakPermission != null && !breakPermission.test(current)) {
+        BreakPermissionResult permission = breakPermission != null
+                ? breakPermission.apply(current)
+                : BreakPermissionResult.ALLOWED;
+        if (permission == null) {
+            permission = BreakPermissionResult.DENIED;
+        }
+
+        if (permission == BreakPermissionResult.RETRY_LATER) {
+            /*
+             * Le bloc et son checkpoint restent inchangés. La boucle réessaiera
+             * périodiquement, notamment dès que le propriétaire se reconnecte,
+             * sans supprimer le PNJ et sans persister une fausse pause.
+             */
+            phaseProgress = BREAK_STAGE;
+            permissionRecheckCooldown = PERMISSION_RECHECK_TICKS;
+            return;
+        }
+
+        if (permission != BreakPermissionResult.ALLOWED) {
             Block blocked = current;
             cancelAndRollback();
-            state.paused = true;
+            state.pause(MiningSessionState.PauseReason.PROTECTION);
             if (protectionBlockedCallback != null) {
                 protectionBlockedCallback.accept(blocked);
             }
             return;
         }
+        permissionRecheckCooldown = 0;
 
         /*
          * Un plugin appelé par l'événement synthétique peut modifier le bloc.
@@ -458,6 +507,7 @@ public final class MiningLoop extends BukkitRunnable {
         current = null;
         currentType = null;
         currentDrops = List.of();
+        permissionRecheckCooldown = 0;
     }
 
     private void moveMinerTowards(Block target) {

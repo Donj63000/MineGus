@@ -104,7 +104,10 @@ public final class MinegusCommand implements CommandExecutor {
         lines.add(ChatColor.GOLD + "/armure" + ChatColor.GRAY + " : donne l'armure du roi GIDON.");
         lines.add(ChatColor.GOLD + "/marchand" + ChatColor.AQUA + " [permission]" + ChatColor.GRAY
                 + " : invoque le marchand; " + ChatColor.GOLD + "open" + ChatColor.GRAY + " ouvre son menu.");
-        lines.add(ChatColor.GOLD + "/job" + ChatColor.GRAY + " : choisit le metier de mineur et affiche ta progression.");
+        lines.add(ChatColor.GOLD + "/niveau" + ChatColor.GRAY
+                + " : affiche ton niveau global, ton XP et tes bonus.");
+        lines.add(ChatColor.GOLD + "/job" + ChatColor.GRAY
+                + " : choisit le metier de mineur et affiche sa progression separee.");
         lines.add(ChatColor.GOLD + FIX_USAGE + ChatColor.RED + " [admin]" + ChatColor.GRAY
                 + " : nettoie les doublons de forestiers ou de golems.");
         return lines;

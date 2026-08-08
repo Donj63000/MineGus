@@ -14,8 +14,8 @@ import org.mockito.ArgumentCaptor;
 
 import java.util.List;
 
-import be.seeseemelk.mockbukkit.block.BlockMock;
-import be.seeseemelk.mockbukkit.block.state.ChestMock;
+import org.mockbukkit.mockbukkit.block.BlockMock;
+import org.mockbukkit.mockbukkit.block.state.ChestStateMock;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
@@ -123,15 +123,15 @@ class InventoryRouterTest {
     }
 
     private static final class StaticChestBlock extends BlockMock {
-        private final ChestMock chest;
+        private final ChestStateMock chest;
 
         private StaticChestBlock(Location location) {
             super(Material.CHEST, location);
-            this.chest = new ChestMock(Material.CHEST);
+            this.chest = new ChestStateMock(Material.CHEST);
         }
 
         @Override
-        public ChestMock getState() {
+        public ChestStateMock getState() {
             return chest;
         }
     }

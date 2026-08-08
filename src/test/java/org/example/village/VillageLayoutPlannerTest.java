@@ -18,15 +18,15 @@ class VillageLayoutPlannerTest {
     private static VillageLayoutSettings settings() {
         return new VillageLayoutSettings(
                 "semi_organic",
-                4,
                 5,
+                7,
                 9,
                 11,
                 20,
                 2,
-                13,
-                12,
-                16,
+                15,
+                26,
+                32,
                 2,
                 1,
                 2,
@@ -54,6 +54,9 @@ class VillageLayoutPlannerTest {
                 VillageLayoutPlan.LotRole.FORGE,
                 VillageLayoutPlan.LotRole.INN,
                 VillageLayoutPlan.LotRole.BAKERY,
+                VillageLayoutPlan.LotRole.TOWN_HALL,
+                VillageLayoutPlan.LotRole.CARPENTER,
+                VillageLayoutPlan.LotRole.STABLE,
                 VillageLayoutPlan.LotRole.FARM,
                 VillageLayoutPlan.LotRole.PEN,
                 VillageLayoutPlan.LotRole.MARKET,
@@ -69,12 +72,21 @@ class VillageLayoutPlannerTest {
                 "forge",
                 "inn",
                 "bakery",
+                "town_hall",
+                "carpenter",
+                "stable",
                 "market",
                 "farm",
                 "pen",
                 "service_yard",
                 "mayor"
         )));
+        assertEquals(
+                plan.houseCount(),
+                plan.anchors().keySet().stream()
+                        .filter(key -> key.startsWith("residence_"))
+                        .count()
+        );
 
         // Une ancre désigne toujours le bloc de sol ; les gestionnaires
         // d'entités appliquent eux-mêmes le décalage vertical de spawn.
@@ -85,6 +97,9 @@ class VillageLayoutPlannerTest {
                 case FORGE -> "forge";
                 case INN -> "inn";
                 case BAKERY -> "bakery";
+                case TOWN_HALL -> "town_hall";
+                case CARPENTER -> "carpenter";
+                case STABLE -> "stable";
                 case FARM -> "farm";
                 case PEN -> "pen";
                 case SERVICE_YARD -> "service_yard";
@@ -131,9 +146,14 @@ class VillageLayoutPlannerTest {
                     new Random(seed)
             );
 
-            assertTrue(plan.houseCount() >= 12 && plan.houseCount() <= 16);
+            assertTrue(plan.houseCount() >= 26 && plan.houseCount() <= 32);
             assertEquals(3, plan.landmarks().size());
-            assertTrue(plan.streets().size() >= 9);
+            assertTrue(plan.streets().size() >= 13);
+            assertTrue(plan.streets().stream().anyMatch(
+                    street -> street.type()
+                            == VillageLayoutPlan.StreetType.ALLEY
+            ));
+            assertTrue(plan.passages().size() >= 3);
             assertTrue(plan.lots().stream().allMatch(
                     lot -> VillageLayoutPlanner.hasRoadAccess(lot, plan.streets())
             ));
@@ -180,7 +200,53 @@ class VillageLayoutPlannerTest {
         assertEquals(10, legacy.houseCountMax());
         assertEquals(3, legacy.terrainMaxStep());
         assertEquals("high", legacy.decorDensity());
-        assertEquals(42, legacy.decorationBudget());
-        assertEquals(10, legacy.treeBudget());
+        assertEquals(54, legacy.decorationBudget());
+        assertEquals(12, legacy.treeBudget());
+        assertEquals(3, legacy.passageBudget());
+    }
+
+    @Test
+    void impossibleHouseTargetFallsBackToTheLargestSafeLayout() {
+        World world = mock(World.class);
+        VillageLayoutSettings oversizedTarget = new VillageLayoutSettings(
+                "semi_organic",
+                9,
+                11,
+                13,
+                15,
+                32,
+                4,
+                21,
+                60,
+                64,
+                4,
+                2,
+                3,
+                "high"
+        );
+
+        /*
+         * Le minimum demandé est volontairement impossible avec ces grandes
+         * empreintes. La commande doit néanmoins produire la ville maximale
+         * sûre plutôt que lever une exception après le terrassement.
+         */
+        VillageLayoutPlan plan = VillageLayoutPlanner.plan(
+                new Location(world, 0, 64, 0),
+                oversizedTarget,
+                new Random(7)
+        );
+
+        assertTrue(plan.houseCount() >= 8);
+        assertTrue(plan.houseCount() < oversizedTarget.houseCountMin());
+        for (int i = 0; i < plan.lots().size(); i++) {
+            for (int j = i + 1; j < plan.lots().size(); j++) {
+                assertFalse(
+                        plan.lots().get(i).overlapsWithGap(
+                                plan.lots().get(j),
+                                4
+                        )
+                );
+            }
+        }
     }
 }

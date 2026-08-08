@@ -6,6 +6,7 @@ import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.World;
 import org.bukkit.block.Block;
+import org.bukkit.block.BlockFace;
 import org.bukkit.block.CreatureSpawner;
 import org.bukkit.block.data.BlockData;
 import org.bukkit.command.Command;
@@ -19,6 +20,7 @@ import org.bukkit.entity.Villager;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.bukkit.scheduler.BukkitRunnable;
 import org.bukkit.scheduler.BukkitTask;
+import org.example.progression.GlobalProgressionManager;
 import org.example.village.Disposition;
 import org.example.village.GateGuardManager;
 import org.example.village.KeepBuilder;
@@ -28,6 +30,8 @@ import org.example.village.VillageLayoutPlan;
 import org.example.village.VillageLayoutPlanner;
 import org.example.village.VillageLayoutSettings;
 import org.example.village.VillageLightingBuilder;
+import org.example.village.VillagePopulationSettings;
+import org.example.village.VillageStyle;
 import org.example.village.WallBuilder;
 
 import java.util.ArrayList;
@@ -59,9 +63,9 @@ import java.util.logging.Level;
  */
 public final class Village implements CommandExecutor {
 
-    private static final int VILLAGER_SPAWNERS = 4;
+    private static final int LEGACY_VILLAGER_SPAWNERS = 4;
     private static final int GOLEM_SPAWNERS = 2;
-    private static final int DEFAULT_WALL_GAP = 7;
+    private static final int DEFAULT_WALL_GAP = 8;
     private static final int TERRAIN_FEATHER = 4;
     private static final int MAX_ACTIONS_PER_TICK = 320;
     private static final long MAX_BATCH_NANOS = 8_000_000L;
@@ -70,6 +74,7 @@ public final class Village implements CommandExecutor {
     private final JavaPlugin plugin;
     private final int wallGap;
     private final VillageLayoutSettings layoutSettings;
+    private final VillagePopulationSettings populationSettings;
 
     /*
      * Ces deux champs sont conservés pour la compatibilité avec les tests et
@@ -88,13 +93,13 @@ public final class Village implements CommandExecutor {
                 .setExecutor(this);
 
         FileConfiguration cfg = plugin.getConfig();
-        int rows = cfg.getInt("village.rows", 4);
-        int cols = cfg.getInt("village.cols", 5);
+        int rows = cfg.getInt("village.rows", 5);
+        int cols = cfg.getInt("village.cols", 7);
         int houseSmall = cfg.getInt("village.houseSmall", 9);
         int houseBig = cfg.getInt("village.houseBig", 11);
         int roadHalf = cfg.getInt("village.roadHalf", 2);
         int spacing = cfg.getInt("village.spacing", 20);
-        int configuredPlazaSize = cfg.getInt("village.plazaSize", 13);
+        int configuredPlazaSize = cfg.getInt("village.plazaSize", 15);
 
         /*
          * Le porche du donjon occupe les six premiers blocs devant la
@@ -113,13 +118,15 @@ public final class Village implements CommandExecutor {
                 spacing,
                 roadHalf,
                 configuredPlazaSize,
-                cfg.getInt("village.houseCountMin", 12),
-                cfg.getInt("village.houseCountMax", 16),
+                cfg.getInt("village.houseCountMin", 26),
+                cfg.getInt("village.houseCountMax", 32),
                 cfg.getInt("village.mainStreetHalf", 2),
                 cfg.getInt("village.sideStreetHalf", 1),
                 cfg.getInt("village.terrainMaxStep", 2),
                 cfg.getString("village.decorDensity", "high")
         );
+        this.populationSettings =
+                VillagePopulationSettings.from(cfg);
     }
 
     /**
@@ -135,7 +142,10 @@ public final class Village implements CommandExecutor {
             return;
         }
 
-        int desired = Math.min(VILLAGER_SPAWNERS, totalHouses);
+        int desired = Math.min(
+                LEGACY_VILLAGER_SPAWNERS,
+                totalHouses
+        );
         double step = (double) totalHouses / desired;
         for (int i = 0; i < desired; i++) {
             int idx = (int) Math.floor(i * step + step / 2.0D);
@@ -336,9 +346,9 @@ public final class Village implements CommandExecutor {
         ));
 
         /*
-         * Les spawners sont placés sous les maisons réellement retenues par le
-         * planificateur, et non sur quatre coordonnées arbitraires susceptibles
-         * de tomber dans une route ou un bâtiment.
+         * Les spawners sont répartis dans les bâtiments réellement retenus par
+         * le planificateur. Ils restent donc accessibles et disposent du volume
+         * libre nécessaire, sans tomber dans une route ou sous le terrain.
          */
         todo.addAll(buildResidentialVillagerSpawners(
                 session,
@@ -419,25 +429,15 @@ public final class Village implements CommandExecutor {
             ));
         }
 
-        final int ttlTicks = 20 * 60 * 30;
         if (villageEntitiesEnabled) {
             todo.add(() -> VillageEntityManager.spawnInitial(
                     plugin,
                     villageCenter,
                     session.getAnchors(),
                     resolvedVillageId,
-                    ttlTicks
+                    populationSettings
             ));
         }
-
-        Location mayorAnchor = layout.anchors()
-                .getOrDefault("mayor", marketAnchor);
-        todo.add(() -> spawnVillager(
-                session,
-                world,
-                mayorAnchor.clone().add(0.5D, 1.0D, 0.5D),
-                "Maire"
-        ));
 
         buildActionsInBatches(todo, session);
         return true;
@@ -462,13 +462,19 @@ public final class Village implements CommandExecutor {
         if (block.getType() == material) {
             return;
         }
+        GlobalProgressionManager progression = getGlobalProgression();
         if (session != null) {
             session.rememberOriginal(
                     block.getLocation(),
-                    block.getBlockData()
+                    block.getBlockData(),
+                    progression != null
+                            && progression.isArtificialBlock(block)
             );
         }
         block.setType(material, false);
+        if (progression != null) {
+            progression.synchronizeArtificialBlock(block, true);
+        }
     }
 
     /**
@@ -490,13 +496,19 @@ public final class Village implements CommandExecutor {
         if (block.getBlockData().equals(data)) {
             return;
         }
+        GlobalProgressionManager progression = getGlobalProgression();
         if (session != null) {
             session.rememberOriginal(
                     block.getLocation(),
-                    block.getBlockData()
+                    block.getBlockData(),
+                    progression != null
+                            && progression.isArtificialBlock(block)
             );
         }
         block.setBlockData(data, false);
+        if (progression != null) {
+            progression.synchronizeArtificialBlock(block, true);
+        }
     }
 
     /**
@@ -538,7 +550,36 @@ public final class Village implements CommandExecutor {
             Block block = world.getBlockAt(x, y, z);
             if (block.getState() instanceof CreatureSpawner spawner) {
                 spawner.setSpawnedType(type);
-                spawner.update(true, false);
+
+                VillageGenerationSession owner = session != null
+                        ? session
+                        : currentSession;
+                if (owner != null
+                        && (type == EntityType.VILLAGER
+                        || type == EntityType.IRON_GOLEM)) {
+                    try {
+                        VillageEntityManager.configureVillageSpawner(
+                                plugin,
+                                spawner,
+                                type,
+                                owner.getVillageId(),
+                                populationSettings
+                        );
+                    } catch (Throwable throwable) {
+                        /*
+                         * Le bloc reste un spawner utilisable même dans un
+                         * environnement de test qui n'implémente pas le PDC.
+                         */
+                        plugin.getLogger().log(
+                                Level.WARNING,
+                                "Configuration sécurisée du spawner ignorée",
+                                throwable
+                        );
+                        spawner.update(true, false);
+                    }
+                } else {
+                    spawner.update(true, false);
+                }
             }
         };
     }
@@ -602,27 +643,6 @@ public final class Village implements CommandExecutor {
                                 + throwable.getClass().getSimpleName());
             }
         };
-    }
-
-    private void spawnVillager(VillageGenerationSession session,
-                               World world,
-                               Location location,
-                               String name) {
-        try {
-            world.getChunkAt(location).load();
-            Villager villager = (Villager) world.spawnEntity(
-                    location,
-                    EntityType.VILLAGER
-            );
-            session.trackEntity(villager.getUniqueId());
-            villager.setCustomName(name);
-            villager.setCustomNameVisible(true);
-            villager.setProfession(Villager.Profession.NONE);
-        } catch (Throwable throwable) {
-            plugin.getLogger().warning(
-                    "Apparition du villageois ignorée : "
-                            + throwable.getClass().getSimpleName());
-        }
     }
 
     /**
@@ -718,29 +738,165 @@ public final class Village implements CommandExecutor {
             World world,
             VillageLayoutPlan layout,
             int baseY) {
-        List<VillageLayoutPlan.LotPlan> houses = layout.lots().stream()
-                .filter(VillageLayoutPlan.LotPlan::isHouse)
-                .toList();
-        prepareVillagerSpawnerDistribution(houses.size());
+        List<VillageLayoutPlan.LotPlan> selected =
+                selectPopulationSpawnerLots(
+                        layout,
+                        populationSettings.villagerSpawnerCount()
+                );
 
         List<Runnable> actions = new ArrayList<>();
-        for (int index = 0; index < houses.size(); index++) {
-            if (!villagerSpawnerIdx.contains(index)) {
-                continue;
+        for (int index = 0; index < selected.size(); index++) {
+            VillageLayoutPlan.LotPlan lot = selected.get(index);
+            BlockFace right = VillageStyle.rightOf(lot.facing());
+            int sideRadius = (lot.facing() == BlockFace.NORTH
+                    || lot.facing() == BlockFace.SOUTH)
+                    ? (lot.footprintWidth() - 1) / 2
+                    : (lot.footprintDepth() - 1) / 2;
+            int lateral = Math.min(2, Math.max(0, sideRadius - 2));
+            if (index % 2 != 0) {
+                lateral = -lateral;
             }
 
-            VillageLayoutPlan.LotPlan lot = houses.get(index);
-            int spawnerY = baseY + lot.terraceY() - 1;
+            int spawnerX = lot.centerX()
+                    + right.getModX() * lateral;
+            int spawnerZ = lot.centerZ()
+                    + right.getModZ() * lateral;
+
+            /*
+             * Le spawner est posé dans la pièce principale, un bloc au-dessus
+             * du plancher. L'ancienne implantation sous terre ne disposait pas
+             * des deux blocs d'air nécessaires à un villageois.
+             */
+            int spawnerY = baseY + lot.terraceY() + 2;
+            int finalSpawnerX = spawnerX;
+            int finalSpawnerZ = spawnerZ;
+            int finalSpawnerY = spawnerY;
+            actions.add(() -> setBlockTracked(
+                    session,
+                    world,
+                    finalSpawnerX,
+                    finalSpawnerY + 1,
+                    finalSpawnerZ,
+                    Material.AIR
+            ));
             actions.add(createSpawnerAction(
                     session,
                     world,
-                    lot.centerX(),
+                    spawnerX,
                     spawnerY,
-                    lot.centerZ(),
+                    spawnerZ,
                     EntityType.VILLAGER
             ));
         }
         return actions;
+    }
+
+    /**
+     * Sélection par éloignement maximal : le premier spawner dessert le centre,
+     * puis chaque nouveau point est choisi le plus loin possible de ceux déjà
+     * retenus. La population se répartit ainsi dans toute la ville.
+     */
+    private List<VillageLayoutPlan.LotPlan>
+    selectPopulationSpawnerLots(VillageLayoutPlan layout,
+                                int requestedCount) {
+        List<VillageLayoutPlan.LotPlan> candidates =
+                layout.lots().stream()
+                        .filter(this::supportsVillagerSpawner)
+                        .sorted((left, right) -> {
+                            int byX = Integer.compare(
+                                    left.centerX(),
+                                    right.centerX()
+                            );
+                            return byX != 0
+                                    ? byX
+                                    : Integer.compare(
+                                    left.centerZ(),
+                                    right.centerZ()
+                            );
+                        })
+                        .toList();
+        if (candidates.isEmpty() || requestedCount <= 0) {
+            return List.of();
+        }
+
+        int desired = Math.min(requestedCount, candidates.size());
+        List<VillageLayoutPlan.LotPlan> selected =
+                new ArrayList<>(desired);
+        Location plaza = layout.anchors().get("plaza");
+        int plazaX = plaza != null ? plaza.getBlockX() : 0;
+        int plazaZ = plaza != null ? plaza.getBlockZ() : 0;
+
+        VillageLayoutPlan.LotPlan first = candidates.stream()
+                .min((left, right) -> Long.compare(
+                        squaredDistance(
+                                left.centerX(),
+                                left.centerZ(),
+                                plazaX,
+                                plazaZ
+                        ),
+                        squaredDistance(
+                                right.centerX(),
+                                right.centerZ(),
+                                plazaX,
+                                plazaZ
+                        )
+                ))
+                .orElse(candidates.get(0));
+        selected.add(first);
+
+        while (selected.size() < desired) {
+            VillageLayoutPlan.LotPlan best = null;
+            long bestDistance = Long.MIN_VALUE;
+            for (VillageLayoutPlan.LotPlan candidate : candidates) {
+                if (selected.contains(candidate)) {
+                    continue;
+                }
+
+                long nearest = Long.MAX_VALUE;
+                for (VillageLayoutPlan.LotPlan existing : selected) {
+                    nearest = Math.min(
+                            nearest,
+                            squaredDistance(
+                                    candidate.centerX(),
+                                    candidate.centerZ(),
+                                    existing.centerX(),
+                                    existing.centerZ()
+                            )
+                    );
+                }
+
+                if (nearest > bestDistance) {
+                    best = candidate;
+                    bestDistance = nearest;
+                }
+            }
+
+            if (best == null) {
+                break;
+            }
+            selected.add(best);
+        }
+        return List.copyOf(selected);
+    }
+
+    private boolean supportsVillagerSpawner(
+            VillageLayoutPlan.LotPlan lot) {
+        if (lot.isHouse()) {
+            return true;
+        }
+        return switch (lot.role()) {
+            case INN, BAKERY, TOWN_HALL, CARPENTER, STABLE -> true;
+            default -> false;
+        };
+    }
+
+    private static long squaredDistance(int firstX,
+                                        int firstZ,
+                                        int secondX,
+                                        int secondZ) {
+        long dx = (long) firstX - secondX;
+        long dz = (long) firstZ - secondZ;
+        return dx * dx + dz * dz;
     }
 
     private List<Runnable> buildGolemSpawners(
@@ -764,7 +920,7 @@ public final class Village implements CommandExecutor {
                     session,
                     world,
                     plaza.getBlockX() + sign * offset,
-                    baseY - 2,
+                    baseY + 1,
                     plaza.getBlockZ(),
                     EntityType.IRON_GOLEM
             ));
@@ -1110,6 +1266,17 @@ public final class Village implements CommandExecutor {
     }
 
     /**
+     * Retourne le module de progression lorsqu'il est disponible. Village
+     * reste compatible avec un chargement isolé dans les tests.
+     */
+    private GlobalProgressionManager getGlobalProgression() {
+        if (plugin instanceof MinePlugin minePlugin) {
+            return minePlugin.getGlobalProgressionManager();
+        }
+        return null;
+    }
+
+    /**
      * Annule la génération active ou terminée et restaure les blocs dans
      * l'ordre inverse de leur première modification.
      */
@@ -1154,15 +1321,23 @@ public final class Village implements CommandExecutor {
         List<Map.Entry<Location, BlockData>> originals =
                 new ArrayList<>(session.getOriginalBlocks().entrySet());
         Collections.reverse(originals);
+        GlobalProgressionManager progression = getGlobalProgression();
         for (Map.Entry<Location, BlockData> entry : originals) {
             Location location = entry.getKey();
             if (location.getWorld() == null) {
                 continue;
             }
-            location.getBlock().setBlockData(
+            Block block = location.getBlock();
+            block.setBlockData(
                     entry.getValue().clone(),
                     false
             );
+            if (progression != null) {
+                progression.synchronizeArtificialBlock(
+                        block,
+                        session.wasOriginalArtificial(location)
+                );
+            }
         }
 
         try {

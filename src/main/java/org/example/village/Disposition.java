@@ -104,9 +104,27 @@ public final class Disposition {
                     queue.addAll(SpecialBuildings.decorateInn(world, lot, lotBaseY, setBlock));
                 }
                 case BAKERY -> {
-                    queue.addAll(HouseBuilder.buildHouse(world, lot, lotBaseY, setBlock, rng));
-                    queue.addAll(SpecialBuildings.decorateBakery(world, lot, lotBaseY, setBlock));
+                    queue.addAll(HouseBuilder.buildHouse(
+                            world, lot, lotBaseY, setBlock, rng));
+                    queue.addAll(SpecialBuildings.decorateBakery(
+                            world, lot, lotBaseY, setBlock));
                 }
+                case TOWN_HALL -> {
+                    queue.addAll(HouseBuilder.buildHouse(
+                            world, lot, lotBaseY, setBlock, rng));
+                    queue.addAll(SpecialBuildings.decorateTownHall(
+                            world, lot, lotBaseY, setBlock));
+                    queue.addAll(buildFrontLanterns(
+                            world, lot, lotBaseY, setBlock));
+                }
+                case CARPENTER -> {
+                    queue.addAll(HouseBuilder.buildHouse(
+                            world, lot, lotBaseY, setBlock, rng));
+                    queue.addAll(SpecialBuildings.decorateCarpenter(
+                            world, lot, lotBaseY, setBlock));
+                }
+                case STABLE -> queue.addAll(SpecialBuildings.buildStable(
+                        world, lot, lotBaseY, setBlock));
                 case HOUSE_SINGLE, HOUSE_TWO_STORY ->
                         queue.addAll(HouseBuilder.buildHouse(world, lot, lotBaseY, setBlock, rng));
                 case FARM -> queue.addAll(HouseBuilder.buildFarm(
@@ -133,6 +151,20 @@ public final class Disposition {
         // peut alors préserver toutes les emprises architecturales.
         queue.addAll(VillageDecorationBuilder.build(
                 world, layout, settings, baseY, setBlock, rng));
+
+        /*
+         * Les passages couverts sont construits après les lots et les décors.
+         * Leur nettoyage final garantit ainsi un gabarit praticable, même si
+         * une décoration secondaire avait été projetée près d'une ruelle.
+         */
+        for (PassagePlan passage : layout.passages()) {
+            queue.addAll(MedievalPassageBuilder.build(
+                    world,
+                    passage,
+                    baseY,
+                    setBlock
+            ));
+        }
 
         // Le mobilier de rue vient en dernier afin que les terrassements de
         // lots ne puissent plus écraser ses fondations.
@@ -281,7 +313,10 @@ public final class Disposition {
 
     private static List<Runnable> buildStreet(StreetPlan street, int baseY, TerrainManager.SetBlock sb) {
         List<Runnable> tasks = new ArrayList<>();
-        int shoulder = street.type() == StreetType.FOOTPATH ? 0 : 1;
+        int shoulder = switch (street.type()) {
+            case MAIN, SIDE -> 1;
+            case ALLEY, FOOTPATH -> 0;
+        };
 
         if (street.horizontal()) {
             int start = Math.min(street.startX(), street.endX());
@@ -331,7 +366,15 @@ public final class Disposition {
                 case 5, 6 -> Material.GRAVEL;
                 default -> Material.COBBLESTONE;
             };
-            case FOOTPATH -> selector % 2 == 0 ? Material.PACKED_MUD : Material.DIRT_PATH;
+            case ALLEY -> switch (selector) {
+                case 0, 1 -> Material.MOSSY_COBBLESTONE;
+                case 2, 3, 4 -> Material.COBBLESTONE;
+                case 5 -> Material.PACKED_MUD;
+                default -> Material.GRAVEL;
+            };
+            case FOOTPATH -> selector % 2 == 0
+                    ? Material.PACKED_MUD
+                    : Material.DIRT_PATH;
         };
     }
 
@@ -356,7 +399,8 @@ public final class Disposition {
                                                        TerrainManager.SetBlock sb) {
         List<Runnable> tasks = new ArrayList<>();
         for (StreetPlan street : layout.streets()) {
-            if (street.type() == StreetType.FOOTPATH) {
+            if (street.type() == StreetType.FOOTPATH
+                    || street.type() == StreetType.ALLEY) {
                 continue;
             }
 
@@ -507,20 +551,38 @@ public final class Disposition {
         int selector = hash(x, z, lot.row() + lot.col()) % 6;
         if (inner) {
             return switch (lot.role()) {
-                case MARKET, SERVICE_YARD -> selector % 2 == 0 ? Material.GRAVEL : Material.PACKED_MUD;
+                case MARKET, SERVICE_YARD, STABLE ->
+                        selector % 2 == 0
+                                ? Material.GRAVEL
+                                : Material.PACKED_MUD;
                 case FARM -> Material.FARMLAND;
-                case PEN -> selector % 2 == 0 ? Material.GRASS_BLOCK : Material.COARSE_DIRT;
-                case CHURCH -> selector % 2 == 0 ? Material.SMOOTH_STONE : Material.POLISHED_ANDESITE;
-                case FORGE -> selector % 2 == 0 ? Material.COBBLED_DEEPSLATE : Material.GRAVEL;
-                case INN, BAKERY -> selector == 0 ? Material.COARSE_DIRT : Material.GRASS_BLOCK;
+                case PEN -> selector % 2 == 0
+                        ? Material.GRASS_BLOCK
+                        : Material.COARSE_DIRT;
+                case CHURCH, TOWN_HALL -> selector % 2 == 0
+                        ? Material.SMOOTH_STONE
+                        : Material.POLISHED_ANDESITE;
+                case FORGE, CARPENTER -> selector % 2 == 0
+                        ? Material.COBBLED_DEEPSLATE
+                        : Material.GRAVEL;
+                case INN, BAKERY -> selector == 0
+                        ? Material.COARSE_DIRT
+                        : Material.GRASS_BLOCK;
                 default -> selector == 0 ? Material.MOSS_BLOCK : Material.GRASS_BLOCK;
             };
         }
         return switch (lot.role()) {
             case MARKET -> selector % 2 == 0 ? Material.GRAVEL : Material.PACKED_MUD;
-            case SERVICE_YARD -> selector % 2 == 0 ? Material.COARSE_DIRT : Material.GRAVEL;
-            case FARM -> selector % 2 == 0 ? Material.COARSE_DIRT : Material.PACKED_MUD;
-            case PEN, GREEN, DECOR -> selector % 3 == 0 ? Material.MOSS_BLOCK : Material.GRASS_BLOCK;
+            case SERVICE_YARD, STABLE, CARPENTER ->
+                    selector % 2 == 0
+                            ? Material.COARSE_DIRT
+                            : Material.GRAVEL;
+            case FARM -> selector % 2 == 0
+                    ? Material.COARSE_DIRT
+                    : Material.PACKED_MUD;
+            case PEN, GREEN, DECOR -> selector % 3 == 0
+                    ? Material.MOSS_BLOCK
+                    : Material.GRASS_BLOCK;
             default -> selector == 0 ? Material.MOSS_BLOCK : selector == 1 ? Material.COARSE_DIRT : Material.GRASS_BLOCK;
         };
     }
@@ -571,8 +633,9 @@ public final class Disposition {
         }
 
         Material surface = switch (lot.role()) {
-            case CHURCH, FORGE, INN, BAKERY, MARKET -> Material.POLISHED_ANDESITE;
-            case FARM, PEN -> Material.PACKED_MUD;
+            case CHURCH, FORGE, INN, BAKERY, MARKET, TOWN_HALL ->
+                    Material.POLISHED_ANDESITE;
+            case CARPENTER, STABLE, FARM, PEN -> Material.PACKED_MUD;
             default -> Material.DIRT_PATH;
         };
         place(tasks, sb, x, y, z, surface);

@@ -1,0 +1,4305 @@
+diff --git a/README.md b/README.md
+index c71131a2bfe48f7bcd540752ae6d6345a60cd17e..38ae3cffc4d891c65ef8df7064862c31e6c0e142 100644
+--- a/README.md
++++ b/README.md
+@@ -29,6 +29,7 @@ Après le premier démarrage, éditez `plugins/MinePlugin/config.yml` :
+ - `/garde` : `follow-radius`, les paramètres de formation (`formation-side-distance`, `formation-rear-distance`, `formation-tolerance`), l’espace visuel (`personal-space-radius`, `view-clearance-distance`), les rayons `protection-radius`, `threat-detection-radius` et `combat-leash-radius`, l’assistance (`assist-owner-attacks`, `proactive-defense`, `finish-engaged-targets`), `threat-duration-seconds`, `respawn-delay-seconds`, `friendly-fire`, la neutralité des golems, `notifications` et `attributes.*`. Les valeurs invalides ou hors limites reviennent aux valeurs par défaut sûres.
+ - `/eleveur` : limites d’animaux, temps de recharge, chances de loot cuit, prix en émeraudes.
+ - `/village` : tailles des maisons/grille (`houseSmall`, `houseBig`, `roadHalf`, `spacing`, `plazaSize`, `rows`, `cols`, `wallGap`), densité de végétation (`decorDensity`) et passe lumineuse finale (`lighting.*`).
++- Progression globale : `progression.xp-levelup`, `progression.bonuses`, `progression.display`, les garde-fous `progression.anti-abuse` et chaque source d'XP sous `progression.sources`. Ce niveau est indépendant du métier Mineur.
+ 
+ Référence par défaut : `src/main/resources/config.yml`. Modifiez seulement la copie dans `plugins/MinePlugin/`.
+ 
+@@ -90,6 +91,14 @@ Référence par défaut : `src/main/resources/config.yml`. Modifiez seulement la
+ ### /marchand (permission `mineplugin.marchand.spawn`)
+ - Invoque un PNJ marchand invulnérable à l’emplacement du joueur. Les offres proviennent de `plugins/MinePlugin/marchand.yaml`; clique le PNJ pour ouvrir l’interface d’échanges.
+ 
++### /niveau — progression globale
++- `/niveau` ou `/niveau info` : affiche le niveau global, l'XP du palier et les quatre bonus du joueur. Les alias `/level` et `/progression` sont disponibles.
++- Le niveau commence à 1 et se termine à 100. Le niveau 1 est la référence sans bonus ; chaque level-up ajoute par défaut **+1 % de points de vie maximum, +1 % de durée d'apnée, +1 % de dégâts causés et +1 % de vitesse de minage**. Le niveau 100 correspond donc à +99 %.
++- L'XP se gagne par le minage et le bûcheronnage configurés, les cultures mûres, les éliminations, la pêche, la reproduction, l'apprivoisement, la tonte, l'enchantement, la récupération d'une cuisson, le commerce et les progrès Minecraft.
++- À chaque gain, une sidebar compacte apparaît en haut à droite avec le niveau, la barre et l'XP du palier, puis disparaît après quatre secondes par défaut. Le scoreboard précédent est restauré ; une actionbar sert de repli si la sidebar n'est pas disponible.
++- Anti-abus : aucun gain en Créatif/Spectateur, blocs reposés, formés ou générés par `/village` marqués dans le chunk, suivi des pistons et explosions, multiplicateurs selon l'origine des mobs, plafond par gain et par minute, et mondes désactivables.
++- Administration (`mineplugin.progression.admin`, opérateur par défaut) : `/niveau info <joueur>`, `/niveau addxp <joueur> <quantité>`, `/niveau setlevel <joueur> <1-100>` et `/niveau reset <joueur>`.
++
+ ### /job
+ - `/job mineur` : choisit le métier de mineur.
+ - `/job` ou `/job info` : affiche métier, niveau, XP et nombre de mines débloquées. L’XP se gagne en minant à la pioche; +1 slot de mine tous les 10 niveaux (jusqu’à 10).
+@@ -99,7 +108,7 @@ Référence par défaut : `src/main/resources/config.yml`. Modifiez seulement la
+ - `/minegus fix forestier|golems` (permission `mineplugin.admin`) : commande de maintenance qui supprime les doublons de forestiers de /foret ou de golems gardes taggés dans tous les mondes.
+ 
+ ## Persistance des données
+-Les fonctionnalités persistantes sauvegardent leurs informations (YAML) dans `plugins/MinePlugin/` (`sessions.yml`, `farms.yml`, etc.) pour restaurer PNJ et structures au redémarrage. Les deux gardes de `/garde` ne sont jamais sauvegardés et tout garde résiduel est retiré au chargement d’un chunk après un redémarrage.
++Les fonctionnalités persistantes sauvegardent leurs informations (YAML) dans `plugins/MinePlugin/` (`sessions.yml`, `farms.yml`, etc.) pour restaurer PNJ et structures au redémarrage. La progression globale est stockée séparément dans `progression.yml` (UUID, dernier nom connu, XP totale et état transitoire de santé nécessaire à une restauration propre) et les métiers restent dans `jobs.yml`. Son écriture est atomique et différée ; un YAML invalide est mis en quarantaine avec un suffixe `.corrupt-<horodatage>.bak` au lieu d’être écrasé. Les deux gardes de `/garde` ne sont jamais sauvegardés et tout garde résiduel est retiré au chargement d’un chunk après un redémarrage.
+ 
+ ## Structure du projet
+ - `src/main/java/` : code source du plugin.
+@@ -108,7 +117,8 @@ Les fonctionnalités persistantes sauvegardent leurs informations (YAML) dans `p
+ - `target/` : artefacts de build (ne pas modifier/committer).
+ 
+ ## Architecture du projet (qui fait quoi)
+-- `org.example.MinePlugin` : point d’entrée. Enregistre `/army` et `/ping`, instancie les modules (`Mineur`, `Agriculture`, `Foret`, `Village`, `Eleveur`, `Armure`), charge/sauve les sessions dans `onEnable/onDisable`.
++- `org.example.MinePlugin` : point d’entrée. Enregistre `/army` et `/ping`, instancie les modules (`Mineur`, `Agriculture`, `Foret`, `Village`, `Eleveur`, `Armure`) ainsi que les gestionnaires de métier et de progression globale, puis ferme proprement leurs sauvegardes dans `onDisable`.
++- `org.example.progression` : courbe 1–100, collecte multi-actions, bonus attributaires/dégâts, HUD sidebar temporaire, anti-farming des blocs et persistance atomique dans `progression.yml`.
+ - `org.example.Mineur` : gère `/mineur`. Bâton de sélection (2 blocs même Y), cadre + coffres + PNJ mineur + golems, minage vertical, persistance `sessions.yml`, arrêt si tous les coffres cassés.
+ - `org.example.Agriculture` : gère `/champ`. Crée terres labourées + irrigation, PNJ fermier + golems, récolte/stockage auto, persistance `farms.yml`.
+ - `org.example.Foret` : gère `/foret`. Grille de pousses, récolte et replantation auto, coffres d’angle, persistance `forests.yml`.
+@@ -201,6 +211,7 @@ categories:
+ - Sanity de base : `/ping`, `/army` (spawn + disparition programmée).
+ - Gardes royaux : exécuter `/garde`, vérifier les deux positions latérales arrière et tourner rapidement pour confirmer que les gardes dégagent la caméra ; frapper successivement plusieurs mobs puis vérifier qu’ils sont traités dans l’ordre jusqu’à leur mort ; laisser un zombie ou un raider prendre le joueur pour cible sans recevoir de coup et confirmer l’interception proactive ; tester une flèche tirée par le propriétaire, un animal apprivoisé, une attaque PvP, une cible qui sort de la laisse de combat, le rappel hors combat au-delà de 20 blocs et le changement de monde ; approcher ensuite un golem de fer naturel de village, confirmer la neutralité puis provoquer une tentative de frappe ; enfin bloquer un chemin, tuer un garde, vérifier son retour après 20 secondes, renvoyer le duo et confirmer l’annulation des respawns.
+ - Mineur : `/mineur`, sélection de deux blocs au même Y, vérifier cadre + coffres + PNJ; changer `/mineur vitesse rapide`.
++- Progression globale : casser un minerai naturel puis un minerai posé, tuer un mob naturel puis issu d'un spawner, récolter une culture mûre et pêcher ; vérifier `/niveau`, le HUD temporaire, la restauration de l'ancienne sidebar, la persistance après redémarrage et les quatre bonus aux niveaux 2 puis 100.
+ - Champ : `/champ`, récolte/stockage, suppression des coffres → arrêt automatique.
+ - Forêt : `/foret`, coupe/replantation automatique, persistance après redémarrage.
+ - Éleveur : `/eleveur`, `/eleveur list`, `/eleveur delete <id>`; vérifier limites d’animaux configurées.
+diff --git a/src/main/java/org/example/MinePlugin.java b/src/main/java/org/example/MinePlugin.java
+index ba7df6ffc271a70f296df2cc4c4e4b4be13b81cc..64ce7200aa954e69d6142ad02f120ddf5a0f6ca0 100644
+--- a/src/main/java/org/example/MinePlugin.java
++++ b/src/main/java/org/example/MinePlugin.java
+@@ -19,6 +19,7 @@ import java.util.List;
+ import java.util.UUID;
+ 
+ import org.example.merchant.MerchantManager;
++import org.example.progression.GlobalProgressionManager;
+ import org.example.village.VillageEntityManager;
+ 
+ /**
+@@ -73,6 +74,11 @@ public class MinePlugin extends JavaPlugin implements Listener {
+      */
+     private JobManager jobManager;
+ 
++    /**
++     * Gère le niveau global, indépendant des métiers.
++     */
++    private GlobalProgressionManager globalProgressionManager;
++
+     private MerchantManager merchantManager;
+ 
+     /**
+@@ -85,6 +91,7 @@ public class MinePlugin extends JavaPlugin implements Listener {
+     public Foret getForet() { return foret; }
+     public Eleveur getEleveur() { return eleveur; }
+     public JobManager getJobManager() { return jobManager; }
++    public GlobalProgressionManager getGlobalProgressionManager() { return globalProgressionManager; }
+     public MerchantManager getMerchantManager() { return merchantManager; }
+     public RoyalGuardManager getRoyalGuardManager() { return royalGuardManager; }
+ 
+@@ -121,6 +128,13 @@ public class MinePlugin extends JavaPlugin implements Listener {
+         jobManager = new JobManager(this);
+         jobManager.initializeOnlinePlayers();
+ 
++        /*
++         * Le niveau global est volontairement instancié séparément du métier
++         * Mineur : données, courbe, bonus et commande ne se mélangent pas.
++         */
++        globalProgressionManager = new GlobalProgressionManager(this);
++        globalProgressionManager.initializeOnlinePlayers();
++
+         // Instancie /mineur
+         mineur = new Mineur(this);
+         mineur.loadSavedSessions(); // Restaure les sessions de minage
+@@ -180,6 +194,9 @@ public class MinePlugin extends JavaPlugin implements Listener {
+         if (jobManager != null) {
+             jobManager.shutdown();
+         }
++        if (globalProgressionManager != null) {
++            globalProgressionManager.shutdown();
++        }
+         if (merchantManager != null) {
+             merchantManager.shutdown();
+         }
+diff --git a/src/main/java/org/example/MinegusCommand.java b/src/main/java/org/example/MinegusCommand.java
+index 14da7e48a18c71a02c8c1e8d4fd6a07804b2d773..d4e760a72b6c9cbb7707bfe6e1277a90145739b1 100644
+--- a/src/main/java/org/example/MinegusCommand.java
++++ b/src/main/java/org/example/MinegusCommand.java
+@@ -104,7 +104,10 @@ public final class MinegusCommand implements CommandExecutor {
+         lines.add(ChatColor.GOLD + "/armure" + ChatColor.GRAY + " : donne l'armure du roi GIDON.");
+         lines.add(ChatColor.GOLD + "/marchand" + ChatColor.AQUA + " [permission]" + ChatColor.GRAY
+                 + " : invoque le marchand; " + ChatColor.GOLD + "open" + ChatColor.GRAY + " ouvre son menu.");
+-        lines.add(ChatColor.GOLD + "/job" + ChatColor.GRAY + " : choisit le metier de mineur et affiche ta progression.");
++        lines.add(ChatColor.GOLD + "/niveau" + ChatColor.GRAY
++                + " : affiche ton niveau global, ton XP et tes bonus.");
++        lines.add(ChatColor.GOLD + "/job" + ChatColor.GRAY
++                + " : choisit le metier de mineur et affiche sa progression separee.");
+         lines.add(ChatColor.GOLD + FIX_USAGE + ChatColor.RED + " [admin]" + ChatColor.GRAY
+                 + " : nettoie les doublons de forestiers ou de golems.");
+         return lines;
+diff --git a/src/main/java/org/example/Village.java b/src/main/java/org/example/Village.java
+index 4eb37116dcd9989827c8bfbe6fed62924d390320..43ff6ae9754ad9e67122b017e486f918bf1b81e2 100644
+--- a/src/main/java/org/example/Village.java
++++ b/src/main/java/org/example/Village.java
+@@ -22,6 +22,7 @@ import org.bukkit.scheduler.BukkitTask;
+ import org.example.village.Disposition;
+ import org.example.village.GateGuardManager;
+ import org.example.village.VillageEntityManager;
++import org.example.progression.GlobalProgressionManager;
+ import org.example.village.VillageGenerationSession;
+ import org.example.village.VillageLayoutPlan;
+ import org.example.village.VillageLayoutPlanner;
+@@ -425,13 +426,19 @@ public final class Village implements CommandExecutor {
+         if (block.getType() == material) {
+             return;
+         }
++        GlobalProgressionManager progression = getGlobalProgression();
+         if (session != null) {
+             session.rememberOriginal(
+                     block.getLocation(),
+-                    block.getBlockData()
++                    block.getBlockData(),
++                    progression != null
++                            && progression.isArtificialBlock(block)
+             );
+         }
+         block.setType(material, false);
++        if (progression != null) {
++            progression.synchronizeArtificialBlock(block, true);
++        }
+     }
+ 
+     /**
+@@ -453,13 +460,19 @@ public final class Village implements CommandExecutor {
+         if (block.getBlockData().equals(data)) {
+             return;
+         }
++        GlobalProgressionManager progression = getGlobalProgression();
+         if (session != null) {
+             session.rememberOriginal(
+                     block.getLocation(),
+-                    block.getBlockData()
++                    block.getBlockData(),
++                    progression != null
++                            && progression.isArtificialBlock(block)
+             );
+         }
+         block.setBlockData(data, false);
++        if (progression != null) {
++            progression.synchronizeArtificialBlock(block, true);
++        }
+     }
+ 
+     /**
+@@ -1067,6 +1080,17 @@ public final class Village implements CommandExecutor {
+         return Material.GRASS_BLOCK;
+     }
+ 
++    /**
++     * Retourne le module de progression lorsqu'il est disponible. Village
++     * reste compatible avec un chargement isolé dans les tests.
++     */
++    private GlobalProgressionManager getGlobalProgression() {
++        if (plugin instanceof MinePlugin minePlugin) {
++            return minePlugin.getGlobalProgressionManager();
++        }
++        return null;
++    }
++
+     /**
+      * Annule la génération active ou terminée et restaure les blocs dans
+      * l'ordre inverse de leur première modification.
+@@ -1112,15 +1136,23 @@ public final class Village implements CommandExecutor {
+         List<Map.Entry<Location, BlockData>> originals =
+                 new ArrayList<>(session.getOriginalBlocks().entrySet());
+         Collections.reverse(originals);
++        GlobalProgressionManager progression = getGlobalProgression();
+         for (Map.Entry<Location, BlockData> entry : originals) {
+             Location location = entry.getKey();
+             if (location.getWorld() == null) {
+                 continue;
+             }
+-            location.getBlock().setBlockData(
++            Block block = location.getBlock();
++            block.setBlockData(
+                     entry.getValue().clone(),
+                     false
+             );
++            if (progression != null) {
++                progression.synchronizeArtificialBlock(
++                        block,
++                        session.wasOriginalArtificial(location)
++                );
++            }
+         }
+ 
+         try {
+diff --git a/src/main/java/org/example/progression/GlobalProgressionManager.java b/src/main/java/org/example/progression/GlobalProgressionManager.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..1ab37313fb4f6023368756baeab54b3bf9766e0f
+--- /dev/null
++++ b/src/main/java/org/example/progression/GlobalProgressionManager.java
+@@ -0,0 +1,2199 @@
++package org.example.progression;
++
++import io.papermc.paper.event.player.PlayerTradeEvent;
++import org.bukkit.Bukkit;
++import org.bukkit.ChatColor;
++import org.bukkit.GameMode;
++import org.bukkit.Material;
++import org.bukkit.NamespacedKey;
++import org.bukkit.OfflinePlayer;
++import org.bukkit.Sound;
++import org.bukkit.attribute.Attribute;
++import org.bukkit.attribute.AttributeInstance;
++import org.bukkit.attribute.AttributeModifier;
++import org.bukkit.block.Block;
++import org.bukkit.block.data.Ageable;
++import org.bukkit.command.Command;
++import org.bukkit.command.CommandExecutor;
++import org.bukkit.command.CommandSender;
++import org.bukkit.command.PluginCommand;
++import org.bukkit.command.TabCompleter;
++import org.bukkit.configuration.ConfigurationSection;
++import org.bukkit.configuration.InvalidConfigurationException;
++import org.bukkit.configuration.file.YamlConfiguration;
++import org.bukkit.entity.Animals;
++import org.bukkit.entity.Entity;
++import org.bukkit.entity.LivingEntity;
++import org.bukkit.entity.Monster;
++import org.bukkit.entity.Player;
++import org.bukkit.entity.Projectile;
++import org.bukkit.entity.TNTPrimed;
++import org.bukkit.event.EventHandler;
++import org.bukkit.event.EventPriority;
++import org.bukkit.event.Listener;
++import org.bukkit.event.block.BlockBreakEvent;
++import org.bukkit.event.block.BlockBurnEvent;
++import org.bukkit.event.block.BlockExplodeEvent;
++import org.bukkit.event.block.BlockFormEvent;
++import org.bukkit.event.block.BlockPistonExtendEvent;
++import org.bukkit.event.block.BlockPistonRetractEvent;
++import org.bukkit.event.block.BlockPlaceEvent;
++import org.bukkit.event.enchantment.EnchantItemEvent;
++import org.bukkit.event.entity.CreatureSpawnEvent;
++import org.bukkit.event.entity.EntityBreedEvent;
++import org.bukkit.event.entity.EntityDamageByEntityEvent;
++import org.bukkit.event.entity.EntityChangeBlockEvent;
++import org.bukkit.event.entity.EntityDeathEvent;
++import org.bukkit.event.entity.EntityExplodeEvent;
++import org.bukkit.event.entity.EntityTameEvent;
++import org.bukkit.event.inventory.FurnaceExtractEvent;
++import org.bukkit.event.player.PlayerAdvancementDoneEvent;
++import org.bukkit.event.player.PlayerFishEvent;
++import org.bukkit.event.player.PlayerJoinEvent;
++import org.bukkit.event.player.PlayerQuitEvent;
++import org.bukkit.event.player.PlayerRespawnEvent;
++import org.bukkit.event.player.PlayerShearEntityEvent;
++import org.bukkit.event.world.ChunkUnloadEvent;
++import org.bukkit.inventory.ItemStack;
++import org.bukkit.plugin.IllegalPluginAccessException;
++import org.bukkit.plugin.java.JavaPlugin;
++import org.bukkit.scheduler.BukkitTask;
++import org.example.mineur.AutomatedMiningContext;
++
++import java.io.File;
++import java.io.IOException;
++import java.nio.charset.StandardCharsets;
++import java.nio.file.AtomicMoveNotSupportedException;
++import java.nio.file.Files;
++import java.nio.file.StandardCopyOption;
++import java.nio.file.StandardOpenOption;
++import java.util.ArrayList;
++import java.util.Comparator;
++import java.util.HashMap;
++import java.util.LinkedHashSet;
++import java.util.List;
++import java.util.Locale;
++import java.util.Map;
++import java.util.Set;
++import java.util.UUID;
++import java.util.concurrent.TimeUnit;
++import java.util.logging.Level;
++
++/**
++ * Niveau global indépendant des métiers.
++ *
++ * <p>Le niveau commence à 1 et chaque passage de niveau ajoute les bonus
++ * configurés. Avec la configuration par défaut, le niveau 100 représente donc
++ * +99 %, car le niveau 1 est la valeur de référence et 99 passages de niveau
++ * ont été effectués.</p>
++ */
++public final class GlobalProgressionManager
++        implements Listener, CommandExecutor, TabCompleter {
++
++    public static final String ADMIN_PERMISSION =
++            "mineplugin.progression.admin";
++
++    private static final String PREFIX =
++            ChatColor.GOLD + "[Niveau] " + ChatColor.GRAY;
++    private static final long RATE_WINDOW_NANOS =
++            TimeUnit.MINUTES.toNanos(1L);
++    private static final long SAVE_DEBOUNCE_TICKS = 100L;
++    private static final long SAVE_RETRY_TICKS = 200L;
++
++    private final JavaPlugin plugin;
++    private final ProgressionConfig config;
++    private final File dataFile;
++
++    private final NamespacedKey healthModifierKey;
++    private final NamespacedKey oxygenModifierKey;
++    private final NamespacedKey miningSpeedModifierKey;
++
++    private final ProgressionHud hud;
++    private final PlacedBlockTracker placedBlockTracker;
++
++    private final Map<UUID, PlayerProgress> players = new HashMap<>();
++    private final Map<UUID, RateWindow> rateWindows = new HashMap<>();
++
++    private final Object saveStateLock = new Object();
++    private final Object diskWriteLock = new Object();
++    private BukkitTask pendingSaveTask;
++    private long dirtyVersion;
++    private volatile long latestWrittenVersion = -1L;
++    private boolean saveInProgress;
++    private boolean saveQueued;
++    private volatile boolean shuttingDown;
++    private volatile boolean persistenceBlocked;
++
++    public GlobalProgressionManager(JavaPlugin plugin) {
++        this.plugin = plugin;
++        this.config = ProgressionConfig.load(plugin);
++        this.dataFile = new File(plugin.getDataFolder(), "progression.yml");
++
++        this.healthModifierKey =
++                new NamespacedKey(plugin, "progression_max_health");
++        this.oxygenModifierKey =
++                new NamespacedKey(plugin, "progression_oxygen");
++        this.miningSpeedModifierKey =
++                new NamespacedKey(plugin, "progression_mining_speed");
++        this.hud = new ProgressionHud(plugin, config);
++        this.placedBlockTracker = new PlacedBlockTracker(
++                plugin,
++                config.enabled && config.trackPlacedBlocks,
++                config.placedBlocksMaxPerChunk,
++                config.placedBlocksFlushTicks);
++
++        loadFromDisk();
++        plugin.getServer().getPluginManager()
++                .registerEvents(this, plugin);
++
++        PluginCommand command = plugin.getCommand("niveau");
++        if (command != null) {
++            command.setExecutor(this);
++            command.setTabCompleter(this);
++        } else {
++            plugin.getLogger().warning(
++                    "[Progression] La commande /niveau manque dans plugin.yml.");
++        }
++    }
++
++    /**
++     * Applique les bonus aux joueurs déjà présents lors d'un rechargement.
++     */
++    public void initializeOnlinePlayers() {
++        for (Player player : Bukkit.getOnlinePlayers()) {
++            updateKnownName(player);
++            applyBonuses(player, false);
++        }
++    }
++
++    /**
++     * Sauvegarde les données et retire uniquement les effets appartenant à ce
++     * module. Les modificateurs du métier Mineur restent indépendants.
++     */
++    public void shutdown() {
++        hud.shutdown();
++        placedBlockTracker.shutdown();
++
++        for (Player player : Bukkit.getOnlinePlayers()) {
++            /*
++             * Conserver le pourcentage de vie avant de retirer le modificateur
++             * transitoire évite qu'un /reload ou un redémarrage propre transforme
++             * un joueur à 100 % de vie en joueur partiellement blessé.
++             */
++            rememberHealthRatio(player, false);
++            removeBonuses(player);
++        }
++
++        /*
++         * Empêcher toute nouvelle planification avant la sauvegarde finale.
++         * Une écriture asynchrone déjà engagée peut finir : le verrou disque et
++         * le numéro de version l'empêcheront d'écraser cet instantané final.
++         */
++        synchronized (saveStateLock) {
++            shuttingDown = true;
++            if (pendingSaveTask != null) {
++                pendingSaveTask.cancel();
++                pendingSaveTask = null;
++            }
++            saveQueued = false;
++        }
++        saveProgressSync();
++        rateWindows.clear();
++    }
++
++    public int getMaxLevel() {
++        return config.maxLevel;
++    }
++
++    public long getExperience(UUID playerId) {
++        PlayerProgress data = players.get(playerId);
++        return data == null ? 0L : config.clampXp(data.xp);
++    }
++
++    public int getLevel(UUID playerId) {
++        return config.getLevelForXp(getExperience(playerId));
++    }
++
++    public long getTotalXpForLevel(int level) {
++        return config.getTotalXpForLevel(level);
++    }
++
++    public long getXpRequiredForNextLevel(int level) {
++        return config.getXpRequiredForNextLevel(level);
++    }
++
++    public double getHealthBonusPercent(UUID playerId) {
++        return getHealthBonusPercentForLevel(getLevel(playerId));
++    }
++
++    public double getOxygenBonusPercent(UUID playerId) {
++        return getOxygenBonusPercentForLevel(getLevel(playerId));
++    }
++
++    public double getDamageBonusPercent(UUID playerId) {
++        return getDamageBonusPercentForLevel(getLevel(playerId));
++    }
++
++    public double getMiningSpeedBonusPercent(UUID playerId) {
++        return getMiningSpeedBonusPercentForLevel(getLevel(playerId));
++    }
++
++    public double getHealthBonusPercentForLevel(int level) {
++        return completedLevelUps(level)
++                * config.healthPercentPerLevel;
++    }
++
++    public double getOxygenBonusPercentForLevel(int level) {
++        return completedLevelUps(level)
++                * config.oxygenPercentPerLevel;
++    }
++
++    public double getDamageBonusPercentForLevel(int level) {
++        return completedLevelUps(level)
++                * config.damagePercentPerLevel;
++    }
++
++    public double getMiningSpeedBonusPercentForLevel(int level) {
++        return completedLevelUps(level)
++                * config.miningSpeedPercentPerLevel;
++    }
++
++    /**
++     * Indique si un bloc éligible à l'XP est déjà identifié comme artificiel.
++     *
++     * <p>Cette API sert aux autres modules de MineGus qui remplacent des blocs
++     * par code. Ils peuvent ainsi préserver l'état anti-recyclage lors d'un
++     * rollback sans rendre un ancien bloc naturel définitivement inéligible.</p>
++     */
++    public boolean isArtificialBlock(Block block) {
++        if (block == null || config.getBlockXp(block.getType()) <= 0) {
++            return false;
++        }
++        return placedBlockTracker.isMarked(block);
++    }
++
++    /**
++     * Synchronise le marqueur anti-recyclage après une écriture de bloc faite
++     * par le plugin.
++     *
++     * @param block bloc dans son nouvel état.
++     * @param artificial {@code true} si ce nouvel état a été généré/posé par le
++     *                   plugin, {@code false} si un état antérieur est restauré.
++     */
++    public void synchronizeArtificialBlock(
++            Block block,
++            boolean artificial) {
++        if (block == null) {
++            return;
++        }
++
++        if (artificial && config.getBlockXp(block.getType()) > 0) {
++            placedBlockTracker.mark(block);
++        } else {
++            /*
++             * Nettoie également un marqueur existant lorsque le bloc vient
++             * d'être remplacé par de l'air ou par un matériau sans XP.
++             */
++            placedBlockTracker.consume(block);
++        }
++    }
++
++    /**
++     * API publique pour les autres modules du plugin.
++     *
++     * <p>Depuis le thread serveur, la valeur retournée est la quantité réellement
++     * ajoutée après les plafonds. Depuis un autre thread, le gain est remis sur
++     * le thread serveur et cette méthode retourne immédiatement {@code 0}.</p>
++     *
++     * @return quantité ajoutée immédiatement, ou {@code 0} si le traitement a
++     *         été refusé ou remis sur le thread serveur.
++     */
++    public long grantExperience(
++            Player player,
++            long requestedAmount,
++            String source) {
++        if (player == null || requestedAmount <= 0L) {
++            return 0L;
++        }
++
++        if (!Bukkit.isPrimaryThread()) {
++            String safeSource = source;
++            try {
++                Bukkit.getScheduler().runTask(
++                        plugin,
++                        () -> grantExperience(
++                                player,
++                                requestedAmount,
++                                safeSource));
++            } catch (IllegalPluginAccessException exception) {
++                plugin.getLogger().fine(
++                        "[Progression] Gain d'XP ignoré pendant l'arrêt.");
++            }
++            return 0L;
++        }
++        return grantExperienceInternal(
++                player,
++                requestedAmount,
++                source,
++                false);
++    }
++
++    @EventHandler(priority = EventPriority.MONITOR)
++    public void onPlayerJoin(PlayerJoinEvent event) {
++        updateKnownName(event.getPlayer());
++        applyBonuses(event.getPlayer(), false);
++    }
++
++    @EventHandler(priority = EventPriority.MONITOR)
++    public void onPlayerQuit(PlayerQuitEvent event) {
++        UUID playerId = event.getPlayer().getUniqueId();
++        hud.hide(event.getPlayer());
++        rateWindows.remove(playerId);
++        /*
++         * Les modificateurs transitoires ne doivent pas être considérés comme
++         * persistants par le stockage joueur de Minecraft. Sauvegarder le ratio
++         * permet de restituer exactement l'état de santé au prochain chargement.
++         */
++        rememberHealthRatio(event.getPlayer(), true);
++        updateKnownName(event.getPlayer());
++    }
++
++    @EventHandler(priority = EventPriority.MONITOR)
++    public void onPlayerRespawn(PlayerRespawnEvent event) {
++        // Les attributs transitoires peuvent être reconstruits par le serveur
++        // durant le respawn ; les réappliquer un tick après évite toute course.
++        Bukkit.getScheduler().runTask(
++                plugin,
++                () -> applyBonuses(event.getPlayer(), false));
++    }
++
++    @EventHandler(
++            priority = EventPriority.MONITOR,
++            ignoreCancelled = true)
++    public void onBlockPlace(BlockPlaceEvent event) {
++        if (config.getBlockXp(event.getBlockPlaced().getType()) > 0) {
++            placedBlockTracker.mark(event.getBlockPlaced());
++        }
++    }
++
++    @EventHandler(
++            priority = EventPriority.MONITOR,
++            ignoreCancelled = true)
++    public void onBlockForm(BlockFormEvent event) {
++        if (config.getBlockXp(event.getNewState().getType()) > 0) {
++            // Inclut notamment les générateurs de pierre/cobblestone.
++            placedBlockTracker.mark(event.getBlock());
++        }
++    }
++
++    @EventHandler(
++            priority = EventPriority.MONITOR,
++            ignoreCancelled = true)
++    public void onPistonExtend(BlockPistonExtendEvent event) {
++        placedBlockTracker.moveAll(
++                event.getBlocks().stream()
++                        .filter(block -> config.getBlockXp(block.getType()) > 0)
++                        .toList(),
++                event.getDirection());
++    }
++
++    @EventHandler(
++            priority = EventPriority.MONITOR,
++            ignoreCancelled = true)
++    public void onPistonRetract(BlockPistonRetractEvent event) {
++        /*
++         * Pour cet événement, getDirection() est déjà la direction réelle du
++         * déplacement des blocs (vers le piston), pas sa face d'extension.
++         */
++        placedBlockTracker.moveAll(
++                event.getBlocks().stream()
++                        .filter(block -> config.getBlockXp(block.getType()) > 0)
++                        .toList(),
++                event.getDirection());
++    }
++
++    @EventHandler(priority = EventPriority.MONITOR)
++    public void onChunkUnload(ChunkUnloadEvent event) {
++        placedBlockTracker.onChunkUnload(event.getChunk());
++    }
++
++    @EventHandler(
++            priority = EventPriority.MONITOR,
++            ignoreCancelled = true)
++    public void onBlockExplosion(BlockExplodeEvent event) {
++        discardDestroyedBlockMarkers(event.blockList());
++    }
++
++    @EventHandler(
++            priority = EventPriority.MONITOR,
++            ignoreCancelled = true)
++    public void onEntityExplosion(EntityExplodeEvent event) {
++        discardDestroyedBlockMarkers(event.blockList());
++    }
++
++    @EventHandler(
++            priority = EventPriority.MONITOR,
++            ignoreCancelled = true)
++    public void onBlockBurn(BlockBurnEvent event) {
++        Block block = event.getBlock();
++        if (config.getBlockXp(block.getType()) > 0) {
++            /*
++             * Sans ce nettoyage, une bûche posée puis brûlée laisserait un
++             * marqueur fantôme à cette coordonnée après le feu.
++             */
++            placedBlockTracker.consume(block);
++        }
++    }
++
++    @EventHandler(
++            priority = EventPriority.MONITOR,
++            ignoreCancelled = true)
++    public void onEntityChangeBlock(EntityChangeBlockEvent event) {
++        Block block = event.getBlock();
++        Material previousType = block.getType();
++        Material nextType = event.getTo();
++        if (previousType == nextType) {
++            return;
++        }
++
++        /*
++         * Couvre notamment les Endermen, Silverfish et autres entités qui
++         * déplacent, retirent ou transforment un bloc sans BlockBreakEvent.
++         * Toute apparition d'un matériau à XP par une entité est considérée
++         * artificielle ; une disparition nettoie l'ancien marqueur.
++         */
++        if (config.getBlockXp(previousType) > 0) {
++            placedBlockTracker.consume(block);
++        }
++        if (config.getBlockXp(nextType) > 0) {
++            placedBlockTracker.mark(block);
++        }
++    }
++
++    @EventHandler(
++            priority = EventPriority.MONITOR,
++            ignoreCancelled = true)
++    public void onBlockBreak(BlockBreakEvent event) {
++        Block block = event.getBlock();
++        int blockXp = config.getBlockXp(block.getType());
++        int cropXp = getMatureCropXp(block);
++
++        /*
++         * Le marqueur doit être consommé pour toute casse réellement acceptée,
++         * même en Créatif ou avec un outil incorrect. Sinon la coordonnée
++         * conserverait une entrée persistante alors que le bloc n'existe plus.
++         */
++        boolean artificial = blockXp > 0
++                && placedBlockTracker.consume(block);
++
++        if (AutomatedMiningContext.isActive()
++                || !canEarnExperience(event.getPlayer())) {
++            return;
++        }
++
++        if (config.requireBlockDrops && !event.isDropItems()) {
++            return;
++        }
++
++        if (blockXp > 0) {
++            if (artificial
++                    || (config.requirePreferredTool
++                    && !isPreferredTool(block, event.getPlayer()))) {
++                blockXp = 0;
++            }
++        }
++
++        long amount = (long) blockXp + cropXp;
++        if (amount <= 0L) {
++            return;
++        }
++
++        String source = cropXp > 0 && blockXp <= 0
++                ? "Récolte"
++                : cropXp > 0
++                ? "Minage et récolte"
++                : isWood(block.getType())
++                ? "Bûcheronnage"
++                : "Minage";
++        grantExperience(event.getPlayer(), amount, source);
++    }
++
++    @EventHandler(priority = EventPriority.MONITOR)
++    public void onEntityDeath(EntityDeathEvent event) {
++        Player killer = event.getEntity().getKiller();
++        if (killer == null || !canEarnExperience(killer)) {
++            return;
++        }
++
++        int baseXp = getEntityXp(event.getEntity());
++        if (baseXp <= 0) {
++            return;
++        }
++
++        String spawnReason = getSpawnReasonName(event.getEntity());
++        double multiplier =
++                config.getSpawnReasonMultiplier(spawnReason);
++        long amount = Math.round(baseXp * multiplier);
++        if (amount <= 0L) {
++            return;
++        }
++
++        grantExperience(killer, amount, "Combat");
++    }
++
++    /**
++     * Multiplie les dégâts provoqués par le joueur, après les calculs de base,
++     * afin de couvrir poings, épées, haches, arcs, arbalètes, tridents,
++     * projectiles magiques et autres armes sans doubler le bonus de mêlée.
++     */
++    @EventHandler(
++            priority = EventPriority.HIGHEST,
++            ignoreCancelled = true)
++    public void onPlayerDamage(EntityDamageByEntityEvent event) {
++        if (!config.enabled) {
++            return;
++        }
++
++        Player attacker = resolveAttackingPlayer(event);
++        if (attacker == null
++                || attacker.getUniqueId().equals(
++                        event.getEntity().getUniqueId())) {
++            return;
++        }
++
++        double bonusFraction =
++                getDamageBonusPercent(attacker.getUniqueId()) / 100.0D;
++        if (bonusFraction <= 0.0D) {
++            return;
++        }
++
++        double original = event.getDamage();
++        double boosted = original * (1.0D + bonusFraction);
++        if (Double.isFinite(original)
++                && original > 0.0D
++                && Double.isFinite(boosted)) {
++            event.setDamage(Math.min(boosted, 1_000_000.0D));
++        }
++    }
++
++    @EventHandler(
++            priority = EventPriority.MONITOR,
++            ignoreCancelled = true)
++    public void onFishing(PlayerFishEvent event) {
++        int amount = switch (event.getState()) {
++            case CAUGHT_FISH -> config.caughtFishXp;
++            case CAUGHT_ENTITY -> config.caughtEntityXp;
++            default -> 0;
++        };
++        if (amount > 0) {
++            grantExperience(event.getPlayer(), amount, "Pêche");
++        }
++    }
++
++    @EventHandler(
++            priority = EventPriority.MONITOR,
++            ignoreCancelled = true)
++    public void onBreeding(EntityBreedEvent event) {
++        if (event.getBreeder() instanceof Player player
++                && config.breedingXp > 0) {
++            grantExperience(
++                    player,
++                    config.breedingXp,
++                    "Élevage");
++        }
++    }
++
++    @EventHandler(
++            priority = EventPriority.MONITOR,
++            ignoreCancelled = true)
++    public void onTaming(EntityTameEvent event) {
++        if (event.getOwner() instanceof Player player
++                && config.tamingXp > 0) {
++            grantExperience(
++                    player,
++                    config.tamingXp,
++                    "Apprivoisement");
++        }
++    }
++
++    @EventHandler(
++            priority = EventPriority.MONITOR,
++            ignoreCancelled = true)
++    public void onEnchanting(EnchantItemEvent event) {
++        long amount = Math.round(
++                config.enchantingBaseXp
++                        + event.getExpLevelCost()
++                        * config.enchantingXpPerCostLevel);
++        if (amount > 0L) {
++            grantExperience(
++                    event.getEnchanter(),
++                    amount,
++                    "Enchantement");
++        }
++    }
++
++    @EventHandler(priority = EventPriority.MONITOR)
++    public void onFurnaceExtract(FurnaceExtractEvent event) {
++        double calculated = event.getItemAmount()
++                * config.smeltingXpPerItem
++                + event.getExpToDrop()
++                * config.smeltingXpPerVanillaXp;
++        // Ne pas arrondir chaque extraction à 1 XP : sinon sortir les objets
++        // un par un multiplierait artificiellement la récompense.
++        long amount = Double.isFinite(calculated) && calculated >= 1.0D
++                ? (long) Math.floor(calculated)
++                : 0L;
++        amount = Math.min(
++                amount,
++                config.smeltingMaxXpPerExtraction);
++        if (amount > 0L) {
++            grantExperience(
++                    event.getPlayer(),
++                    amount,
++                    "Cuisson");
++        }
++    }
++
++    @EventHandler(
++            priority = EventPriority.MONITOR,
++            ignoreCancelled = true)
++    public void onTrade(PlayerTradeEvent event) {
++        if (config.tradeXp > 0) {
++            grantExperience(
++                    event.getPlayer(),
++                    config.tradeXp,
++                    "Commerce");
++        }
++    }
++
++    @EventHandler(
++            priority = EventPriority.MONITOR,
++            ignoreCancelled = true)
++    public void onShear(PlayerShearEntityEvent event) {
++        if (config.shearingXp > 0) {
++            grantExperience(
++                    event.getPlayer(),
++                    config.shearingXp,
++                    "Élevage");
++        }
++    }
++
++    @EventHandler(priority = EventPriority.MONITOR)
++    public void onAdvancement(PlayerAdvancementDoneEvent event) {
++        NamespacedKey key = event.getAdvancement().getKey();
++        if (config.ignoreRecipeAdvancements
++                && key.getKey().startsWith("recipes/")) {
++            return;
++        }
++
++        int amount = config.getAdvancementXp(key);
++        if (amount > 0) {
++            grantExperience(
++                    event.getPlayer(),
++                    amount,
++                    "Progrès");
++        }
++    }
++
++    @Override
++    public boolean onCommand(
++            CommandSender sender,
++            Command command,
++            String label,
++            String[] args) {
++        if (args.length == 0) {
++            if (sender instanceof Player player) {
++                sendProgressInfo(sender, player.getUniqueId(), player.getName());
++            } else {
++                sendUsage(sender);
++            }
++            return true;
++        }
++
++        String subcommand = args[0].toLowerCase(Locale.ROOT);
++        return switch (subcommand) {
++            case "info" -> handleInfoCommand(sender, args);
++            case "addxp" -> handleAddXpCommand(sender, args);
++            case "setlevel" -> handleSetLevelCommand(sender, args);
++            case "reset" -> handleResetCommand(sender, args);
++            case "aide", "help" -> {
++                sendUsage(sender);
++                yield true;
++            }
++            default -> {
++                sendUsage(sender);
++                yield true;
++            }
++        };
++    }
++
++    @Override
++    public List<String> onTabComplete(
++            CommandSender sender,
++            Command command,
++            String alias,
++            String[] args) {
++        if (args.length == 1) {
++            List<String> choices = new ArrayList<>();
++            choices.add("info");
++            choices.add("aide");
++            if (sender.hasPermission(ADMIN_PERMISSION)) {
++                choices.add("addxp");
++                choices.add("setlevel");
++                choices.add("reset");
++            }
++            return filterPrefix(choices, args[0]);
++        }
++
++        if (args.length == 2
++                && sender.hasPermission(ADMIN_PERMISSION)
++                && Set.of("info", "addxp", "setlevel", "reset")
++                .contains(args[0].toLowerCase(Locale.ROOT))) {
++            return filterPrefix(knownPlayerNames(), args[1]);
++        }
++
++        if (args.length == 3
++                && sender.hasPermission(ADMIN_PERMISSION)
++                && "setlevel".equalsIgnoreCase(args[0])) {
++            LinkedHashSet<String> levels = new LinkedHashSet<>();
++            for (int candidate : new int[]{1, 10, 25, 50, 75, 100}) {
++                if (candidate <= config.maxLevel) {
++                    levels.add(Integer.toString(candidate));
++                }
++            }
++            levels.add(Integer.toString(config.maxLevel));
++            return filterPrefix(new ArrayList<>(levels), args[2]);
++        }
++        return List.of();
++    }
++
++    public void saveProgressSync() {
++        if (persistenceBlocked) {
++            return;
++        }
++
++        final Map<UUID, SavedProgress> snapshot;
++        final long version;
++        synchronized (saveStateLock) {
++            if (pendingSaveTask != null) {
++                pendingSaveTask.cancel();
++                pendingSaveTask = null;
++            }
++            snapshot = snapshotPlayers();
++            version = dirtyVersion;
++            saveQueued = false;
++        }
++
++        try {
++            writeSerializedSnapshot(
++                    serializeSnapshot(snapshot),
++                    version);
++        } catch (RuntimeException exception) {
++            /*
++             * Une configuration YAML ou un système de fichiers atypique ne doit
++             * jamais interrompre le reste de l'arrêt propre du plugin.
++             */
++            plugin.getLogger().log(
++                    Level.WARNING,
++                    "[Progression] Impossible de finaliser progression.yml",
++                    exception);
++        }
++    }
++
++    private long grantExperienceInternal(
++            Player player,
++            long requestedAmount,
++            String source,
++            boolean bypassRateLimit) {
++        if (!canEarnExperience(player)
++                && !bypassRateLimit) {
++            return 0L;
++        }
++
++        PlayerProgress data = getOrCreateData(
++                player.getUniqueId(),
++                player.getName());
++        long oldXp = config.clampXp(data.xp);
++        long room = config.getMaximumXp() - oldXp;
++        if (room <= 0L) {
++            return 0L;
++        }
++
++        // Les plafonds anti-abus concernent le gameplay. Une commande
++        // d'administration doit pouvoir effectuer une migration complète en
++        // une seule opération, tout en restant bornée par l'XP maximale.
++        long amount = bypassRateLimit
++                ? requestedAmount
++                : Math.min(requestedAmount, config.maxSingleAward);
++        amount = Math.min(amount, room);
++        if (!bypassRateLimit) {
++            amount = applyRateLimit(
++                    player.getUniqueId(),
++                    amount);
++        }
++        if (amount <= 0L) {
++            return 0L;
++        }
++
++        int oldLevel = config.getLevelForXp(oldXp);
++        data.xp = oldXp + amount;
++        data.lastKnownName = player.getName();
++
++        int newLevel = config.getLevelForXp(data.xp);
++        if (newLevel != oldLevel) {
++            applyBonuses(player, newLevel > oldLevel);
++        }
++
++        long currentLevelXp =
++                config.getTotalXpForLevel(newLevel);
++        long nextLevelXp = newLevel >= config.maxLevel
++                ? currentLevelXp
++                : config.getTotalXpForLevel(newLevel + 1);
++        hud.show(
++                player,
++                amount,
++                source,
++                newLevel,
++                data.xp,
++                currentLevelXp,
++                nextLevelXp);
++
++        if (newLevel > oldLevel) {
++            notifyLevelUp(
++                    player,
++                    oldLevel,
++                    newLevel);
++        }
++
++        markDirtyAndScheduleSave();
++        return amount;
++    }
++
++    private boolean canEarnExperience(Player player) {
++        if (!config.enabled || player == null) {
++            return false;
++        }
++        try {
++            if (!player.isOnline()) {
++                return false;
++            }
++        } catch (Throwable throwable) {
++            // Certains doubles de test ne modélisent pas cet état.
++        }
++
++        GameMode gameMode = player.getGameMode();
++        if (gameMode == GameMode.CREATIVE
++                || gameMode == GameMode.SPECTATOR) {
++            return false;
++        }
++
++        try {
++            String worldName = player.getWorld().getName()
++                    .toLowerCase(Locale.ROOT);
++            return !config.disabledWorlds.contains(worldName);
++        } catch (Throwable throwable) {
++            // En cas d'état joueur incomplet, refuser le gain est le choix sûr.
++            return false;
++        }
++    }
++
++    private long applyRateLimit(UUID playerId, long requested) {
++        if (config.maxXpPerMinute <= 0L) {
++            return requested;
++        }
++
++        long now = System.nanoTime();
++        RateWindow window = rateWindows.computeIfAbsent(
++                playerId,
++                ignored -> new RateWindow(now));
++
++        if (now - window.startedAtNanos >= RATE_WINDOW_NANOS
++                || now < window.startedAtNanos) {
++            window.startedAtNanos = now;
++            window.granted = 0L;
++        }
++
++        long remaining = Math.max(
++                0L,
++                config.maxXpPerMinute - window.granted);
++        long accepted = Math.min(requested, remaining);
++        window.granted += accepted;
++        return accepted;
++    }
++
++    private void discardDestroyedBlockMarkers(
++            Iterable<? extends Block> destroyedBlocks) {
++        if (!placedBlockTracker.isEnabled() || destroyedBlocks == null) {
++            return;
++        }
++        for (Block block : destroyedBlocks) {
++            if (block != null
++                    && config.getBlockXp(block.getType()) > 0) {
++                placedBlockTracker.consume(block);
++            }
++        }
++    }
++
++    private int getMatureCropXp(Block block) {
++        int configured = config.getMatureCropXp(block.getType());
++        if (configured <= 0) {
++            return 0;
++        }
++
++        if (block.getBlockData() instanceof Ageable ageable
++                && ageable.getAge() >= ageable.getMaximumAge()) {
++            return configured;
++        }
++        return 0;
++    }
++
++    private boolean isPreferredTool(
++            Block block,
++            Player player) {
++        try {
++            ItemStack tool =
++                    player.getInventory().getItemInMainHand();
++            return tool != null
++                    && tool.getType() != Material.AIR
++                    && block.isPreferredTool(tool);
++        } catch (Throwable throwable) {
++            // Sur un environnement API incomplet, refuser l'XP est plus sûr
++            // que d'autoriser une exploitation à la main.
++            return false;
++        }
++    }
++
++    private int getEntityXp(LivingEntity entity) {
++        int configured =
++                config.getConfiguredEntityXp(entity.getType());
++        if (configured >= 0) {
++            return configured;
++        }
++        if (entity instanceof Player) {
++            return config.playerKillXp;
++        }
++        if (entity instanceof Monster) {
++            return config.monsterXp;
++        }
++        if (entity instanceof Animals) {
++            return config.animalXp;
++        }
++        return config.otherEntityXp;
++    }
++
++    /**
++     * Lit directement la raison de spawn exposée par Paper sur l'entité, sans
++     * dépendre d'un cache d'événement propre au plugin qui serait perdu dès que
++     * le processus serveur est arrêté.
++     */
++    private String getSpawnReasonName(LivingEntity entity) {
++        try {
++            CreatureSpawnEvent.SpawnReason reason =
++                    entity.getEntitySpawnReason();
++            if (reason != null) {
++                return reason.name();
++            }
++        } catch (Throwable throwable) {
++            // Repli pour les doubles de test ou une implémentation API partielle.
++        }
++
++        try {
++            if (entity.fromMobSpawner()) {
++                return CreatureSpawnEvent.SpawnReason.SPAWNER.name();
++            }
++        } catch (Throwable throwable) {
++            // Sans origine exploitable, le multiplicateur neutre (1.0) s'applique.
++        }
++        return null;
++    }
++
++    private Player resolveAttackingPlayer(
++            EntityDamageByEntityEvent event) {
++        try {
++            Entity causing =
++                    event.getDamageSource().getCausingEntity();
++            if (causing instanceof Player player) {
++                return player;
++            }
++        } catch (Throwable throwable) {
++            // Repli compatible avec les implémentations de test partielles.
++        }
++
++        Entity damager = event.getDamager();
++        if (damager instanceof Player player) {
++            return player;
++        }
++        if (damager instanceof Projectile projectile
++                && projectile.getShooter() instanceof Player player) {
++            return player;
++        }
++        if (damager instanceof TNTPrimed tnt
++                && tnt.getSource() instanceof Player player) {
++            return player;
++        }
++        return null;
++    }
++
++    private void applyBonuses(
++            Player player,
++            boolean healNewlyUnlockedHealth) {
++        if (player == null) {
++            return;
++        }
++
++        int level = getLevel(player.getUniqueId());
++        double oldMaximumHealth = getAttributeValue(
++                player,
++                Attribute.MAX_HEALTH);
++
++        double healthFraction = config.enabled
++                ? getHealthBonusPercentForLevel(level) / 100.0D
++                : 0.0D;
++        double oxygenDurationFraction = config.enabled
++                ? getOxygenBonusPercentForLevel(level) / 100.0D
++                : 0.0D;
++        double oxygenAttributeValue =
++                oxygenAttributeForDurationBonus(oxygenDurationFraction);
++        double miningFraction = config.enabled
++                ? getMiningSpeedBonusPercentForLevel(level) / 100.0D
++                : 0.0D;
++
++        replaceModifier(
++                player,
++                Attribute.MAX_HEALTH,
++                healthModifierKey,
++                healthFraction,
++                AttributeModifier.Operation.ADD_SCALAR);
++        /*
++         * Vanilla décrémente l'air avec une probabilité 1 / (1 + a), où « a »
++         * est la valeur d'OXYGEN_BONUS. La durée moyenne est donc multipliée
++         * par 1 + a : ajouter 0,99 produit bien environ +99 % d'apnée.
++         * ADD_NUMBER est nécessaire puisque la valeur de base est nulle.
++         */
++        replaceModifier(
++                player,
++                Attribute.OXYGEN_BONUS,
++                oxygenModifierKey,
++                oxygenAttributeValue,
++                AttributeModifier.Operation.ADD_NUMBER);
++        replaceModifier(
++                player,
++                Attribute.BLOCK_BREAK_SPEED,
++                miningSpeedModifierKey,
++                miningFraction,
++                AttributeModifier.Operation.ADD_SCALAR);
++
++        double newMaximumHealth = getAttributeValue(
++                player,
++                Attribute.MAX_HEALTH);
++        adjustCurrentHealth(
++                player,
++                oldMaximumHealth,
++                newMaximumHealth,
++                healNewlyUnlockedHealth);
++        restoreRememberedHealthRatio(player, newMaximumHealth);
++    }
++
++    /**
++     * Convertit le bonus de durée d'apnée configuré vers la valeur de
++     * l'attribut vanilla. Comme l'espérance de durée est multipliée par
++     * {@code 1 + OXYGEN_BONUS}, la fraction à ajouter est identique.
++     */
++    static double oxygenAttributeForDurationBonus(
++            double durationBonusFraction) {
++        if (!Double.isFinite(durationBonusFraction)
++                || durationBonusFraction <= 0.0D) {
++            return 0.0D;
++        }
++        return durationBonusFraction;
++    }
++
++    private void removeBonuses(Player player) {
++        if (player == null) {
++            return;
++        }
++
++        removeModifier(
++                player,
++                Attribute.MAX_HEALTH,
++                healthModifierKey);
++        removeModifier(
++                player,
++                Attribute.OXYGEN_BONUS,
++                oxygenModifierKey);
++        removeModifier(
++                player,
++                Attribute.BLOCK_BREAK_SPEED,
++                miningSpeedModifierKey);
++
++        double maximumHealth = getAttributeValue(
++                player,
++                Attribute.MAX_HEALTH);
++        adjustCurrentHealth(
++                player,
++                maximumHealth,
++                maximumHealth,
++                false);
++    }
++
++    private void rememberHealthRatio(
++            Player player,
++            boolean scheduleSave) {
++        if (player == null) {
++            return;
++        }
++
++        PlayerProgress data = getOrCreateData(
++                player.getUniqueId(),
++                player.getName());
++        Double remembered = null;
++
++        /*
++         * Aucun ratio différé n'est utile au niveau 1 : retirer notre
++         * modificateur ne change alors pas la vie maximale.
++         */
++        if (config.enabled
++                && getHealthBonusPercent(player.getUniqueId()) > 0.0D) {
++            double maximum = getAttributeValue(
++                    player,
++                    Attribute.MAX_HEALTH);
++            try {
++                double current = player.getHealth();
++                if (Double.isFinite(maximum)
++                        && maximum > 0.0D
++                        && Double.isFinite(current)
++                        && current > 0.0D) {
++                    remembered = Math.max(
++                            0.0D,
++                            Math.min(1.0D, current / maximum));
++                }
++            } catch (Throwable throwable) {
++                // Joueur en transition de mort : ne pas mémoriser un état douteux.
++            }
++        }
++
++        if (sameNullableDouble(data.healthRatioToRestore, remembered)) {
++            return;
++        }
++        data.healthRatioToRestore = remembered;
++        if (scheduleSave) {
++            markDirtyAndScheduleSave();
++        } else {
++            /*
++             * La sauvegarde finale doit voir une version plus récente, sans
++             * pour autant planifier une tâche alors que le plugin s'arrête.
++             */
++            synchronized (saveStateLock) {
++                dirtyVersion++;
++            }
++        }
++    }
++
++    private void restoreRememberedHealthRatio(
++            Player player,
++            double newMaximumHealth) {
++        PlayerProgress data = players.get(player.getUniqueId());
++        if (data == null || data.healthRatioToRestore == null) {
++            return;
++        }
++        if (!Double.isFinite(newMaximumHealth)
++                || newMaximumHealth <= 0.0D) {
++            return;
++        }
++
++        double ratio = data.healthRatioToRestore;
++        if (!Double.isFinite(ratio)
++                || ratio <= 0.0D
++                || ratio > 1.0D) {
++            data.healthRatioToRestore = null;
++            markDirtyAndScheduleSave();
++            return;
++        }
++
++        try {
++            double target = Math.max(
++                    0.0D,
++                    Math.min(newMaximumHealth, newMaximumHealth * ratio));
++            player.setHealth(target);
++            data.healthRatioToRestore = null;
++            markDirtyAndScheduleSave();
++        } catch (Throwable throwable) {
++            /*
++             * Conserver le ratio pour une prochaine tentative (respawn/join)
++             * plutôt que perdre silencieusement l'état de santé sauvegardé.
++             */
++        }
++    }
++
++    private static boolean sameNullableDouble(
++            Double left,
++            Double right) {
++        if (left == null || right == null) {
++            return left == right;
++        }
++        return Math.abs(left - right) < 0.000_000_1D;
++    }
++
++    private static Double sanitizeHealthRatio(Double rawRatio) {
++        if (rawRatio == null
++                || !Double.isFinite(rawRatio)
++                || rawRatio <= 0.0D
++                || rawRatio > 1.0D) {
++            return null;
++        }
++        return rawRatio;
++    }
++
++    private void replaceModifier(
++            Player player,
++            Attribute attribute,
++            NamespacedKey key,
++            double amount,
++            AttributeModifier.Operation operation) {
++        try {
++            AttributeInstance instance =
++                    player.getAttribute(attribute);
++            if (instance == null) {
++                return;
++            }
++
++            instance.removeModifier(key);
++            if (amount > 0.0D && Double.isFinite(amount)) {
++                instance.addTransientModifier(
++                        new AttributeModifier(
++                                key,
++                                amount,
++                                operation));
++            }
++        } catch (Throwable throwable) {
++            plugin.getLogger().fine(
++                    "[Progression] Attribut indisponible: "
++                            + attribute.getKey());
++        }
++    }
++
++    private void removeModifier(
++            Player player,
++            Attribute attribute,
++            NamespacedKey key) {
++        try {
++            AttributeInstance instance =
++                    player.getAttribute(attribute);
++            if (instance != null) {
++                instance.removeModifier(key);
++            }
++        } catch (Throwable throwable) {
++            // Nettoyage au mieux pendant l'arrêt ou dans MockBukkit.
++        }
++    }
++
++    private static double getAttributeValue(
++            Player player,
++            Attribute attribute) {
++        try {
++            AttributeInstance instance =
++                    player.getAttribute(attribute);
++            return instance == null
++                    ? Double.NaN
++                    : instance.getValue();
++        } catch (Throwable throwable) {
++            return Double.NaN;
++        }
++    }
++
++    private static void adjustCurrentHealth(
++            Player player,
++            double oldMaximum,
++            double newMaximum,
++            boolean healIncrease) {
++        if (!Double.isFinite(newMaximum)
++                || newMaximum <= 0.0D) {
++            return;
++        }
++
++        try {
++            double current = player.getHealth();
++            double target = current;
++            if (healIncrease
++                    && Double.isFinite(oldMaximum)
++                    && newMaximum > oldMaximum) {
++                // Le level-up donne immédiatement les nouveaux points de vie,
++                // sans soigner le reste de la barre.
++                target += newMaximum - oldMaximum;
++            }
++            target = Math.max(0.0D, Math.min(newMaximum, target));
++            if (Math.abs(target - current) > 0.0001D) {
++                player.setHealth(target);
++            }
++        } catch (Throwable throwable) {
++            // Un joueur mort ou en respawn refuse parfois setHealth.
++        }
++    }
++
++    private void notifyLevelUp(
++            Player player,
++            int oldLevel,
++            int newLevel) {
++        String transition = newLevel == oldLevel + 1
++                ? "Tu passes niveau "
++                        + ChatColor.GREEN + newLevel
++                : "Tu passes du niveau "
++                        + ChatColor.GREEN + oldLevel
++                        + ChatColor.GRAY + " au niveau "
++                        + ChatColor.GREEN + newLevel;
++        player.sendMessage(
++                PREFIX + transition + ChatColor.GRAY + " !");
++
++        player.sendMessage(
++                ChatColor.GRAY + "Bonus globaux : "
++                        + ChatColor.RED + "+"
++                        + formatPercent(
++                        getHealthBonusPercentForLevel(newLevel))
++                        + "% PV"
++                        + ChatColor.DARK_GRAY + " | "
++                        + ChatColor.AQUA + "+"
++                        + formatPercent(
++                        getOxygenBonusPercentForLevel(newLevel))
++                        + "% apnée"
++                        + ChatColor.DARK_GRAY + " | "
++                        + ChatColor.GOLD + "+"
++                        + formatPercent(
++                        getDamageBonusPercentForLevel(newLevel))
++                        + "% dégâts"
++                        + ChatColor.DARK_GRAY + " | "
++                        + ChatColor.YELLOW + "+"
++                        + formatPercent(
++                        getMiningSpeedBonusPercentForLevel(newLevel))
++                        + "% minage");
++
++        if (config.titleOnLevelUp) {
++            int gainedLevels = Math.max(1, newLevel - oldLevel);
++            String subtitle = newLevel >= config.maxLevel
++                    ? ChatColor.GREEN + "Niveau maximum atteint"
++                    : ChatColor.YELLOW
++                    + "+"
++                    + gainedLevels
++                    + (gainedLevels > 1
++                    ? " paliers de bonus globaux"
++                    : " palier de bonus global");
++            player.sendTitle(
++                    ChatColor.GOLD + "Niveau " + newLevel,
++                    subtitle,
++                    10,
++                    50,
++                    10);
++        }
++
++        if (config.soundOnLevelUp) {
++            try {
++                player.playSound(
++                        player.getLocation(),
++                        Sound.ENTITY_PLAYER_LEVELUP,
++                        1.0F,
++                        1.0F);
++            } catch (Throwable throwable) {
++                plugin.getLogger().fine(
++                        "[Progression] Son de level-up indisponible.");
++            }
++        }
++    }
++
++    private boolean handleInfoCommand(
++            CommandSender sender,
++            String[] args) {
++        if (args.length == 1) {
++            if (!(sender instanceof Player player)) {
++                sender.sendMessage(
++                        ChatColor.RED
++                                + "Depuis la console: /niveau info <joueur>");
++                return true;
++            }
++            sendProgressInfo(
++                    sender,
++                    player.getUniqueId(),
++                    player.getName());
++            return true;
++        }
++
++        if (!requireAdmin(sender)) {
++            return true;
++        }
++        PlayerTarget target = findTarget(args[1]);
++        if (target == null) {
++            sender.sendMessage(
++                    ChatColor.RED
++                            + "Joueur inconnu dans les données locales: "
++                            + args[1]);
++            return true;
++        }
++        sendProgressInfo(
++                sender,
++                target.playerId(),
++                target.displayName());
++        return true;
++    }
++
++    private boolean handleAddXpCommand(
++            CommandSender sender,
++            String[] args) {
++        if (!requireAdmin(sender)) {
++            return true;
++        }
++        if (args.length != 3) {
++            sender.sendMessage(
++                    ChatColor.RED
++                            + "Usage: /niveau addxp <joueur> <quantité>");
++            return true;
++        }
++
++        PlayerTarget target = findTarget(args[1]);
++        if (target == null) {
++            sender.sendMessage(
++                    ChatColor.RED
++                            + "Joueur inconnu dans les données locales: "
++                            + args[1]);
++            return true;
++        }
++
++        Long requested = parsePositiveLong(args[2]);
++        if (requested == null) {
++            sender.sendMessage(
++                    ChatColor.RED
++                            + "La quantité doit être un entier strictement positif.");
++            return true;
++        }
++
++        long added;
++        if (target.onlinePlayer() != null) {
++            added = grantExperienceInternal(
++                    target.onlinePlayer(),
++                    requested,
++                    "Administration",
++                    true);
++        } else {
++            PlayerProgress data = getOrCreateData(
++                    target.playerId(),
++                    target.displayName());
++            long oldXp = config.clampXp(data.xp);
++            data.xp = config.clampXp(
++                    saturatingAdd(oldXp, requested));
++            added = data.xp - oldXp;
++            markDirtyAndScheduleSave();
++        }
++
++        sender.sendMessage(
++                ChatColor.GREEN + "XP ajoutée à "
++                        + target.displayName() + " : "
++                        + ProgressionHud.formatNumber(added)
++                        + " (niveau "
++                        + getLevel(target.playerId()) + ").");
++        return true;
++    }
++
++    private boolean handleSetLevelCommand(
++            CommandSender sender,
++            String[] args) {
++        if (!requireAdmin(sender)) {
++            return true;
++        }
++        if (args.length != 3) {
++            sender.sendMessage(
++                    ChatColor.RED
++                            + "Usage: /niveau setlevel <joueur> <1-"
++                            + config.maxLevel + ">");
++            return true;
++        }
++
++        PlayerTarget target = findTarget(args[1]);
++        if (target == null) {
++            sender.sendMessage(
++                    ChatColor.RED
++                            + "Joueur inconnu dans les données locales: "
++                            + args[1]);
++            return true;
++        }
++
++        Integer level = parseLevel(args[2]);
++        if (level == null) {
++            sender.sendMessage(
++                    ChatColor.RED
++                            + "Le niveau doit être compris entre 1 et "
++                            + config.maxLevel + ".");
++            return true;
++        }
++
++        setExperience(
++                target,
++                config.getTotalXpForLevel(level),
++                true);
++        sender.sendMessage(
++                ChatColor.GREEN + target.displayName()
++                        + " est maintenant niveau " + level + ".");
++        return true;
++    }
++
++    private boolean handleResetCommand(
++            CommandSender sender,
++            String[] args) {
++        if (!requireAdmin(sender)) {
++            return true;
++        }
++        if (args.length != 2) {
++            sender.sendMessage(
++                    ChatColor.RED
++                            + "Usage: /niveau reset <joueur>");
++            return true;
++        }
++
++        PlayerTarget target = findTarget(args[1]);
++        if (target == null) {
++            sender.sendMessage(
++                    ChatColor.RED
++                            + "Joueur inconnu dans les données locales: "
++                            + args[1]);
++            return true;
++        }
++
++        setExperience(target, 0L, false);
++        sender.sendMessage(
++                ChatColor.GREEN + "Progression réinitialisée pour "
++                        + target.displayName() + ".");
++        return true;
++    }
++
++    private void setExperience(
++            PlayerTarget target,
++            long xp,
++            boolean notifyTarget) {
++        PlayerProgress data = getOrCreateData(
++                target.playerId(),
++                target.displayName());
++        int oldLevel = config.getLevelForXp(data.xp);
++        data.xp = config.clampXp(xp);
++        data.lastKnownName = target.displayName();
++        int newLevel = config.getLevelForXp(data.xp);
++
++        if (target.onlinePlayer() != null) {
++            applyBonuses(
++                    target.onlinePlayer(),
++                    newLevel > oldLevel);
++            hud.hide(target.onlinePlayer());
++
++            if (notifyTarget) {
++                target.onlinePlayer().sendMessage(
++                        PREFIX + "Ton niveau global a été fixé à "
++                                + ChatColor.GREEN + newLevel
++                                + ChatColor.GRAY + ".");
++            }
++        }
++        rateWindows.remove(target.playerId());
++        markDirtyAndScheduleSave();
++    }
++
++    private void sendProgressInfo(
++            CommandSender sender,
++            UUID playerId,
++            String displayName) {
++        long xp = getExperience(playerId);
++        int level = config.getLevelForXp(xp);
++        long current = config.getTotalXpForLevel(level);
++
++        sender.sendMessage(
++                ChatColor.GOLD + "[Niveau] "
++                        + ChatColor.YELLOW + displayName);
++        sender.sendMessage(
++                ChatColor.GRAY + "Niveau global : "
++                        + ChatColor.GREEN + level
++                        + ChatColor.DARK_GRAY + "/"
++                        + config.maxLevel);
++        sender.sendMessage(
++                ChatColor.GRAY + "XP totale : "
++                        + ChatColor.AQUA
++                        + ProgressionHud.formatNumber(xp));
++
++        if (level >= config.maxLevel) {
++            sender.sendMessage(
++                    ChatColor.GRAY + "Progression : "
++                            + ChatColor.GREEN
++                            + "niveau maximum atteint");
++        } else {
++            long next = config.getTotalXpForLevel(level + 1);
++            long inLevel = xp - current;
++            long required = next - current;
++            sender.sendMessage(
++                    ChatColor.GRAY + "Palier actuel : "
++                            + ChatColor.AQUA
++                            + ProgressionHud.formatNumber(inLevel)
++                            + ChatColor.GRAY + " / "
++                            + ChatColor.AQUA
++                            + ProgressionHud.formatNumber(required)
++                            + ChatColor.GRAY + " (reste "
++                            + ChatColor.AQUA
++                            + ProgressionHud.formatNumber(next - xp)
++                            + ChatColor.GRAY + ")");
++        }
++
++        sender.sendMessage(
++                ChatColor.GRAY + "Bonus : "
++                        + ChatColor.RED + "+"
++                        + formatPercent(
++                        getHealthBonusPercentForLevel(level))
++                        + "% PV"
++                        + ChatColor.DARK_GRAY + " | "
++                        + ChatColor.AQUA + "+"
++                        + formatPercent(
++                        getOxygenBonusPercentForLevel(level))
++                        + "% apnée"
++                        + ChatColor.DARK_GRAY + " | "
++                        + ChatColor.GOLD + "+"
++                        + formatPercent(
++                        getDamageBonusPercentForLevel(level))
++                        + "% dégâts"
++                        + ChatColor.DARK_GRAY + " | "
++                        + ChatColor.YELLOW + "+"
++                        + formatPercent(
++                        getMiningSpeedBonusPercentForLevel(level))
++                        + "% minage");
++    }
++
++    private void sendUsage(CommandSender sender) {
++        sender.sendMessage(
++                ChatColor.GOLD + "[Niveau] "
++                        + ChatColor.YELLOW
++                        + "Progression globale indépendante des métiers");
++        sender.sendMessage(
++                ChatColor.GOLD + "/niveau"
++                        + ChatColor.GRAY
++                        + " : affiche ton niveau, ton XP et tes bonus.");
++        if (sender.hasPermission(ADMIN_PERMISSION)) {
++            sender.sendMessage(
++                    ChatColor.GOLD
++                            + "/niveau info <joueur>"
++                            + ChatColor.DARK_RED + " [admin]");
++            sender.sendMessage(
++                    ChatColor.GOLD
++                            + "/niveau addxp <joueur> <quantité>"
++                            + ChatColor.DARK_RED + " [admin]");
++            sender.sendMessage(
++                    ChatColor.GOLD
++                            + "/niveau setlevel <joueur> <niveau>"
++                            + ChatColor.DARK_RED + " [admin]");
++            sender.sendMessage(
++                    ChatColor.GOLD
++                            + "/niveau reset <joueur>"
++                            + ChatColor.DARK_RED + " [admin]");
++        }
++    }
++
++    private boolean requireAdmin(CommandSender sender) {
++        if (sender.hasPermission(ADMIN_PERMISSION)) {
++            return true;
++        }
++        sender.sendMessage(
++                ChatColor.RED
++                        + "Tu n'as pas la permission "
++                        + ADMIN_PERMISSION + ".");
++        return false;
++    }
++
++    private PlayerTarget findTarget(String query) {
++        if (query == null || query.isBlank()) {
++            return null;
++        }
++
++        Player online = Bukkit.getPlayerExact(query);
++        if (online != null) {
++            return new PlayerTarget(
++                    online.getUniqueId(),
++                    online.getName(),
++                    online);
++        }
++
++        for (Map.Entry<UUID, PlayerProgress> entry
++                : players.entrySet()) {
++            String knownName = entry.getValue().lastKnownName;
++            if (knownName != null
++                    && knownName.equalsIgnoreCase(query)) {
++                Player possiblyOnline =
++                        Bukkit.getPlayer(entry.getKey());
++                return new PlayerTarget(
++                        entry.getKey(),
++                        knownName,
++                        possiblyOnline);
++            }
++        }
++
++        for (OfflinePlayer offline : Bukkit.getOfflinePlayers()) {
++            String name = offline.getName();
++            if (name != null
++                    && name.equalsIgnoreCase(query)) {
++                return new PlayerTarget(
++                        offline.getUniqueId(),
++                        name,
++                        offline.getPlayer());
++            }
++        }
++        return null;
++    }
++
++    private List<String> knownPlayerNames() {
++        Set<String> names =
++                new LinkedHashSet<>();
++        for (Player player : Bukkit.getOnlinePlayers()) {
++            names.add(player.getName());
++        }
++        players.values().stream()
++                .map(data -> data.lastKnownName)
++                .filter(name -> name != null && !name.isBlank())
++                .sorted(String.CASE_INSENSITIVE_ORDER)
++                .forEach(names::add);
++        return new ArrayList<>(names);
++    }
++
++    private void updateKnownName(Player player) {
++        if (player == null) {
++            return;
++        }
++
++        PlayerProgress existing = players.get(player.getUniqueId());
++        String previousName = existing == null
++                ? null
++                : existing.lastKnownName;
++        PlayerProgress data = getOrCreateData(
++                player.getUniqueId(),
++                player.getName());
++        if (!player.getName().equals(previousName)) {
++            data.lastKnownName = player.getName();
++            markDirtyAndScheduleSave();
++        }
++    }
++
++    private PlayerProgress getOrCreateData(
++            UUID playerId,
++            String knownName) {
++        PlayerProgress data = players.computeIfAbsent(
++                playerId,
++                ignored -> new PlayerProgress());
++        if ((data.lastKnownName == null
++                || data.lastKnownName.isBlank())
++                && knownName != null
++                && !knownName.isBlank()) {
++            data.lastKnownName = knownName;
++        }
++        data.xp = config.clampXp(data.xp);
++        return data;
++    }
++
++    private int completedLevelUps(int level) {
++        int safe = Math.max(
++                1,
++                Math.min(config.maxLevel, level));
++        return safe - 1;
++    }
++
++    private void loadFromDisk() {
++        if (!dataFile.exists()) {
++            return;
++        }
++
++        YamlConfiguration yaml = new YamlConfiguration();
++        try {
++            yaml.load(dataFile);
++        } catch (InvalidConfigurationException exception) {
++            /*
++             * Ne jamais remplacer silencieusement un YAML invalide. Le fichier
++             * original est déplacé à côté avec un suffixe horodaté avant que le
++             * module reparte sur une base vide.
++             */
++            quarantineCorruptDataFile(exception);
++            return;
++        } catch (IOException | RuntimeException exception) {
++            /*
++             * Une erreur de lecture peut être temporaire (droits, disque, etc.).
++             * Bloquer les écritures protège le fichier existant d'un écrasement.
++             */
++            persistenceBlocked = true;
++            plugin.getLogger().log(
++                    Level.SEVERE,
++                    "[Progression] progression.yml est illisible : "
++                            + "sauvegarde désactivée jusqu'au redémarrage.",
++                    exception);
++            return;
++        }
++
++        ConfigurationSection section =
++                yaml.getConfigurationSection("players");
++        if (section == null) {
++            return;
++        }
++
++        for (String rawUuid : section.getKeys(false)) {
++            try {
++                UUID playerId = UUID.fromString(rawUuid);
++                ConfigurationSection playerSection =
++                        section.getConfigurationSection(rawUuid);
++                if (playerSection == null) {
++                    continue;
++                }
++
++                PlayerProgress data = new PlayerProgress();
++                data.lastKnownName =
++                        playerSection.getString("name", null);
++                data.xp = config.clampXp(
++                        playerSection.getLong("xp", 0L));
++                data.healthRatioToRestore = sanitizeHealthRatio(
++                        playerSection.getDouble("health-ratio", 0.0D));
++                players.put(playerId, data);
++            } catch (IllegalArgumentException exception) {
++                plugin.getLogger().warning(
++                        "[Progression] UUID invalide dans progression.yml: "
++                                + rawUuid);
++            }
++        }
++    }
++
++    private void quarantineCorruptDataFile(
++            InvalidConfigurationException parseFailure) {
++        File parent = dataFile.getParentFile();
++        File backup = parent == null
++                ? new File(dataFile.getName()
++                        + ".corrupt-" + System.currentTimeMillis() + ".bak")
++                : new File(parent, dataFile.getName()
++                        + ".corrupt-" + System.currentTimeMillis() + ".bak");
++        try {
++            Files.move(
++                    dataFile.toPath(),
++                    backup.toPath(),
++                    StandardCopyOption.REPLACE_EXISTING);
++            plugin.getLogger().log(
++                    Level.SEVERE,
++                    "[Progression] progression.yml était invalide et a été "
++                            + "mis en quarantaine dans " + backup.getName()
++                            + ". Une nouvelle sauvegarde saine sera créée.",
++                    parseFailure);
++        } catch (IOException | RuntimeException backupFailure) {
++            persistenceBlocked = true;
++            plugin.getLogger().log(
++                    Level.SEVERE,
++                    "[Progression] progression.yml est invalide et sa copie de "
++                            + "sécurité a échoué : sauvegarde désactivée pour "
++                            + "éviter toute perte. Cause YAML : "
++                            + parseFailure.getMessage(),
++                    backupFailure);
++        }
++    }
++
++    private Map<UUID, SavedProgress> snapshotPlayers() {
++        Map<UUID, SavedProgress> snapshot =
++                new HashMap<>();
++        for (Map.Entry<UUID, PlayerProgress> entry
++                : players.entrySet()) {
++            PlayerProgress data = entry.getValue();
++            snapshot.put(
++                    entry.getKey(),
++                    new SavedProgress(
++                            data.lastKnownName,
++                            config.clampXp(data.xp),
++                            sanitizeHealthRatio(
++                                    data.healthRatioToRestore)));
++        }
++        return snapshot;
++    }
++
++    private String serializeSnapshot(
++            Map<UUID, SavedProgress> snapshot) {
++        YamlConfiguration yaml = new YamlConfiguration();
++        yaml.set("schema-version", 2);
++        yaml.set("max-level", config.maxLevel);
++
++        List<Map.Entry<UUID, SavedProgress>> entries =
++                new ArrayList<>(snapshot.entrySet());
++        entries.sort(
++                Comparator.comparing(
++                        entry -> entry.getKey().toString()));
++
++        ConfigurationSection playersSection =
++                yaml.createSection("players");
++        for (Map.Entry<UUID, SavedProgress> entry : entries) {
++            ConfigurationSection playerSection =
++                    playersSection.createSection(
++                            entry.getKey().toString());
++            SavedProgress data = entry.getValue();
++            playerSection.set("name", data.lastKnownName());
++            playerSection.set("xp", data.xp());
++            playerSection.set(
++                    "health-ratio",
++                    data.healthRatioToRestore());
++        }
++        return yaml.saveToString();
++    }
++
++    private boolean writeSerializedSnapshot(
++            String serializedYaml,
++            long version) {
++        if (persistenceBlocked) {
++            return false;
++        }
++
++        synchronized (diskWriteLock) {
++            if (version <= latestWrittenVersion) {
++                return true;
++            }
++
++            File parent = dataFile.getParentFile();
++            try {
++                if (parent != null && !parent.exists()) {
++                    Files.createDirectories(parent.toPath());
++                }
++                File temporary = parent == null
++                        ? new File(dataFile.getName() + ".tmp")
++                        : new File(parent, dataFile.getName() + ".tmp");
++                Files.writeString(
++                        temporary.toPath(),
++                        serializedYaml,
++                        StandardCharsets.UTF_8,
++                        StandardOpenOption.CREATE,
++                        StandardOpenOption.TRUNCATE_EXISTING,
++                        StandardOpenOption.WRITE);
++                try {
++                    Files.move(
++                            temporary.toPath(),
++                            dataFile.toPath(),
++                            StandardCopyOption.ATOMIC_MOVE,
++                            StandardCopyOption.REPLACE_EXISTING);
++                } catch (AtomicMoveNotSupportedException exception) {
++                    Files.move(
++                            temporary.toPath(),
++                            dataFile.toPath(),
++                            StandardCopyOption.REPLACE_EXISTING);
++                }
++                latestWrittenVersion = version;
++                return true;
++            } catch (IOException | RuntimeException exception) {
++                plugin.getLogger().log(
++                        Level.WARNING,
++                        "[Progression] Impossible de sauvegarder progression.yml",
++                        exception);
++                return false;
++            }
++        }
++    }
++
++    private void markDirtyAndScheduleSave() {
++        synchronized (saveStateLock) {
++            dirtyVersion++;
++            if (shuttingDown || persistenceBlocked) {
++                return;
++            }
++        }
++        requestSave(SAVE_DEBOUNCE_TICKS);
++    }
++
++    /**
++     * Regroupe les gains rapprochés au lieu d'écrire progression.yml à chaque
++     * bloc cassé. L'instantané reste créé sur le thread principal ; seule
++     * l'écriture disque est exécutée de façon asynchrone.
++     */
++    private void requestSave(long delayTicks) {
++        synchronized (saveStateLock) {
++            if (shuttingDown || persistenceBlocked) {
++                return;
++            }
++            if (saveInProgress) {
++                saveQueued = true;
++                return;
++            }
++            if (pendingSaveTask != null
++                    && !pendingSaveTask.isCancelled()) {
++                return;
++            }
++
++            try {
++                pendingSaveTask = Bukkit.getScheduler().runTaskLater(
++                        plugin,
++                        this::startAsyncSave,
++                        Math.max(1L, delayTicks));
++            } catch (IllegalPluginAccessException exception) {
++                pendingSaveTask = null;
++                plugin.getLogger().fine(
++                        "[Progression] Sauvegarde différée ignorée pendant l'arrêt.");
++            }
++        }
++    }
++
++    private void startAsyncSave() {
++        final Map<UUID, SavedProgress> snapshot;
++        final long version;
++
++        synchronized (saveStateLock) {
++            pendingSaveTask = null;
++            if (shuttingDown || persistenceBlocked) {
++                return;
++            }
++            if (saveInProgress) {
++                saveQueued = true;
++                return;
++            }
++
++            /*
++             * Les données joueurs sont confinées au thread serveur. Les copier
++             * ici évite toute lecture concurrente de la HashMap dans le worker.
++             */
++            snapshot = snapshotPlayers();
++            version = dirtyVersion;
++            saveInProgress = true;
++            saveQueued = false;
++        }
++
++        /*
++         * La sérialisation Bukkit/YAML reste elle aussi sur le thread serveur.
++         * Le worker n'effectue ensuite que les opérations de fichiers Java.
++         */
++        final String serializedYaml;
++        try {
++            serializedYaml = serializeSnapshot(snapshot);
++        } catch (RuntimeException exception) {
++            plugin.getLogger().log(
++                    Level.WARNING,
++                    "[Progression] Impossible de sérialiser progression.yml",
++                    exception);
++            finishAsyncSave(false);
++            return;
++        }
++
++        try {
++            Bukkit.getScheduler().runTaskAsynchronously(
++                    plugin,
++                    () -> {
++                        boolean written = writeSerializedSnapshot(
++                                serializedYaml,
++                                version);
++                        finishAsyncSave(written);
++                    });
++        } catch (IllegalPluginAccessException exception) {
++            synchronized (saveStateLock) {
++                saveInProgress = false;
++                saveQueued = true;
++            }
++            plugin.getLogger().fine(
++                    "[Progression] Écriture asynchrone ignorée pendant l'arrêt.");
++        }
++    }
++
++    private void finishAsyncSave(boolean written) {
++        final boolean shouldReschedule;
++        synchronized (saveStateLock) {
++            saveInProgress = false;
++            shouldReschedule = saveQueued
++                    || !written
++                    || dirtyVersion > latestWrittenVersion;
++            saveQueued = false;
++        }
++
++        if (!shouldReschedule
++                || shuttingDown
++                || persistenceBlocked) {
++            return;
++        }
++
++        long delay = written
++                ? SAVE_DEBOUNCE_TICKS
++                : SAVE_RETRY_TICKS;
++        try {
++            /*
++             * Le callback revient d'abord sur le thread principal afin que la
++             * future photographie de players reste sûre.
++             */
++            Bukkit.getScheduler().runTask(
++                    plugin,
++                    () -> requestSave(delay));
++        } catch (IllegalPluginAccessException exception) {
++            plugin.getLogger().fine(
++                    "[Progression] Replanification ignorée pendant l'arrêt.");
++        }
++    }
++
++    private Integer parseLevel(String raw) {
++        try {
++            int level = Integer.parseInt(raw);
++            return level >= 1 && level <= config.maxLevel
++                    ? level
++                    : null;
++        } catch (NumberFormatException exception) {
++            return null;
++        }
++    }
++
++    private static Long parsePositiveLong(String raw) {
++        try {
++            long value = Long.parseLong(raw);
++            return value > 0L ? value : null;
++        } catch (NumberFormatException exception) {
++            return null;
++        }
++    }
++
++    private static List<String> filterPrefix(
++            List<String> values,
++            String prefix) {
++        String normalized = prefix == null
++                ? ""
++                : prefix.toLowerCase(Locale.ROOT);
++        return values.stream()
++                .filter(value -> value.toLowerCase(Locale.ROOT)
++                        .startsWith(normalized))
++                .sorted(String.CASE_INSENSITIVE_ORDER)
++                .toList();
++    }
++
++    private static boolean isWood(Material material) {
++        if (material == null) {
++            return false;
++        }
++        String name = material.name();
++        return name.endsWith("_LOG")
++                || name.endsWith("_STEM")
++                || name.endsWith("_HYPHAE");
++    }
++
++    private static String formatPercent(double value) {
++        if (Math.abs(value - Math.rint(value)) < 0.0001D) {
++            return Long.toString(Math.round(value));
++        }
++        return String.format(Locale.ROOT, "%.1f", value);
++    }
++
++    private static long saturatingAdd(long left, long right) {
++        if (right > 0L && left > Long.MAX_VALUE - right) {
++            return Long.MAX_VALUE;
++        }
++        return left + right;
++    }
++
++    private static final class PlayerProgress {
++        private String lastKnownName;
++        private long xp;
++        private Double healthRatioToRestore;
++    }
++
++    private static final class RateWindow {
++        private long startedAtNanos;
++        private long granted;
++
++        private RateWindow(long startedAtNanos) {
++            this.startedAtNanos = startedAtNanos;
++        }
++    }
++
++    private record SavedProgress(
++            String lastKnownName,
++            long xp,
++            Double healthRatioToRestore) {
++    }
++
++    private record PlayerTarget(
++            UUID playerId,
++            String displayName,
++            Player onlinePlayer) {
++    }
++}
+diff --git a/src/main/java/org/example/progression/PlacedBlockTracker.java b/src/main/java/org/example/progression/PlacedBlockTracker.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..0d80639dd6d7beda262a34d15f568c8e59240d97
+--- /dev/null
++++ b/src/main/java/org/example/progression/PlacedBlockTracker.java
+@@ -0,0 +1,324 @@
++package org.example.progression;
++
++import org.bukkit.Bukkit;
++import org.bukkit.Chunk;
++import org.bukkit.World;
++import org.bukkit.block.Block;
++import org.bukkit.block.BlockFace;
++import org.bukkit.persistence.PersistentDataContainer;
++import org.bukkit.persistence.PersistentDataType;
++import org.bukkit.plugin.java.JavaPlugin;
++import org.bukkit.scheduler.BukkitTask;
++
++import java.util.ArrayList;
++import java.util.HashMap;
++import java.util.HashSet;
++import java.util.Map;
++import java.util.Set;
++import java.util.UUID;
++
++/**
++ * Mémorise les blocs posés ou générés artificiellement qui donnent de l'XP.
++ *
++ * <p>Le marquage est stocké dans le {@link PersistentDataContainer} du chunk :
++ * une roche ou un minerai posé puis récupéré après un redémarrage ne peut donc
++ * pas être recyclé à l'infini. Les écritures NBT sont regroupées et vidées
++ * périodiquement ainsi qu'au déchargement du chunk.</p>
++ */
++final class PlacedBlockTracker {
++
++    private static final byte SATURATED = 1;
++
++    private final JavaPlugin plugin;
++    private final boolean enabled;
++    private final int maxEntriesPerChunk;
++    private final org.bukkit.NamespacedKey positionsKey;
++    private final org.bukkit.NamespacedKey saturatedKey;
++    private final Map<ChunkKey, ChunkState> states = new HashMap<>();
++
++    private BukkitTask flushTask;
++    private boolean persistenceWarningLogged;
++
++    PlacedBlockTracker(
++            JavaPlugin plugin,
++            boolean enabled,
++            int maxEntriesPerChunk,
++            long flushTicks) {
++        this.plugin = plugin;
++        this.enabled = enabled;
++        this.maxEntriesPerChunk = Math.max(256, maxEntriesPerChunk);
++        this.positionsKey = new org.bukkit.NamespacedKey(
++                plugin,
++                "progression_placed_blocks");
++        this.saturatedKey = new org.bukkit.NamespacedKey(
++                plugin,
++                "progression_placed_saturated");
++
++        if (enabled) {
++            this.flushTask = Bukkit.getScheduler().runTaskTimer(
++                    plugin,
++                    this::flushDirtyLoadedChunks,
++                    Math.max(20L, flushTicks),
++                    Math.max(20L, flushTicks));
++        }
++    }
++
++    boolean isEnabled() {
++        return enabled;
++    }
++
++    /**
++     * Marque un bloc comme non éligible à l'XP de minage.
++     */
++    void mark(Block block) {
++        if (!enabled || block == null) {
++            return;
++        }
++
++        ChunkState state = stateFor(block.getChunk());
++        if (state.saturated) {
++            return;
++        }
++
++        if (state.positions.add(encodePosition(block))) {
++            state.dirty = true;
++            if (state.positions.size() >= maxEntriesPerChunk) {
++                // Un chunk de construction massif ne doit pas produire un NBT
++                // sans limite. Une fois saturé, tout minage XP y est neutralisé.
++                state.positions.clear();
++                state.saturated = true;
++            }
++        }
++    }
++
++    /**
++     * Retourne {@code true} si le bloc était marqué, puis retire son marqueur.
++     *
++     * <p>Un chunk saturé reste volontairement saturé : cette stratégie sûre
++     * empêche qu'un très grand bâtiment en pierre devienne une ferme à XP.</p>
++     */
++    boolean consume(Block block) {
++        if (!enabled || block == null) {
++            return false;
++        }
++
++        ChunkState state = stateFor(block.getChunk());
++        if (state.saturated) {
++            return true;
++        }
++
++        boolean removed = state.positions.remove(encodePosition(block));
++        if (removed) {
++            state.dirty = true;
++        }
++        return removed;
++    }
++
++    /**
++     * Transfère atomiquement les marqueurs d'un ensemble déplacé par piston.
++     *
++     * <p>La photographie préalable est indispensable : dans une ligne de
++     * blocs, la destination du premier est souvent la source du suivant. Un
++     * transfert bloc par bloc pourrait alors absorber le marqueur que nous
++     * venons juste de déplacer.</p>
++     */
++    void moveAll(
++            Iterable<? extends Block> movedBlocks,
++            BlockFace movementDirection) {
++        if (!enabled
++                || movedBlocks == null
++                || movementDirection == null) {
++            return;
++        }
++
++        ArrayList<BlockMovement> movements = new ArrayList<>();
++        for (Block source : movedBlocks) {
++            if (source == null) {
++                continue;
++            }
++            movements.add(new BlockMovement(
++                    source,
++                    source.getRelative(movementDirection),
++                    isMarked(source)));
++        }
++
++        // Retirer d'abord toutes les anciennes positions, puis seulement
++        // inscrire les destinations afin de gérer correctement les recouvrements.
++        for (BlockMovement movement : movements) {
++            if (movement.artificial()) {
++                consume(movement.source());
++            }
++        }
++        for (BlockMovement movement : movements) {
++            if (movement.artificial()) {
++                mark(movement.destination());
++            }
++        }
++    }
++
++    /**
++     * Sauvegarde puis retire le cache associé au chunk en cours de déchargement.
++     */
++    void onChunkUnload(Chunk chunk) {
++        if (!enabled || chunk == null) {
++            return;
++        }
++
++        ChunkKey key = ChunkKey.of(chunk);
++        ChunkState state = states.remove(key);
++        if (state != null && state.dirty) {
++            flush(chunk, state);
++        }
++    }
++
++    void shutdown() {
++        if (flushTask != null) {
++            flushTask.cancel();
++            flushTask = null;
++        }
++        flushDirtyLoadedChunks();
++        states.clear();
++    }
++
++    static int encodePosition(int x, int y, int z) {
++        /*
++         * 20 bits pour Y et 4 bits pour chaque coordonnée locale X/Z.
++         * L'encodage sert uniquement de clé d'égalité et reste donc stable
++         * pour les hauteurs négatives comme pour les mondes personnalisés.
++         */
++        return ((y & 0xFFFFF) << 8)
++                | ((z & 0x0F) << 4)
++                | (x & 0x0F);
++    }
++
++    private static int encodePosition(Block block) {
++        return encodePosition(block.getX(), block.getY(), block.getZ());
++    }
++
++    boolean isMarked(Block block) {
++        if (!enabled || block == null) {
++            return false;
++        }
++        ChunkState state = stateFor(block.getChunk());
++        return state.saturated
++                || state.positions.contains(encodePosition(block));
++    }
++
++    private ChunkState stateFor(Chunk chunk) {
++        ChunkKey key = ChunkKey.of(chunk);
++        return states.computeIfAbsent(key, ignored -> load(chunk));
++    }
++
++    private ChunkState load(Chunk chunk) {
++        ChunkState state = new ChunkState();
++        try {
++            PersistentDataContainer pdc = chunk.getPersistentDataContainer();
++            Byte saturated = pdc.get(saturatedKey, PersistentDataType.BYTE);
++            state.saturated = saturated != null && saturated == SATURATED;
++
++            if (!state.saturated) {
++                int[] encoded = pdc.get(
++                        positionsKey,
++                        PersistentDataType.INTEGER_ARRAY);
++                if (encoded != null) {
++                    for (int value : encoded) {
++                        state.positions.add(value);
++                        if (state.positions.size() >= maxEntriesPerChunk) {
++                            state.positions.clear();
++                            state.saturated = true;
++                            state.dirty = true;
++                            break;
++                        }
++                    }
++                }
++            }
++        } catch (Throwable throwable) {
++            logPersistenceWarning(throwable);
++        }
++        return state;
++    }
++
++    private void flushDirtyLoadedChunks() {
++        if (!enabled || states.isEmpty()) {
++            return;
++        }
++
++        for (Map.Entry<ChunkKey, ChunkState> entry
++                : new ArrayList<>(states.entrySet())) {
++            ChunkState state = entry.getValue();
++            if (!state.dirty) {
++                continue;
++            }
++
++            ChunkKey key = entry.getKey();
++            World world = Bukkit.getWorld(key.worldId());
++            if (world == null || !world.isChunkLoaded(key.x(), key.z())) {
++                // ChunkUnloadEvent effectue normalement la dernière écriture.
++                // Si le monde a déjà disparu, conserver l'état en mémoire évite
++                // de prétendre à tort que les données ont été persistées.
++                continue;
++            }
++            flush(world.getChunkAt(key.x(), key.z()), state);
++        }
++    }
++
++    private void flush(Chunk chunk, ChunkState state) {
++        try {
++            PersistentDataContainer pdc = chunk.getPersistentDataContainer();
++            if (state.saturated) {
++                pdc.set(saturatedKey, PersistentDataType.BYTE, SATURATED);
++                pdc.remove(positionsKey);
++            } else {
++                pdc.remove(saturatedKey);
++                if (state.positions.isEmpty()) {
++                    pdc.remove(positionsKey);
++                } else {
++                    int[] encoded = state.positions.stream()
++                            .mapToInt(Integer::intValue)
++                            .sorted()
++                            .toArray();
++                    pdc.set(
++                            positionsKey,
++                            PersistentDataType.INTEGER_ARRAY,
++                            encoded);
++                }
++            }
++            state.dirty = false;
++        } catch (Throwable throwable) {
++            logPersistenceWarning(throwable);
++        }
++    }
++
++    private void logPersistenceWarning(Throwable throwable) {
++        if (persistenceWarningLogged) {
++            return;
++        }
++        persistenceWarningLogged = true;
++        plugin.getLogger().warning(
++                "[Progression] Le marquage persistant des blocs poses "
++                        + "n'est pas disponible dans cet environnement ("
++                        + throwable.getClass().getSimpleName()
++                        + "). La protection reste active en memoire.");
++    }
++
++    private record BlockMovement(
++            Block source,
++            Block destination,
++            boolean artificial) {
++    }
++
++    private record ChunkKey(UUID worldId, int x, int z) {
++        static ChunkKey of(Chunk chunk) {
++            return new ChunkKey(
++                    chunk.getWorld().getUID(),
++                    chunk.getX(),
++                    chunk.getZ());
++        }
++    }
++
++    private static final class ChunkState {
++        private final Set<Integer> positions = new HashSet<>();
++        private boolean saturated;
++        private boolean dirty;
++    }
++}
+diff --git a/src/main/java/org/example/progression/ProgressionConfig.java b/src/main/java/org/example/progression/ProgressionConfig.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..646e7f0ec9c35b2aa1d58bc11fe201c60312ab44
+--- /dev/null
++++ b/src/main/java/org/example/progression/ProgressionConfig.java
+@@ -0,0 +1,632 @@
++package org.example.progression;
++
++import org.bukkit.Material;
++import org.bukkit.NamespacedKey;
++import org.bukkit.configuration.ConfigurationSection;
++import org.bukkit.entity.EntityType;
++import org.bukkit.plugin.java.JavaPlugin;
++
++import java.util.Collections;
++import java.util.EnumMap;
++import java.util.HashMap;
++import java.util.HashSet;
++import java.util.Locale;
++import java.util.Map;
++import java.util.Set;
++
++/**
++ * Configuration immuable du niveau global.
++ *
++ * <p>Les valeurs par défaut sont aussi présentes dans le code afin que le
++ * système fonctionne immédiatement sur un serveur possédant déjà un ancien
++ * {@code config.yml}. En effet, {@code saveDefaultConfig()} ne fusionne pas
++ * automatiquement les nouvelles clés dans un fichier existant.</p>
++ */
++final class ProgressionConfig {
++
++    static final int ABSOLUTE_MAX_LEVEL = 100;
++
++    final boolean enabled;
++    final int maxLevel;
++
++    final double healthPercentPerLevel;
++    final double oxygenPercentPerLevel;
++    final double damagePercentPerLevel;
++    final double miningSpeedPercentPerLevel;
++
++    final boolean sidebarOnGain;
++    final boolean actionbarFallback;
++    final boolean titleOnLevelUp;
++    final boolean soundOnLevelUp;
++    final long hudHideDelayTicks;
++    final int progressBarSegments;
++
++    final long maxSingleAward;
++    final long maxXpPerMinute;
++    final Set<String> disabledWorlds;
++
++    final boolean requirePreferredTool;
++    final boolean requireBlockDrops;
++    final boolean trackPlacedBlocks;
++    final int placedBlocksMaxPerChunk;
++    final long placedBlocksFlushTicks;
++    final Map<Material, Integer> blockXp;
++    final Map<Material, Integer> matureCropXp;
++
++    final int monsterXp;
++    final int animalXp;
++    final int playerKillXp;
++    final int otherEntityXp;
++    final Map<EntityType, Integer> entityXp;
++    final Map<String, Double> spawnReasonMultipliers;
++
++    final int caughtFishXp;
++    final int caughtEntityXp;
++    final int breedingXp;
++    final int tamingXp;
++    final int tradeXp;
++    final int shearingXp;
++
++    final int enchantingBaseXp;
++    final double enchantingXpPerCostLevel;
++
++    final double smeltingXpPerItem;
++    final double smeltingXpPerVanillaXp;
++    final int smeltingMaxXpPerExtraction;
++
++    final int advancementDefaultXp;
++    final boolean ignoreRecipeAdvancements;
++    final Map<String, Integer> advancementXp;
++
++    private final long xpBase;
++    private final long xpLinear;
++    private final long xpQuadratic;
++    private final long[] totalXpByLevel;
++    private final long[] xpRequiredByLevel;
++
++    private ProgressionConfig(JavaPlugin plugin) {
++        ConfigurationSection root = plugin.getConfig().getConfigurationSection("progression");
++
++        this.enabled = getBoolean(root, "enabled", true);
++        this.maxLevel = clamp(getInt(root, "max-level", ABSOLUTE_MAX_LEVEL), 2, ABSOLUTE_MAX_LEVEL);
++
++        this.xpBase = clamp(getLong(root, "xp-levelup.base", 200L), 1L, 1_000_000_000L);
++        this.xpLinear = clamp(getLong(root, "xp-levelup.linear", 50L), 0L, 1_000_000_000L);
++        this.xpQuadratic = clamp(getLong(root, "xp-levelup.quadratic", 4L), 0L, 1_000_000_000L);
++
++        this.healthPercentPerLevel = clamp(getDouble(root,
++                "bonuses.health-percent-per-level", 1.0D), 0.0D, 10.0D);
++        this.oxygenPercentPerLevel = clamp(getDouble(root,
++                "bonuses.oxygen-percent-per-level", 1.0D), 0.0D, 10.0D);
++        this.damagePercentPerLevel = clamp(getDouble(root,
++                "bonuses.damage-percent-per-level", 1.0D), 0.0D, 10.0D);
++        this.miningSpeedPercentPerLevel = clamp(getDouble(root,
++                "bonuses.mining-speed-percent-per-level", 1.0D), 0.0D, 10.0D);
++
++        this.sidebarOnGain = getBoolean(root, "display.sidebar-on-gain", true);
++        this.actionbarFallback = getBoolean(root, "display.actionbar-fallback", true);
++        this.titleOnLevelUp = getBoolean(root, "display.title-on-levelup", true);
++        this.soundOnLevelUp = getBoolean(root, "display.sound-on-levelup", true);
++        this.hudHideDelayTicks = clamp(getLong(root,
++                "display.hud-hide-delay-seconds", 4L), 1L, 60L) * 20L;
++        this.progressBarSegments = clamp(getInt(root,
++                "display.progress-bar-segments", 10), 5, 20);
++
++        this.maxSingleAward = clamp(getLong(root,
++                "anti-abuse.max-single-award", 2_000L), 1L, 1_000_000L);
++        this.maxXpPerMinute = clamp(getLong(root,
++                "anti-abuse.max-xp-per-minute", 5_000L), 0L, 100_000_000L);
++        this.disabledWorlds = loadWorldSet(root, "anti-abuse.disabled-worlds");
++
++        this.requirePreferredTool = getBoolean(root,
++                "sources.blocks.require-preferred-tool", true);
++        this.requireBlockDrops = getBoolean(root,
++                "sources.blocks.require-drops", true);
++        this.trackPlacedBlocks = getBoolean(root,
++                "sources.blocks.track-placed-blocks", true);
++        this.placedBlocksMaxPerChunk = clamp(getInt(root,
++                "sources.blocks.placed-blocks-max-per-chunk", 16_384), 256, 65_536);
++        this.placedBlocksFlushTicks = clamp(getLong(root,
++                "sources.blocks.placed-blocks-flush-seconds", 5L), 1L, 300L) * 20L;
++
++        this.blockXp = loadMaterialXpMap(
++                plugin,
++                root,
++                "sources.blocks.xp-per-block",
++                defaultBlockXp());
++        this.matureCropXp = loadMaterialXpMap(
++                plugin,
++                root,
++                "sources.farming.xp-per-mature-crop",
++                defaultCropXp());
++
++        this.monsterXp = clamp(getInt(root,
++                "sources.combat.fallback.monster", 10), 0, 100_000);
++        this.animalXp = clamp(getInt(root,
++                "sources.combat.fallback.animal", 3), 0, 100_000);
++        this.playerKillXp = clamp(getInt(root,
++                "sources.combat.fallback.player", 0), 0, 100_000);
++        this.otherEntityXp = clamp(getInt(root,
++                "sources.combat.fallback.other", 0), 0, 100_000);
++        this.entityXp = loadEntityXpMap(
++                plugin,
++                root,
++                "sources.combat.xp-per-entity",
++                defaultEntityXp());
++        this.spawnReasonMultipliers = loadStringDoubleMap(
++                plugin,
++                root,
++                "sources.combat.spawn-reason-multipliers",
++                defaultSpawnReasonMultipliers(),
++                0.0D,
++                10.0D);
++
++        this.caughtFishXp = clamp(getInt(root,
++                "sources.fishing.caught-fish-xp", 5), 0, 100_000);
++        this.caughtEntityXp = clamp(getInt(root,
++                "sources.fishing.caught-entity-xp", 2), 0, 100_000);
++        this.breedingXp = clamp(getInt(root,
++                "sources.breeding.xp", 8), 0, 100_000);
++        this.tamingXp = clamp(getInt(root,
++                "sources.taming.xp", 20), 0, 100_000);
++        this.tradeXp = clamp(getInt(root,
++                "sources.trading.xp", 4), 0, 100_000);
++        this.shearingXp = clamp(getInt(root,
++                "sources.shearing.xp", 3), 0, 100_000);
++
++        this.enchantingBaseXp = clamp(getInt(root,
++                "sources.enchanting.base-xp", 5), 0, 100_000);
++        this.enchantingXpPerCostLevel = clamp(getDouble(root,
++                "sources.enchanting.xp-per-cost-level", 0.5D), 0.0D, 1_000.0D);
++
++        this.smeltingXpPerItem = clamp(getDouble(root,
++                "sources.smelting.xp-per-item", 0.25D), 0.0D, 1_000.0D);
++        this.smeltingXpPerVanillaXp = clamp(getDouble(root,
++                "sources.smelting.xp-per-vanilla-xp", 1.0D), 0.0D, 1_000.0D);
++        this.smeltingMaxXpPerExtraction = clamp(getInt(root,
++                "sources.smelting.max-xp-per-extraction", 100), 0, 100_000);
++
++        this.advancementDefaultXp = clamp(getInt(root,
++                "sources.advancements.default-xp", 50), 0, 100_000);
++        this.ignoreRecipeAdvancements = getBoolean(root,
++                "sources.advancements.ignore-recipes", true);
++        this.advancementXp = loadStringIntMap(
++                plugin,
++                root,
++                "sources.advancements.xp-per-advancement",
++                defaultAdvancementXp());
++
++        this.totalXpByLevel = new long[maxLevel + 1];
++        this.xpRequiredByLevel = new long[maxLevel + 1];
++        buildCurve();
++    }
++
++    static ProgressionConfig load(JavaPlugin plugin) {
++        return new ProgressionConfig(plugin);
++    }
++
++    long getTotalXpForLevel(int level) {
++        return totalXpByLevel[clamp(level, 1, maxLevel)];
++    }
++
++    long getXpRequiredForNextLevel(int level) {
++        int safeLevel = clamp(level, 1, maxLevel);
++        return safeLevel >= maxLevel ? 0L : xpRequiredByLevel[safeLevel];
++    }
++
++    int getLevelForXp(long xp) {
++        long safeXp = clampXp(xp);
++        int low = 1;
++        int high = maxLevel;
++        int result = 1;
++
++        while (low <= high) {
++            int middle = (low + high) >>> 1;
++            if (totalXpByLevel[middle] <= safeXp) {
++                result = middle;
++                low = middle + 1;
++            } else {
++                high = middle - 1;
++            }
++        }
++        return result;
++    }
++
++    long clampXp(long xp) {
++        return clamp(xp, 0L, getMaximumXp());
++    }
++
++    long getMaximumXp() {
++        return totalXpByLevel[maxLevel];
++    }
++
++    int getBlockXp(Material material) {
++        return blockXp.getOrDefault(material, 0);
++    }
++
++    int getMatureCropXp(Material material) {
++        return matureCropXp.getOrDefault(material, 0);
++    }
++
++    int getConfiguredEntityXp(EntityType type) {
++        return entityXp.getOrDefault(type, -1);
++    }
++
++    double getSpawnReasonMultiplier(String spawnReason) {
++        if (spawnReason == null || spawnReason.isBlank()) {
++            return 1.0D;
++        }
++        return spawnReasonMultipliers.getOrDefault(
++                spawnReason.toUpperCase(Locale.ROOT),
++                1.0D);
++    }
++
++    int getAdvancementXp(NamespacedKey key) {
++        if (key == null) {
++            return advancementDefaultXp;
++        }
++        return advancementXp.getOrDefault(
++                key.toString().toLowerCase(Locale.ROOT),
++                advancementDefaultXp);
++    }
++
++    private void buildCurve() {
++        totalXpByLevel[1] = 0L;
++        for (int level = 1; level < maxLevel; level++) {
++            long step = level - 1L;
++            long linearPart = saturatingMultiply(xpLinear, step);
++            long quadraticPart = saturatingMultiply(
++                    xpQuadratic,
++                    saturatingMultiply(step, step));
++            long required = saturatingAdd(
++                    xpBase,
++                    saturatingAdd(linearPart, quadraticPart));
++
++            xpRequiredByLevel[level] = Math.max(1L, required);
++            totalXpByLevel[level + 1] = saturatingAdd(
++                    totalXpByLevel[level],
++                    xpRequiredByLevel[level]);
++        }
++    }
++
++    private static Map<Material, Integer> defaultBlockXp() {
++        EnumMap<Material, Integer> values = new EnumMap<>(Material.class);
++
++        putMaterial(values, "STONE", 1);
++        putMaterial(values, "COBBLESTONE", 1);
++        putMaterial(values, "DEEPSLATE", 1);
++        putMaterial(values, "TUFF", 1);
++        putMaterial(values, "NETHERRACK", 1);
++        putMaterial(values, "END_STONE", 2);
++        putMaterial(values, "OBSIDIAN", 5);
++
++        putMaterial(values, "COAL_ORE", 3);
++        putMaterial(values, "DEEPSLATE_COAL_ORE", 4);
++        putMaterial(values, "COPPER_ORE", 4);
++        putMaterial(values, "DEEPSLATE_COPPER_ORE", 5);
++        putMaterial(values, "IRON_ORE", 5);
++        putMaterial(values, "DEEPSLATE_IRON_ORE", 6);
++        putMaterial(values, "GOLD_ORE", 7);
++        putMaterial(values, "DEEPSLATE_GOLD_ORE", 8);
++        putMaterial(values, "REDSTONE_ORE", 6);
++        putMaterial(values, "DEEPSLATE_REDSTONE_ORE", 7);
++        putMaterial(values, "LAPIS_ORE", 7);
++        putMaterial(values, "DEEPSLATE_LAPIS_ORE", 8);
++        putMaterial(values, "DIAMOND_ORE", 12);
++        putMaterial(values, "DEEPSLATE_DIAMOND_ORE", 14);
++        putMaterial(values, "EMERALD_ORE", 15);
++        putMaterial(values, "DEEPSLATE_EMERALD_ORE", 17);
++        putMaterial(values, "NETHER_QUARTZ_ORE", 4);
++        putMaterial(values, "NETHER_GOLD_ORE", 6);
++        putMaterial(values, "ANCIENT_DEBRIS", 25);
++
++        String[] woods = {
++                "OAK_LOG", "SPRUCE_LOG", "BIRCH_LOG", "JUNGLE_LOG",
++                "ACACIA_LOG", "DARK_OAK_LOG", "MANGROVE_LOG",
++                "CHERRY_LOG", "PALE_OAK_LOG", "CRIMSON_STEM",
++                "WARPED_STEM", "CRIMSON_HYPHAE", "WARPED_HYPHAE"
++        };
++        for (String wood : woods) {
++            putMaterial(values, wood, 2);
++        }
++        return values;
++    }
++
++    private static Map<Material, Integer> defaultCropXp() {
++        EnumMap<Material, Integer> values = new EnumMap<>(Material.class);
++        putMaterial(values, "WHEAT", 2);
++        putMaterial(values, "CARROTS", 2);
++        putMaterial(values, "POTATOES", 2);
++        putMaterial(values, "BEETROOTS", 2);
++        putMaterial(values, "NETHER_WART", 3);
++        putMaterial(values, "COCOA", 2);
++        putMaterial(values, "TORCHFLOWER_CROP", 3);
++        putMaterial(values, "PITCHER_CROP", 3);
++        return values;
++    }
++
++    private static Map<EntityType, Integer> defaultEntityXp() {
++        EnumMap<EntityType, Integer> values = new EnumMap<>(EntityType.class);
++        putEntity(values, "ENDER_DRAGON", 1_000);
++        putEntity(values, "WITHER", 750);
++        putEntity(values, "WARDEN", 500);
++        putEntity(values, "ELDER_GUARDIAN", 100);
++        putEntity(values, "RAVAGER", 60);
++        putEntity(values, "EVOKER", 40);
++        putEntity(values, "PIGLIN_BRUTE", 30);
++        putEntity(values, "GHAST", 18);
++        putEntity(values, "BREEZE", 16);
++        putEntity(values, "BLAZE", 15);
++        putEntity(values, "SHULKER", 15);
++        putEntity(values, "VINDICATOR", 15);
++        putEntity(values, "WITHER_SKELETON", 14);
++        putEntity(values, "ZOGLIN", 14);
++        putEntity(values, "ENDERMAN", 12);
++        putEntity(values, "GUARDIAN", 12);
++        putEntity(values, "PHANTOM", 12);
++        putEntity(values, "HOGLIN", 12);
++        putEntity(values, "CREEPER", 12);
++        putEntity(values, "BOGGED", 12);
++        return values;
++    }
++
++    private static Map<String, Double> defaultSpawnReasonMultipliers() {
++        Map<String, Double> values = new HashMap<>();
++        values.put("SPAWNER", 0.25D);
++        values.put("TRIAL_SPAWNER", 0.50D);
++        values.put("SPAWNER_EGG", 0.0D);
++        values.put("DISPENSE_EGG", 0.0D);
++        values.put("BREEDING", 0.0D);
++        values.put("BUILD_IRONGOLEM", 0.0D);
++        values.put("BUILD_SNOWMAN", 0.0D);
++        values.put("COMMAND", 0.0D);
++        values.put("CUSTOM", 0.0D);
++        return values;
++    }
++
++    private static Map<String, Integer> defaultAdvancementXp() {
++        Map<String, Integer> values = new HashMap<>();
++        values.put("minecraft:end/kill_dragon", 250);
++        values.put("minecraft:nether/summon_wither", 200);
++        values.put("minecraft:adventure/hero_of_the_village", 150);
++        values.put("minecraft:adventure/kill_all_mobs", 300);
++        values.put("minecraft:husbandry/balanced_diet", 150);
++        values.put("minecraft:nether/all_effects", 250);
++        return values;
++    }
++
++    private static Map<Material, Integer> loadMaterialXpMap(
++            JavaPlugin plugin,
++            ConfigurationSection root,
++            String path,
++            Map<Material, Integer> fallback) {
++
++        ConfigurationSection section = root != null
++                ? root.getConfigurationSection(path)
++                : null;
++        if (section == null) {
++            return Collections.unmodifiableMap(new EnumMap<>(fallback));
++        }
++
++        EnumMap<Material, Integer> values = new EnumMap<>(Material.class);
++        for (String rawKey : section.getKeys(false)) {
++            Material material = Material.matchMaterial(rawKey);
++            if (material == null) {
++                plugin.getLogger().warning(
++                        "[Progression] Materiau inconnu dans " + path + ": " + rawKey);
++                continue;
++            }
++            int xp = clamp(section.getInt(rawKey, 0), 0, 100_000);
++            if (xp > 0) {
++                values.put(material, xp);
++            }
++        }
++        return Collections.unmodifiableMap(values);
++    }
++
++    private static Map<EntityType, Integer> loadEntityXpMap(
++            JavaPlugin plugin,
++            ConfigurationSection root,
++            String path,
++            Map<EntityType, Integer> fallback) {
++
++        ConfigurationSection section = root != null
++                ? root.getConfigurationSection(path)
++                : null;
++        if (section == null) {
++            return Collections.unmodifiableMap(new EnumMap<>(fallback));
++        }
++
++        EnumMap<EntityType, Integer> values = new EnumMap<>(EntityType.class);
++        for (String rawKey : section.getKeys(false)) {
++            EntityType type = matchEntityType(rawKey);
++            if (type == null) {
++                plugin.getLogger().warning(
++                        "[Progression] Type d'entite inconnu dans " + path + ": " + rawKey);
++                continue;
++            }
++            int xp = clamp(section.getInt(rawKey, 0), 0, 100_000);
++            // Une valeur explicite à 0 désactive bien cette entité et doit
++            // donc écraser le fallback correspondant.
++            values.put(type, xp);
++        }
++        return Collections.unmodifiableMap(values);
++    }
++
++    private static Map<String, Double> loadStringDoubleMap(
++            JavaPlugin plugin,
++            ConfigurationSection root,
++            String path,
++            Map<String, Double> fallback,
++            double minimum,
++            double maximum) {
++
++        ConfigurationSection section = root != null
++                ? root.getConfigurationSection(path)
++                : null;
++        if (section == null) {
++            return Collections.unmodifiableMap(new HashMap<>(fallback));
++        }
++
++        Map<String, Double> values = new HashMap<>();
++        for (String rawKey : section.getKeys(false)) {
++            double value = section.getDouble(rawKey, Double.NaN);
++            if (!Double.isFinite(value)) {
++                plugin.getLogger().warning(
++                        "[Progression] Valeur numerique invalide dans " + path + ": " + rawKey);
++                continue;
++            }
++            values.put(
++                    rawKey.toUpperCase(Locale.ROOT),
++                    clamp(value, minimum, maximum));
++        }
++        return Collections.unmodifiableMap(values);
++    }
++
++    private static Map<String, Integer> loadStringIntMap(
++            JavaPlugin plugin,
++            ConfigurationSection root,
++            String path,
++            Map<String, Integer> fallback) {
++
++        ConfigurationSection section = root != null
++                ? root.getConfigurationSection(path)
++                : null;
++        if (section == null) {
++            return Collections.unmodifiableMap(new HashMap<>(fallback));
++        }
++
++        Map<String, Integer> values = new HashMap<>();
++        for (String rawKey : section.getKeys(false)) {
++            int xp = clamp(section.getInt(rawKey, 0), 0, 100_000);
++            String normalized = normalizeNamespacedPath(rawKey);
++            if (normalized == null) {
++                plugin.getLogger().warning(
++                        "[Progression] Avancement invalide dans " + path + ": " + rawKey);
++                continue;
++            }
++            values.put(normalized, xp);
++        }
++        return Collections.unmodifiableMap(values);
++    }
++
++    private static Set<String> loadWorldSet(
++            ConfigurationSection root,
++            String path) {
++        if (root == null) {
++            return Set.of();
++        }
++        Set<String> values = new HashSet<>();
++        for (String world : root.getStringList(path)) {
++            if (world != null && !world.isBlank()) {
++                values.add(world.toLowerCase(Locale.ROOT));
++            }
++        }
++        return Collections.unmodifiableSet(values);
++    }
++
++    private static String normalizeNamespacedPath(String rawKey) {
++        if (rawKey == null || rawKey.isBlank()) {
++            return null;
++        }
++        String normalized = rawKey.trim().toLowerCase(Locale.ROOT);
++        if (!normalized.contains(":")) {
++            normalized = "minecraft:" + normalized;
++        }
++        return normalized;
++    }
++
++    private static void putMaterial(
++            Map<Material, Integer> target,
++            String name,
++            int xp) {
++        Material material = Material.matchMaterial(name);
++        if (material != null) {
++            target.put(material, xp);
++        }
++    }
++
++    private static void putEntity(
++            Map<EntityType, Integer> target,
++            String name,
++            int xp) {
++        EntityType type = matchEntityType(name);
++        if (type != null) {
++            target.put(type, xp);
++        }
++    }
++
++    private static EntityType matchEntityType(String rawName) {
++        if (rawName == null || rawName.isBlank()) {
++            return null;
++        }
++        String normalized = rawName.trim()
++                .toUpperCase(Locale.ROOT)
++                .replace("MINECRAFT:", "");
++        try {
++            return EntityType.valueOf(normalized);
++        } catch (IllegalArgumentException ignored) {
++            return null;
++        }
++    }
++
++    private static boolean getBoolean(
++            ConfigurationSection section,
++            String path,
++            boolean fallback) {
++        return section != null ? section.getBoolean(path, fallback) : fallback;
++    }
++
++    private static int getInt(
++            ConfigurationSection section,
++            String path,
++            int fallback) {
++        return section != null ? section.getInt(path, fallback) : fallback;
++    }
++
++    private static long getLong(
++            ConfigurationSection section,
++            String path,
++            long fallback) {
++        return section != null ? section.getLong(path, fallback) : fallback;
++    }
++
++    private static double getDouble(
++            ConfigurationSection section,
++            String path,
++            double fallback) {
++        return section != null ? section.getDouble(path, fallback) : fallback;
++    }
++
++    private static long saturatingAdd(long left, long right) {
++        if (left >= Long.MAX_VALUE - right) {
++            return Long.MAX_VALUE;
++        }
++        return left + right;
++    }
++
++    private static long saturatingMultiply(long left, long right) {
++        if (left == 0L || right == 0L) {
++            return 0L;
++        }
++        if (left > Long.MAX_VALUE / right) {
++            return Long.MAX_VALUE;
++        }
++        return left * right;
++    }
++
++    private static int clamp(int value, int minimum, int maximum) {
++        return Math.max(minimum, Math.min(maximum, value));
++    }
++
++    private static long clamp(long value, long minimum, long maximum) {
++        return Math.max(minimum, Math.min(maximum, value));
++    }
++
++    private static double clamp(double value, double minimum, double maximum) {
++        if (!Double.isFinite(value)) {
++            return minimum;
++        }
++        return Math.max(minimum, Math.min(maximum, value));
++    }
++}
+diff --git a/src/main/java/org/example/progression/ProgressionHud.java b/src/main/java/org/example/progression/ProgressionHud.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..158d119927b997d32b7a201f6151695a5895592c
+--- /dev/null
++++ b/src/main/java/org/example/progression/ProgressionHud.java
+@@ -0,0 +1,358 @@
++package org.example.progression;
++
++import io.papermc.paper.scoreboard.numbers.NumberFormat;
++import net.kyori.adventure.text.Component;
++import net.kyori.adventure.text.format.NamedTextColor;
++import org.bukkit.Bukkit;
++import org.bukkit.ChatColor;
++import org.bukkit.entity.Player;
++import org.bukkit.scoreboard.Criteria;
++import org.bukkit.scoreboard.DisplaySlot;
++import org.bukkit.scoreboard.Objective;
++import org.bukkit.scoreboard.Scoreboard;
++import org.bukkit.scoreboard.ScoreboardManager;
++import org.bukkit.scheduler.BukkitTask;
++import org.bukkit.plugin.java.JavaPlugin;
++
++import java.util.ArrayList;
++import java.util.HashMap;
++import java.util.List;
++import java.util.Map;
++import java.util.UUID;
++
++/**
++ * HUD temporaire de progression affiché dans la sidebar, en haut à droite.
++ *
++ * <p>Chaque joueur reçoit un scoreboard isolé le temps de l'affichage. Le
++ * scoreboard précédent est restauré uniquement si aucun autre plugin ne l'a
++ * remplacé entre-temps, ce qui évite d'écraser une interface concurrente.</p>
++ */
++final class ProgressionHud {
++
++    private static final String OBJECTIVE_NAME = "mg_progress";
++    private static final String[] UNIQUE_SUFFIXES = {
++            ChatColor.BLACK.toString(),
++            ChatColor.DARK_BLUE.toString(),
++            ChatColor.DARK_GREEN.toString()
++    };
++
++    private final JavaPlugin plugin;
++    private final ProgressionConfig config;
++    private final Map<UUID, HudSession> sessions = new HashMap<>();
++    private boolean failureLogged;
++
++    ProgressionHud(JavaPlugin plugin, ProgressionConfig config) {
++        this.plugin = plugin;
++        this.config = config;
++    }
++
++    void show(
++            Player player,
++            long gained,
++            String source,
++            int level,
++            long totalXp,
++            long currentLevelXp,
++            long nextLevelXp) {
++        if (player == null || gained <= 0L) {
++            return;
++        }
++
++        if (!config.sidebarOnGain) {
++            showFallbackActionbar(player, gained, source, level);
++            return;
++        }
++
++        try {
++            HudSession session = sessions.get(player.getUniqueId());
++            if (session != null && player.getScoreboard() != session.scoreboard) {
++                // Un autre plugin a repris la sidebar : on abandonne proprement
++                // notre ancienne session sans restaurer un scoreboard obsolète.
++                dispose(session, null, false);
++                sessions.remove(player.getUniqueId());
++                session = null;
++            }
++
++            if (session == null) {
++                session = createSession(player);
++                if (session == null) {
++                    showFallbackActionbar(player, gained, source, level);
++                    return;
++                }
++                sessions.put(player.getUniqueId(), session);
++            }
++
++            render(
++                    session,
++                    gained,
++                    source,
++                    level,
++                    totalXp,
++                    currentLevelXp,
++                    nextLevelXp);
++            scheduleHide(player.getUniqueId(), session);
++        } catch (Throwable throwable) {
++            logFailureOnce(throwable);
++            hide(player.getUniqueId());
++            showFallbackActionbar(player, gained, source, level);
++        }
++    }
++
++    void hide(Player player) {
++        if (player != null) {
++            hide(player.getUniqueId());
++        }
++    }
++
++    void hide(UUID playerId) {
++        if (playerId == null) {
++            return;
++        }
++
++        HudSession session = sessions.remove(playerId);
++        if (session == null) {
++            return;
++        }
++        Player player = Bukkit.getPlayer(playerId);
++        dispose(session, player, true);
++    }
++
++    void shutdown() {
++        for (UUID playerId : new ArrayList<>(sessions.keySet())) {
++            hide(playerId);
++        }
++        sessions.clear();
++    }
++
++    int getActiveHudCount() {
++        return sessions.size();
++    }
++
++    private HudSession createSession(Player player) {
++        ScoreboardManager manager = Bukkit.getScoreboardManager();
++        if (manager == null) {
++            return null;
++        }
++
++        Scoreboard previous = player.getScoreboard();
++        Scoreboard scoreboard = manager.getNewScoreboard();
++        Objective objective = scoreboard.registerNewObjective(
++                OBJECTIVE_NAME,
++                Criteria.DUMMY,
++                Component.text("Progression", NamedTextColor.GOLD));
++        objective.setDisplaySlot(DisplaySlot.SIDEBAR);
++
++        try {
++            // Paper 1.21 masque ainsi les chiffres 3/2/1 servant uniquement à
++            // trier les lignes de la sidebar.
++            objective.numberFormat(NumberFormat.blank());
++        } catch (Throwable throwable) {
++            // Certains environnements de test n'implémentent pas encore cette
++            // extension. Le HUD reste utilisable, avec les nombres de tri.
++        }
++
++        HudSession session = new HudSession(
++                scoreboard,
++                previous,
++                objective);
++        try {
++            player.setScoreboard(scoreboard);
++            return session;
++        } catch (Throwable throwable) {
++            dispose(session, null, false);
++            throw throwable;
++        }
++    }
++
++    private void render(
++            HudSession session,
++            long gained,
++            String source,
++            int level,
++            long totalXp,
++            long currentLevelXp,
++            long nextLevelXp) {
++        for (String oldLine : session.lines) {
++            session.scoreboard.resetScores(oldLine);
++        }
++        session.lines.clear();
++
++        boolean maximum = level >= config.maxLevel
++                || nextLevelXp <= currentLevelXp;
++        double progress = maximum
++                ? 1.0D
++                : (double) Math.max(0L, totalXp - currentLevelXp)
++                / (double) Math.max(1L, nextLevelXp - currentLevelXp);
++        progress = Math.max(0.0D, Math.min(1.0D, progress));
++
++        Component title = Component.text(
++                maximum
++                        ? "Niveau " + level + "  MAX"
++                        : "Niveau " + level,
++                maximum ? NamedTextColor.GREEN : NamedTextColor.GOLD);
++        session.objective.displayName(title);
++
++        String safeSource = sanitizeSource(source);
++        String gainLine = ChatColor.GREEN + "+" + formatNumber(gained)
++                + " XP" + ChatColor.DARK_GRAY + " • "
++                + ChatColor.GRAY + safeSource;
++        String barLine = buildProgressBar(progress, maximum);
++        String xpLine;
++        if (maximum) {
++            xpLine = ChatColor.GREEN + formatNumber(totalXp)
++                    + ChatColor.GRAY + " XP au total";
++        } else {
++            long inLevel = Math.max(0L, totalXp - currentLevelXp);
++            long required = Math.max(1L, nextLevelXp - currentLevelXp);
++            xpLine = ChatColor.AQUA + formatNumber(inLevel)
++                    + ChatColor.DARK_GRAY + "/"
++                    + ChatColor.AQUA + formatNumber(required)
++                    + ChatColor.GRAY + " XP";
++        }
++
++        addLine(session, gainLine, 3, 0);
++        addLine(session, barLine, 2, 1);
++        addLine(session, xpLine, 1, 2);
++    }
++
++    private void addLine(
++            HudSession session,
++            String visibleLine,
++            int score,
++            int uniqueIndex) {
++        String entry = visibleLine
++                + UNIQUE_SUFFIXES[Math.max(0,
++                Math.min(UNIQUE_SUFFIXES.length - 1, uniqueIndex))];
++        session.objective.getScore(entry).setScore(score);
++        session.lines.add(entry);
++    }
++
++    private String buildProgressBar(double progress, boolean maximum) {
++        int filled = maximum
++                ? config.progressBarSegments
++                : (int) Math.floor(progress * config.progressBarSegments);
++        filled = Math.max(0, Math.min(config.progressBarSegments, filled));
++
++        StringBuilder line = new StringBuilder();
++        line.append(ChatColor.GREEN);
++        line.append("■".repeat(filled));
++        line.append(ChatColor.DARK_GRAY);
++        line.append("■".repeat(config.progressBarSegments - filled));
++        line.append(ChatColor.GRAY)
++                .append(' ')
++                .append((int) Math.floor(progress * 100.0D))
++                .append('%');
++        return line.toString();
++    }
++
++    private void scheduleHide(UUID playerId, HudSession session) {
++        if (session.hideTask != null) {
++            session.hideTask.cancel();
++        }
++        session.hideTask = Bukkit.getScheduler().runTaskLater(
++                plugin,
++                () -> hide(playerId),
++                config.hudHideDelayTicks);
++    }
++
++    private void dispose(
++            HudSession session,
++            Player player,
++            boolean restorePrevious) {
++        if (session.hideTask != null) {
++            session.hideTask.cancel();
++            session.hideTask = null;
++        }
++
++        if (restorePrevious
++                && player != null
++                && player.getScoreboard() == session.scoreboard
++                && session.previousScoreboard != null) {
++            try {
++                player.setScoreboard(session.previousScoreboard);
++            } catch (Throwable throwable) {
++                logFailureOnce(throwable);
++            }
++        }
++
++        try {
++            session.objective.unregister();
++        } catch (Throwable throwable) {
++            // L'objectif peut déjà avoir été invalidé par l'environnement.
++        }
++    }
++
++    private void showFallbackActionbar(
++            Player player,
++            long gained,
++            String source,
++            int level) {
++        if (!config.actionbarFallback || player == null) {
++            return;
++        }
++        player.sendActionBar(Component.text(
++                "+" + formatNumber(gained)
++                        + " XP • " + sanitizeSource(source)
++                        + " • Niveau " + level,
++                NamedTextColor.AQUA));
++    }
++
++    private static String sanitizeSource(String source) {
++        String value = source == null || source.isBlank()
++                ? "Progression"
++                : source;
++        value = ChatColor.stripColor(value);
++        if (value == null) {
++            value = "Progression";
++        }
++        value = value.replaceAll("[\\p{Cntrl}\\r\\n]", " ").trim();
++        if (value.length() > 24) {
++            value = value.substring(0, 23) + "…";
++        }
++        return value.isBlank() ? "Progression" : value;
++    }
++
++    static String formatNumber(long value) {
++        String raw = Long.toString(Math.max(0L, value));
++        StringBuilder formatted = new StringBuilder(raw.length() + raw.length() / 3);
++        int firstGroup = raw.length() % 3;
++        if (firstGroup == 0) {
++            firstGroup = 3;
++        }
++
++        formatted.append(raw, 0, firstGroup);
++        for (int index = firstGroup; index < raw.length(); index += 3) {
++            formatted.append(' ')
++                    .append(raw, index, Math.min(index + 3, raw.length()));
++        }
++        return formatted.toString();
++    }
++
++    private void logFailureOnce(Throwable throwable) {
++        if (failureLogged) {
++            return;
++        }
++        failureLogged = true;
++        plugin.getLogger().warning(
++                "[Progression] Sidebar temporaire indisponible ("
++                        + throwable.getClass().getSimpleName()
++                        + "). L'actionbar de secours sera utilisee.");
++    }
++
++    private static final class HudSession {
++        private final Scoreboard scoreboard;
++        private final Scoreboard previousScoreboard;
++        private final Objective objective;
++        private final List<String> lines = new ArrayList<>();
++        private BukkitTask hideTask;
++
++        private HudSession(
++                Scoreboard scoreboard,
++                Scoreboard previousScoreboard,
++                Objective objective) {
++            this.scoreboard = scoreboard;
++            this.previousScoreboard = previousScoreboard;
++            this.objective = objective;
++        }
++    }
++}
+diff --git a/src/main/java/org/example/village/VillageGenerationSession.java b/src/main/java/org/example/village/VillageGenerationSession.java
+index 122770f765f4342e00ba1ff744cea3bbbd00fb05..dbc741f4df991e5848523f2cdd26fc67ae13a88a 100644
+--- a/src/main/java/org/example/village/VillageGenerationSession.java
++++ b/src/main/java/org/example/village/VillageGenerationSession.java
+@@ -20,6 +20,7 @@ import java.util.UUID;
+ public final class VillageGenerationSession {
+     private final int villageId;
+     private final Map<Location, BlockData> originalBlocks = new LinkedHashMap<>();
++    private final Set<Location> originalArtificialBlocks = new LinkedHashSet<>();
+     private final Set<UUID> generatedEntities = new LinkedHashSet<>();
+     private final Set<Location> generatedSpawners = new LinkedHashSet<>();
+     private final Map<String, Location> anchors = new LinkedHashMap<>();
+@@ -60,11 +61,35 @@ public final class VillageGenerationSession {
+      * emplacement doivent toutes revenir à l'état antérieur à la génération.
+      */
+     public void rememberOriginal(Location location, BlockData originalData) {
++        rememberOriginal(location, originalData, false);
++    }
++
++    /**
++     * Conserve aussi l'état anti-recyclage du bloc avant sa première
++     * modification. Le rollback peut ainsi distinguer un bloc naturel d'un
++     * bloc déjà posé par un joueur.
++     */
++    public void rememberOriginal(
++            Location location,
++            BlockData originalData,
++            boolean artificial) {
+         if (location == null || originalData == null) {
+             return;
+         }
++
+         Location key = blockLocation(location);
+-        originalBlocks.putIfAbsent(key, originalData.clone());
++        if (originalBlocks.containsKey(key)) {
++            return;
++        }
++        originalBlocks.put(key, originalData.clone());
++        if (artificial) {
++            originalArtificialBlocks.add(key);
++        }
++    }
++
++    public boolean wasOriginalArtificial(Location location) {
++        return location != null
++                && originalArtificialBlocks.contains(blockLocation(location));
+     }
+ 
+     /**
+diff --git a/src/main/resources/config.yml b/src/main/resources/config.yml
+index 0f0d29a366cbc9eb34ea908ce051ab9d36784319..f06633ed40a7664d92cd9d529c3c76909d61b9df 100644
+--- a/src/main/resources/config.yml
++++ b/src/main/resources/config.yml
+@@ -225,6 +225,201 @@ village:
+     # Garde-fou pour une configuration de village anormalement grande.
+     max-hidden-lights: 2048
+ 
++
++# Progression globale du joueur, totalement indépendante du métier Mineur.
++#
++# Le niveau 1 est le niveau de référence (aucun bonus). Chaque level-up ajoute
++# le pourcentage configuré : le niveau 100 donne donc +99 % avec les valeurs
++# par défaut. La courbe ci-dessous demande 1 536 546 XP au total pour le niveau 100.
++progression:
++  enabled: true
++  max-level: 100
++
++  # XP requise pour passer du niveau N au niveau N+1 :
++  # base + linear * (N - 1) + quadratic * (N - 1)^2
++  xp-levelup:
++    base: 200
++    linear: 50
++    quadratic: 4
++
++  bonuses:
++    # Les valeurs représentent le gain réel visé par level-up.
++    health-percent-per-level: 1.0
++    # L'attribut vanilla multiplie la durée moyenne par (1 + bonus).
++    oxygen-percent-per-level: 1.0
++    damage-percent-per-level: 1.0
++    mining-speed-percent-per-level: 1.0
++
++  display:
++    # Sidebar vanilla temporaire en haut à droite lors d'un gain d'XP.
++    sidebar-on-gain: true
++    hud-hide-delay-seconds: 4
++    progress-bar-segments: 10
++    # Repli si la sidebar n'est pas disponible dans l'environnement courant.
++    actionbar-fallback: true
++    title-on-levelup: true
++    sound-on-levelup: true
++
++  anti-abuse:
++    # Un gain issu du gameplay est borné individuellement puis sur une minute.
++    # Les commandes admin ne sont pas concernées par ces deux limites.
++    max-single-award: 2000
++    max-xp-per-minute: 5000
++    # Noms de mondes, insensibles à la casse, où aucun XP global n'est gagné.
++    disabled-worlds: []
++
++  sources:
++    blocks:
++      # Empêche de gagner l'XP d'un minerai avec un outil qui ne le récolte pas.
++      require-preferred-tool: true
++      # Un plugin qui annule les drops annule aussi l'XP de progression.
++      require-drops: true
++
++      # Les blocs posés, formés ou générés par /village puis cassés ne donnent
++      # pas d'XP. Le marquage est persistant dans le PDC de chaque chunk.
++      track-placed-blocks: true
++      placed-blocks-max-per-chunk: 16384
++      placed-blocks-flush-seconds: 5
++
++      # La présence de cette section remplace la table interne par défaut.
++      xp-per-block:
++        STONE: 1
++        COBBLESTONE: 1
++        DEEPSLATE: 1
++        TUFF: 1
++        NETHERRACK: 1
++        END_STONE: 2
++        OBSIDIAN: 5
++
++        COAL_ORE: 3
++        DEEPSLATE_COAL_ORE: 4
++        COPPER_ORE: 4
++        DEEPSLATE_COPPER_ORE: 5
++        IRON_ORE: 5
++        DEEPSLATE_IRON_ORE: 6
++        GOLD_ORE: 7
++        DEEPSLATE_GOLD_ORE: 8
++        REDSTONE_ORE: 6
++        DEEPSLATE_REDSTONE_ORE: 7
++        LAPIS_ORE: 7
++        DEEPSLATE_LAPIS_ORE: 8
++        DIAMOND_ORE: 12
++        DEEPSLATE_DIAMOND_ORE: 14
++        EMERALD_ORE: 15
++        DEEPSLATE_EMERALD_ORE: 17
++        NETHER_QUARTZ_ORE: 4
++        NETHER_GOLD_ORE: 6
++        ANCIENT_DEBRIS: 25
++
++        OAK_LOG: 2
++        SPRUCE_LOG: 2
++        BIRCH_LOG: 2
++        JUNGLE_LOG: 2
++        ACACIA_LOG: 2
++        DARK_OAK_LOG: 2
++        MANGROVE_LOG: 2
++        CHERRY_LOG: 2
++        PALE_OAK_LOG: 2
++        CRIMSON_STEM: 2
++        WARPED_STEM: 2
++        CRIMSON_HYPHAE: 2
++        WARPED_HYPHAE: 2
++
++    farming:
++      # Seules les cultures arrivées à leur âge maximal donnent cet XP.
++      xp-per-mature-crop:
++        WHEAT: 2
++        CARROTS: 2
++        POTATOES: 2
++        BEETROOTS: 2
++        NETHER_WART: 3
++        COCOA: 2
++        TORCHFLOWER_CROP: 3
++        PITCHER_CROP: 3
++
++    combat:
++      # Utilisé lorsqu'une entité n'est pas explicitement listée plus bas.
++      fallback:
++        monster: 10
++        animal: 3
++        # Désactivé par défaut pour ne pas créer de ferme PvP entre complices.
++        player: 0
++        other: 0
++
++      # Une valeur 0 désactive explicitement l'entité concernée.
++      xp-per-entity:
++        PLAYER: 0
++        ENDER_DRAGON: 1000
++        WITHER: 750
++        WARDEN: 500
++        ELDER_GUARDIAN: 100
++        RAVAGER: 60
++        EVOKER: 40
++        PIGLIN_BRUTE: 30
++        GHAST: 18
++        BREEZE: 16
++        BLAZE: 15
++        SHULKER: 15
++        VINDICATOR: 15
++        WITHER_SKELETON: 14
++        ZOGLIN: 14
++        ENDERMAN: 12
++        GUARDIAN: 12
++        PHANTOM: 12
++        HOGLIN: 12
++        CREEPER: 12
++        BOGGED: 12
++
++      # Multiplicateur selon l'origine de spawn fournie par Paper pour l'entité.
++      # Les raisons absentes de cette liste utilisent 1.0.
++      spawn-reason-multipliers:
++        SPAWNER: 0.25
++        TRIAL_SPAWNER: 0.50
++        SPAWNER_EGG: 0.0
++        DISPENSE_EGG: 0.0
++        BREEDING: 0.0
++        BUILD_IRONGOLEM: 0.0
++        BUILD_SNOWMAN: 0.0
++        COMMAND: 0.0
++        CUSTOM: 0.0
++
++    fishing:
++      caught-fish-xp: 5
++      caught-entity-xp: 2
++
++    breeding:
++      xp: 8
++
++    taming:
++      xp: 20
++
++    trading:
++      xp: 4
++
++    shearing:
++      xp: 3
++
++    enchanting:
++      base-xp: 5
++      xp-per-cost-level: 0.5
++
++    smelting:
++      xp-per-item: 0.25
++      xp-per-vanilla-xp: 1.0
++      max-xp-per-extraction: 100
++
++    advancements:
++      default-xp: 50
++      ignore-recipes: true
++      # Les clés doivent être entre guillemets à cause du caractère ':'.
++      xp-per-advancement:
++        "minecraft:end/kill_dragon": 250
++        "minecraft:nether/summon_wither": 200
++        "minecraft:adventure/hero_of_the_village": 150
++        "minecraft:adventure/kill_all_mobs": 300
++        "minecraft:husbandry/balanced_diet": 150
++        "minecraft:nether/all_effects": 250
++
+ # Paramètres des métiers
+ jobs:
+   mineur:
+diff --git a/src/main/resources/plugin.yml b/src/main/resources/plugin.yml
+index bd50f63f68da85ad555950ad7fff35b17b8b7d35..7343ec3c943939267692ff05bac0247816daca05 100644
+--- a/src/main/resources/plugin.yml
++++ b/src/main/resources/plugin.yml
+@@ -56,6 +56,15 @@ commands:
+     usage: |
+       /job mineur
+       /job info
++  niveau:
++    description: Affiche et administre la progression globale du joueur
++    aliases: [level, progression]
++    usage: |
++      /niveau
++      /niveau info [joueur]
++      /niveau addxp <joueur> <quantité>
++      /niveau setlevel <joueur> <1-100>
++      /niveau reset <joueur>
+ 
+ permissions:
+   mineplugin.mineur.use:
+@@ -79,6 +88,9 @@ permissions:
+   mineplugin.admin:
+     description: Utiliser les sous-commandes d'administration de /minegus
+     default: op
++  mineplugin.progression.admin:
++    description: Consulter et modifier le niveau global des joueurs
++    default: op
+ 
+ softdepend:
+   - WorldGuard
+diff --git a/src/test/java/org/example/MinegusCommandTest.java b/src/test/java/org/example/MinegusCommandTest.java
+index 5467d0cb9ec27733a40b0e59e6ea3885fc2f5644..aef5e0a5dcaccfa22bd6549a1bcd67454167d748 100644
+--- a/src/test/java/org/example/MinegusCommandTest.java
++++ b/src/test/java/org/example/MinegusCommandTest.java
+@@ -47,6 +47,7 @@ class MinegusCommandTest {
+         assertTrue(help.contains("/village"));
+         assertTrue(help.contains("/armure"));
+         assertTrue(help.contains("/marchand"));
++        assertTrue(help.contains("/niveau"));
+         assertTrue(help.contains("/job"));
+         assertTrue(help.contains("/minegus fix <forestier|golems>"));
+         assertTrue(help.contains("[permission]"));
+@@ -93,6 +94,13 @@ class MinegusCommandTest {
+         assertNull(plugin.getCommand("minegus").getPermission());
+         assertNotNull(plugin.getCommand("garde"));
+         assertEquals("mineplugin.garde.use", plugin.getCommand("garde").getPermission());
++        assertNotNull(plugin.getCommand("niveau"));
++        assertNotNull(plugin.getGlobalProgressionManager());
++        Permission progressionAdmin =
++                server.getPluginManager().getPermission(
++                        "mineplugin.progression.admin");
++        assertNotNull(progressionAdmin);
++        assertEquals(PermissionDefault.OP, progressionAdmin.getDefault());
+         Permission guardPermission = server.getPluginManager().getPermission("mineplugin.garde.use");
+         assertNotNull(guardPermission);
+         assertEquals(PermissionDefault.TRUE, guardPermission.getDefault());
+diff --git a/src/test/java/org/example/progression/GlobalProgressionCurveTest.java b/src/test/java/org/example/progression/GlobalProgressionCurveTest.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..951efa6a52f47212886d38d9e60772175abb76a0
+--- /dev/null
++++ b/src/test/java/org/example/progression/GlobalProgressionCurveTest.java
+@@ -0,0 +1,64 @@
++package org.example.progression;
++
++import be.seeseemelk.mockbukkit.MockBukkit;
++import be.seeseemelk.mockbukkit.ServerMock;
++import org.example.MinePlugin;
++import org.junit.jupiter.api.AfterEach;
++import org.junit.jupiter.api.Test;
++
++import static org.junit.jupiter.api.Assertions.assertEquals;
++import static org.junit.jupiter.api.Assertions.assertNotNull;
++
++class GlobalProgressionCurveTest {
++
++    private ServerMock server;
++
++    @AfterEach
++    void tearDown() {
++        if (server != null) {
++            MockBukkit.unmock();
++        }
++    }
++
++    @Test
++    void curveStopsAtOneHundredAndEachLevelUpAddsOnePercent() {
++        server = MockBukkit.mock();
++        MinePlugin plugin = MockBukkit.load(MinePlugin.class);
++        GlobalProgressionManager progression =
++                plugin.getGlobalProgressionManager();
++
++        assertNotNull(progression);
++        assertEquals(100, progression.getMaxLevel());
++
++        assertEquals(0L, progression.getTotalXpForLevel(1));
++        assertEquals(200L, progression.getTotalXpForLevel(2));
++        assertEquals(454L, progression.getTotalXpForLevel(3));
++        assertEquals(1_536_546L,
++                progression.getTotalXpForLevel(100));
++
++        assertEquals(0.0D,
++                progression.getHealthBonusPercentForLevel(1));
++        assertEquals(1.0D,
++                progression.getOxygenBonusPercentForLevel(2));
++        assertEquals(49.0D,
++                progression.getDamageBonusPercentForLevel(50));
++        assertEquals(99.0D,
++                progression.getMiningSpeedBonusPercentForLevel(100));
++    }
++
++    @Test
++    void oxygenAttributeTargetsTheConfiguredDurationBonus() {
++        assertEquals(
++                0.0D,
++                GlobalProgressionManager.oxygenAttributeForDurationBonus(0.0D),
++                1.0E-12D);
++        assertEquals(
++                0.01D,
++                GlobalProgressionManager.oxygenAttributeForDurationBonus(0.01D),
++                1.0E-12D);
++        assertEquals(
++                0.99D,
++                GlobalProgressionManager.oxygenAttributeForDurationBonus(0.99D),
++                1.0E-12D);
++    }
++}
+diff --git a/src/test/java/org/example/progression/GlobalProgressionPersistenceTest.java b/src/test/java/org/example/progression/GlobalProgressionPersistenceTest.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..d71731f66d82ab851d131e7fc08495e9380efe56
+--- /dev/null
++++ b/src/test/java/org/example/progression/GlobalProgressionPersistenceTest.java
+@@ -0,0 +1,74 @@
++package org.example.progression;
++
++import be.seeseemelk.mockbukkit.MockBukkit;
++import be.seeseemelk.mockbukkit.ServerMock;
++import org.bukkit.GameMode;
++import org.bukkit.Location;
++import org.bukkit.World;
++import org.bukkit.configuration.file.YamlConfiguration;
++import org.bukkit.entity.Player;
++import org.example.MinePlugin;
++import org.junit.jupiter.api.AfterEach;
++import org.junit.jupiter.api.Test;
++
++import java.io.File;
++import java.util.UUID;
++
++import static org.junit.jupiter.api.Assertions.assertEquals;
++import static org.junit.jupiter.api.Assertions.assertTrue;
++import static org.mockito.Mockito.mock;
++import static org.mockito.Mockito.when;
++
++class GlobalProgressionPersistenceTest {
++
++    private ServerMock server;
++
++    @AfterEach
++    void tearDown() {
++        if (server != null) {
++            MockBukkit.unmock();
++        }
++    }
++
++    @Test
++    void grantedExperienceIsClampedLeveledAndPersistedByUuid() {
++        server = MockBukkit.mock();
++        MinePlugin plugin = MockBukkit.load(MinePlugin.class);
++        GlobalProgressionManager progression =
++                plugin.getGlobalProgressionManager();
++
++        UUID playerId = UUID.randomUUID();
++        World world = mock(World.class);
++        Player player = mock(Player.class);
++        when(player.getUniqueId()).thenReturn(playerId);
++        when(player.getName()).thenReturn("TesteurProgression");
++        when(player.getGameMode()).thenReturn(GameMode.SURVIVAL);
++        when(player.isOnline()).thenReturn(true);
++        when(player.getWorld()).thenReturn(world);
++        when(world.getName()).thenReturn("world");
++        when(player.getLocation())
++                .thenReturn(new Location(world, 0.0D, 64.0D, 0.0D));
++
++        long gained = progression.grantExperience(
++                player,
++                200L,
++                "Test");
++        progression.saveProgressSync();
++
++        assertEquals(200L, gained);
++        assertEquals(200L, progression.getExperience(playerId));
++        assertEquals(2, progression.getLevel(playerId));
++
++        File dataFile =
++                new File(plugin.getDataFolder(), "progression.yml");
++        assertTrue(dataFile.isFile());
++
++        YamlConfiguration yaml =
++                YamlConfiguration.loadConfiguration(dataFile);
++        assertEquals(2, yaml.getInt("schema-version"));
++        String root = "players." + playerId;
++        assertEquals("TesteurProgression",
++                yaml.getString(root + ".name"));
++        assertEquals(200L, yaml.getLong(root + ".xp"));
++    }
++}
+diff --git a/src/test/java/org/example/progression/PlacedBlockTrackerTest.java b/src/test/java/org/example/progression/PlacedBlockTrackerTest.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..fc188702b25ad1a5df45422933bede6dec2f4069
+--- /dev/null
++++ b/src/test/java/org/example/progression/PlacedBlockTrackerTest.java
+@@ -0,0 +1,34 @@
++package org.example.progression;
++
++import org.junit.jupiter.api.Test;
++
++import java.util.HashSet;
++import java.util.Set;
++
++import static org.junit.jupiter.api.Assertions.assertEquals;
++import static org.junit.jupiter.api.Assertions.assertNotEquals;
++
++class PlacedBlockTrackerTest {
++
++    @Test
++    void positionEncodingSeparatesLocalCoordinatesAndNegativeHeights() {
++        Set<Integer> positions = new HashSet<>();
++        for (int x = 0; x < 16; x++) {
++            for (int z = 0; z < 16; z++) {
++                positions.add(PlacedBlockTracker.encodePosition(
++                        x,
++                        -64,
++                        z));
++                positions.add(PlacedBlockTracker.encodePosition(
++                        x,
++                        319,
++                        z));
++            }
++        }
++
++        assertEquals(512, positions.size());
++        assertNotEquals(
++                PlacedBlockTracker.encodePosition(0, -64, 0),
++                PlacedBlockTracker.encodePosition(0, 319, 0));
++    }
++}
+diff --git a/src/test/java/org/example/village/VillageGenerationSessionProgressionTest.java b/src/test/java/org/example/village/VillageGenerationSessionProgressionTest.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..6731f23ddea20ab8d5555475f2a184981f66bc53
+--- /dev/null
++++ b/src/test/java/org/example/village/VillageGenerationSessionProgressionTest.java
+@@ -0,0 +1,38 @@
++package org.example.village;
++
++import org.bukkit.Location;
++import org.bukkit.World;
++import org.bukkit.block.data.BlockData;
++import org.junit.jupiter.api.Test;
++
++import static org.junit.jupiter.api.Assertions.assertEquals;
++import static org.junit.jupiter.api.Assertions.assertFalse;
++import static org.junit.jupiter.api.Assertions.assertTrue;
++import static org.mockito.Mockito.mock;
++import static org.mockito.Mockito.when;
++
++class VillageGenerationSessionProgressionTest {
++
++    @Test
++    void firstArtificialStateIsPreservedForRollback() {
++        World world = mock(World.class);
++        BlockData first = mock(BlockData.class);
++        BlockData firstCopy = mock(BlockData.class);
++        BlockData second = mock(BlockData.class);
++        BlockData secondCopy = mock(BlockData.class);
++        when(first.clone()).thenReturn(firstCopy);
++        when(second.clone()).thenReturn(secondCopy);
++
++        VillageGenerationSession session =
++                new VillageGenerationSession(42);
++        Location location = new Location(world, 10.8D, 64.0D, -3.2D);
++
++        session.rememberOriginal(location, first, true);
++        session.rememberOriginal(location, second, false);
++
++        assertEquals(1, session.getOriginalBlocks().size());
++        assertTrue(session.wasOriginalArtificial(location));
++        assertFalse(session.wasOriginalArtificial(
++                new Location(world, 11.0D, 64.0D, -3.0D)));
++    }
++}

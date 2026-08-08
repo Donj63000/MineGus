@@ -30,6 +30,13 @@ mineur:
     require-owner-online: true
     fire-block-break-event: true
 
+  # Persistance de l'acteur visuel. La session reste la source de vérité :
+  # après un redémarrage, /kill ou une suppression par un autre plugin, un seul
+  # PNJ signé est recréé et les éventuels anciens exemplaires sont supprimés.
+  persistence:
+    entity-watchdog-interval-ticks: 20
+    entity-recovery-delay-ticks: 2
+
   storage:
     barrel-search-radius: 6
     barrel-search-height: 2
@@ -196,19 +203,36 @@ village:
   roadHalf: 2
   # Pas centre-à-centre des îlots (et non une marge ajoutée à la maison).
   spacing: 20
-  # Taille impaire ; 13 laisse respirer le puits, les bancs et les étals.
-  plazaSize: 13
-  rows: 4
-  cols: 5
-  houseCountMin: 12
-  houseCountMax: 16
+  # Taille impaire ; 15 forme une vraie place de marché sans casser la densité.
+  plazaSize: 15
+  # 5 x 7 produit une ville d'environ 181 x 146 blocs avec 28 à 32 logements.
+  rows: 5
+  cols: 7
+  houseCountMin: 26
+  houseCountMax: 32
   mainStreetHalf: 2
   sideStreetHalf: 1
   terrainMaxStep: 2
   # none | low | medium | high
   decorDensity: high
   # Respiration minimale entre les derniers jardins et la face intérieure.
-  wallGap: 7
+  wallGap: 8
+
+  # Population de la ville. Les spawners sont répartis entre les quartiers et
+  # partagent un quota persistant pour protéger les performances du serveur.
+  population:
+    initial-residents: 14
+    villager-spawners: 8
+    cap: 56
+    # 0 = habitants persistants jusqu'à /village undo ou suppression manuelle.
+    lifetime-minutes: 0
+    spawner:
+      # 60 à 120 secondes entre deux tentatives (20 ticks = 1 seconde).
+      min-delay-ticks: 1200
+      max-delay-ticks: 2400
+      max-nearby-entities: 4
+      required-player-range: 24
+      spawn-range: 3
 
   # Passe lumineuse finale du village (les lampadaires de rue restent liés au décor).
   lighting:
@@ -228,7 +252,202 @@ village:
     # Espacement des bornes lumineuses placées le long de la muraille.
     perimeter-lantern-spacing: 14
     # Garde-fou pour une configuration de village anormalement grande.
-    max-hidden-lights: 2048
+    max-hidden-lights: 4096
+
+
+# Progression globale du joueur, totalement indépendante du métier Mineur.
+#
+# Le niveau 1 est le niveau de référence (aucun bonus). Chaque level-up ajoute
+# le pourcentage configuré : le niveau 100 donne donc +99 % avec les valeurs
+# par défaut. La courbe ci-dessous demande 1 536 546 XP au total pour le niveau 100.
+progression:
+  enabled: true
+  max-level: 100
+
+  # XP requise pour passer du niveau N au niveau N+1 :
+  # base + linear * (N - 1) + quadratic * (N - 1)^2
+  xp-levelup:
+    base: 200
+    linear: 50
+    quadratic: 4
+
+  bonuses:
+    # Les valeurs représentent le gain réel visé par level-up.
+    health-percent-per-level: 1.0
+    # L'attribut vanilla multiplie la durée moyenne par (1 + bonus).
+    oxygen-percent-per-level: 1.0
+    damage-percent-per-level: 1.0
+    mining-speed-percent-per-level: 1.0
+
+  display:
+    # Sidebar vanilla temporaire en haut à droite lors d'un gain d'XP.
+    sidebar-on-gain: true
+    hud-hide-delay-seconds: 4
+    progress-bar-segments: 10
+    # Repli si la sidebar n'est pas disponible dans l'environnement courant.
+    actionbar-fallback: true
+    title-on-levelup: true
+    sound-on-levelup: true
+
+  anti-abuse:
+    # Un gain issu du gameplay est borné individuellement puis sur une minute.
+    # Les commandes admin ne sont pas concernées par ces deux limites.
+    max-single-award: 2000
+    max-xp-per-minute: 5000
+    # Noms de mondes, insensibles à la casse, où aucun XP global n'est gagné.
+    disabled-worlds: []
+
+  sources:
+    blocks:
+      # Empêche de gagner l'XP d'un minerai avec un outil qui ne le récolte pas.
+      require-preferred-tool: true
+      # Un plugin qui annule les drops annule aussi l'XP de progression.
+      require-drops: true
+
+      # Les blocs posés, formés ou générés par /village puis cassés ne donnent
+      # pas d'XP. Le marquage est persistant dans le PDC de chaque chunk.
+      track-placed-blocks: true
+      placed-blocks-max-per-chunk: 16384
+      placed-blocks-flush-seconds: 5
+
+      # La présence de cette section remplace la table interne par défaut.
+      xp-per-block:
+        STONE: 1
+        COBBLESTONE: 1
+        DEEPSLATE: 1
+        TUFF: 1
+        NETHERRACK: 1
+        END_STONE: 2
+        OBSIDIAN: 5
+
+        COAL_ORE: 3
+        DEEPSLATE_COAL_ORE: 4
+        COPPER_ORE: 4
+        DEEPSLATE_COPPER_ORE: 5
+        IRON_ORE: 5
+        DEEPSLATE_IRON_ORE: 6
+        GOLD_ORE: 7
+        DEEPSLATE_GOLD_ORE: 8
+        REDSTONE_ORE: 6
+        DEEPSLATE_REDSTONE_ORE: 7
+        LAPIS_ORE: 7
+        DEEPSLATE_LAPIS_ORE: 8
+        DIAMOND_ORE: 12
+        DEEPSLATE_DIAMOND_ORE: 14
+        EMERALD_ORE: 15
+        DEEPSLATE_EMERALD_ORE: 17
+        NETHER_QUARTZ_ORE: 4
+        NETHER_GOLD_ORE: 6
+        ANCIENT_DEBRIS: 25
+
+        OAK_LOG: 2
+        SPRUCE_LOG: 2
+        BIRCH_LOG: 2
+        JUNGLE_LOG: 2
+        ACACIA_LOG: 2
+        DARK_OAK_LOG: 2
+        MANGROVE_LOG: 2
+        CHERRY_LOG: 2
+        PALE_OAK_LOG: 2
+        CRIMSON_STEM: 2
+        WARPED_STEM: 2
+        CRIMSON_HYPHAE: 2
+        WARPED_HYPHAE: 2
+
+    farming:
+      # Seules les cultures arrivées à leur âge maximal donnent cet XP.
+      xp-per-mature-crop:
+        WHEAT: 2
+        CARROTS: 2
+        POTATOES: 2
+        BEETROOTS: 2
+        NETHER_WART: 3
+        COCOA: 2
+        TORCHFLOWER_CROP: 3
+        PITCHER_CROP: 3
+
+    combat:
+      # Utilisé lorsqu'une entité n'est pas explicitement listée plus bas.
+      fallback:
+        monster: 10
+        animal: 3
+        # Désactivé par défaut pour ne pas créer de ferme PvP entre complices.
+        player: 0
+        other: 0
+
+      # Une valeur 0 désactive explicitement l'entité concernée.
+      xp-per-entity:
+        PLAYER: 0
+        ENDER_DRAGON: 1000
+        WITHER: 750
+        WARDEN: 500
+        ELDER_GUARDIAN: 100
+        RAVAGER: 60
+        EVOKER: 40
+        PIGLIN_BRUTE: 30
+        GHAST: 18
+        BREEZE: 16
+        BLAZE: 15
+        SHULKER: 15
+        VINDICATOR: 15
+        WITHER_SKELETON: 14
+        ZOGLIN: 14
+        ENDERMAN: 12
+        GUARDIAN: 12
+        PHANTOM: 12
+        HOGLIN: 12
+        CREEPER: 12
+        BOGGED: 12
+
+      # Multiplicateur selon l'origine de spawn fournie par Paper pour l'entité.
+      # Les raisons absentes de cette liste utilisent 1.0.
+      spawn-reason-multipliers:
+        SPAWNER: 0.25
+        TRIAL_SPAWNER: 0.50
+        SPAWNER_EGG: 0.0
+        DISPENSE_EGG: 0.0
+        BREEDING: 0.0
+        BUILD_IRONGOLEM: 0.0
+        BUILD_SNOWMAN: 0.0
+        COMMAND: 0.0
+        CUSTOM: 0.0
+
+    fishing:
+      caught-fish-xp: 5
+      caught-entity-xp: 2
+
+    breeding:
+      xp: 8
+
+    taming:
+      xp: 20
+
+    trading:
+      xp: 4
+
+    shearing:
+      xp: 3
+
+    enchanting:
+      base-xp: 5
+      xp-per-cost-level: 0.5
+
+    smelting:
+      xp-per-item: 0.25
+      xp-per-vanilla-xp: 1.0
+      max-xp-per-extraction: 100
+
+    advancements:
+      default-xp: 50
+      ignore-recipes: true
+      # Les clés doivent être entre guillemets à cause du caractère ':'.
+      xp-per-advancement:
+        "minecraft:end/kill_dragon": 250
+        "minecraft:nether/summon_wither": 200
+        "minecraft:adventure/hero_of_the_village": 150
+        "minecraft:adventure/kill_all_mobs": 300
+        "minecraft:husbandry/balanced_diet": 150
+        "minecraft:nether/all_effects": 250
 
 # Paramètres des métiers
 jobs:

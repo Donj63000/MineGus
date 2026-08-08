@@ -222,7 +222,7 @@ public final class SessionStore {
                     continue;
                 }
                 if (state.owner == null) {
-                    state.paused = true;
+                    state.pause(MiningSessionState.PauseReason.SAFETY);
                     logger.warning("[Mineur] Session " + state.id
                             + " chargée en pause car aucun propriétaire n'est enregistré.");
                 }

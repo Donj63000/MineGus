@@ -1,9 +1,9 @@
 package org.example.village;
 
-import be.seeseemelk.mockbukkit.MockBukkit;
-import be.seeseemelk.mockbukkit.ServerMock;
-import be.seeseemelk.mockbukkit.WorldMock;
-import be.seeseemelk.mockbukkit.entity.PlayerMock;
+import org.mockbukkit.mockbukkit.MockBukkit;
+import org.mockbukkit.mockbukkit.ServerMock;
+import org.mockbukkit.mockbukkit.world.WorldMock;
+import org.mockbukkit.mockbukkit.entity.PlayerMock;
 import org.bukkit.Location;
 import org.bukkit.Material;
 import org.example.MinePlugin;

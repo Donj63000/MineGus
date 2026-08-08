@@ -29,6 +29,7 @@ Après le premier démarrage, éditez `plugins/MinePlugin/config.yml` :
 - `/garde` : `follow-radius`, les paramètres de formation (`formation-side-distance`, `formation-rear-distance`, `formation-tolerance`), l’espace visuel (`personal-space-radius`, `view-clearance-distance`), les rayons `protection-radius`, `threat-detection-radius` et `combat-leash-radius`, l’assistance (`assist-owner-attacks`, `proactive-defense`, `finish-engaged-targets`), `threat-duration-seconds`, `respawn-delay-seconds`, `friendly-fire`, la neutralité des golems, `notifications` et `attributes.*`. Les valeurs invalides ou hors limites reviennent aux valeurs par défaut sûres.
 - `/eleveur` : limites d’animaux, temps de recharge, chances de loot cuit, prix en émeraudes.
 - `/village` : tailles des maisons/grille (`houseSmall`, `houseBig`, `roadHalf`, `spacing`, `plazaSize`, `rows`, `cols`, `wallGap`), densité de végétation (`decorDensity`) et passe lumineuse finale (`lighting.*`).
+- Progression globale : `progression.xp-levelup`, `progression.bonuses`, `progression.display`, les garde-fous `progression.anti-abuse` et chaque source d'XP sous `progression.sources`. Ce niveau est indépendant du métier Mineur.
 
 Référence par défaut : `src/main/resources/config.yml`. Modifiez seulement la copie dans `plugins/MinePlugin/`.
 
@@ -90,6 +91,14 @@ Référence par défaut : `src/main/resources/config.yml`. Modifiez seulement la
 ### /marchand (permission `mineplugin.marchand.spawn`)
 - Invoque un PNJ marchand invulnérable à l’emplacement du joueur. Les offres proviennent de `plugins/MinePlugin/marchand.yaml`; clique le PNJ pour ouvrir l’interface d’échanges.
 
+### /niveau — progression globale
+- `/niveau` ou `/niveau info` : affiche le niveau global, l'XP du palier et les quatre bonus du joueur. Les alias `/level` et `/progression` sont disponibles.
+- Le niveau commence à 1 et se termine à 100. Le niveau 1 est la référence sans bonus ; chaque level-up ajoute par défaut **+1 % de points de vie maximum, +1 % de durée d'apnée, +1 % de dégâts causés et +1 % de vitesse de minage**. Le niveau 100 correspond donc à +99 %.
+- L'XP se gagne par le minage et le bûcheronnage configurés, les cultures mûres, les éliminations, la pêche, la reproduction, l'apprivoisement, la tonte, l'enchantement, la récupération d'une cuisson, le commerce et les progrès Minecraft.
+- À chaque gain, une sidebar compacte apparaît en haut à droite avec le niveau, la barre et l'XP du palier, puis disparaît après quatre secondes par défaut. Le scoreboard précédent est restauré ; une actionbar sert de repli si la sidebar n'est pas disponible.
+- Anti-abus : aucun gain en Créatif/Spectateur, blocs reposés, formés ou générés par `/village` marqués dans le chunk, suivi des pistons et explosions, multiplicateurs selon l'origine des mobs, plafond par gain et par minute, et mondes désactivables.
+- Administration (`mineplugin.progression.admin`, opérateur par défaut) : `/niveau info <joueur>`, `/niveau addxp <joueur> <quantité>`, `/niveau setlevel <joueur> <1-100>` et `/niveau reset <joueur>`.
+
 ### /job
 - `/job mineur` : choisit le métier de mineur.
 - `/job` ou `/job info` : affiche métier, niveau, XP et nombre de mines débloquées. L’XP se gagne en minant à la pioche; +1 slot de mine tous les 10 niveaux (jusqu’à 10).
@@ -99,7 +108,7 @@ Référence par défaut : `src/main/resources/config.yml`. Modifiez seulement la
 - `/minegus fix forestier|golems` (permission `mineplugin.admin`) : commande de maintenance qui supprime les doublons de forestiers de /foret ou de golems gardes taggés dans tous les mondes.
 
 ## Persistance des données
-Les fonctionnalités persistantes sauvegardent leurs informations (YAML) dans `plugins/MinePlugin/` (`sessions.yml`, `farms.yml`, etc.) pour restaurer PNJ et structures au redémarrage. Les deux gardes de `/garde` ne sont jamais sauvegardés et tout garde résiduel est retiré au chargement d’un chunk après un redémarrage.
+Les fonctionnalités persistantes sauvegardent leurs informations (YAML) dans `plugins/MinePlugin/` (`sessions.yml`, `farms.yml`, etc.) pour restaurer PNJ et structures au redémarrage. La progression globale est stockée séparément dans `progression.yml` (UUID, dernier nom connu, XP totale et état transitoire de santé nécessaire à une restauration propre) et les métiers restent dans `jobs.yml`. Son écriture est atomique et différée ; un YAML invalide est mis en quarantaine avec un suffixe `.corrupt-<horodatage>.bak` au lieu d’être écrasé. Les deux gardes de `/garde` ne sont jamais sauvegardés et tout garde résiduel est retiré au chargement d’un chunk après un redémarrage.
 
 ## Structure du projet
 - `src/main/java/` : code source du plugin.
@@ -108,7 +117,8 @@ Les fonctionnalités persistantes sauvegardent leurs informations (YAML) dans `p
 - `target/` : artefacts de build (ne pas modifier/committer).
 
 ## Architecture du projet (qui fait quoi)
-- `org.example.MinePlugin` : point d’entrée. Enregistre `/army` et `/ping`, instancie les modules (`Mineur`, `Agriculture`, `Foret`, `Village`, `Eleveur`, `Armure`), charge/sauve les sessions dans `onEnable/onDisable`.
+- `org.example.MinePlugin` : point d’entrée. Enregistre `/army` et `/ping`, instancie les modules (`Mineur`, `Agriculture`, `Foret`, `Village`, `Eleveur`, `Armure`) ainsi que les gestionnaires de métier et de progression globale, puis ferme proprement leurs sauvegardes dans `onDisable`.
+- `org.example.progression` : courbe 1–100, collecte multi-actions, bonus attributaires/dégâts, HUD sidebar temporaire, anti-farming des blocs et persistance atomique dans `progression.yml`.
 - `org.example.Mineur` : gère `/mineur`. Bâton de sélection (2 blocs même Y), cadre + coffres + PNJ mineur + golems, minage vertical, persistance `sessions.yml`, arrêt si tous les coffres cassés.
 - `org.example.Agriculture` : gère `/champ`. Crée terres labourées + irrigation, PNJ fermier + golems, récolte/stockage auto, persistance `farms.yml`.
 - `org.example.Foret` : gère `/foret`. Grille de pousses, récolte et replantation auto, coffres d’angle, persistance `forests.yml`.
@@ -201,6 +211,7 @@ categories:
 - Sanity de base : `/ping`, `/army` (spawn + disparition programmée).
 - Gardes royaux : exécuter `/garde`, vérifier les deux positions latérales arrière et tourner rapidement pour confirmer que les gardes dégagent la caméra ; frapper successivement plusieurs mobs puis vérifier qu’ils sont traités dans l’ordre jusqu’à leur mort ; laisser un zombie ou un raider prendre le joueur pour cible sans recevoir de coup et confirmer l’interception proactive ; tester une flèche tirée par le propriétaire, un animal apprivoisé, une attaque PvP, une cible qui sort de la laisse de combat, le rappel hors combat au-delà de 20 blocs et le changement de monde ; approcher ensuite un golem de fer naturel de village, confirmer la neutralité puis provoquer une tentative de frappe ; enfin bloquer un chemin, tuer un garde, vérifier son retour après 20 secondes, renvoyer le duo et confirmer l’annulation des respawns.
 - Mineur : `/mineur`, sélection de deux blocs au même Y, vérifier cadre + coffres + PNJ; changer `/mineur vitesse rapide`.
+- Progression globale : casser un minerai naturel puis un minerai posé, tuer un mob naturel puis issu d'un spawner, récolter une culture mûre et pêcher ; vérifier `/niveau`, le HUD temporaire, la restauration de l'ancienne sidebar, la persistance après redémarrage et les quatre bonus aux niveaux 2 puis 100.
 - Champ : `/champ`, récolte/stockage, suppression des coffres → arrêt automatique.
 - Forêt : `/foret`, coupe/replantation automatique, persistance après redémarrage.
 - Éleveur : `/eleveur`, `/eleveur list`, `/eleveur delete <id>`; vérifier limites d’animaux configurées.

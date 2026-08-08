@@ -20,6 +20,7 @@ import java.util.UUID;
 public final class VillageGenerationSession {
     private final int villageId;
     private final Map<Location, BlockData> originalBlocks = new LinkedHashMap<>();
+    private final Set<Location> originalArtificialBlocks = new LinkedHashSet<>();
     private final Set<UUID> generatedEntities = new LinkedHashSet<>();
     private final Set<Location> generatedSpawners = new LinkedHashSet<>();
     private final Map<String, Location> anchors = new LinkedHashMap<>();
@@ -60,11 +61,35 @@ public final class VillageGenerationSession {
      * emplacement doivent toutes revenir à l'état antérieur à la génération.
      */
     public void rememberOriginal(Location location, BlockData originalData) {
+        rememberOriginal(location, originalData, false);
+    }
+
+    /**
+     * Conserve aussi l'état anti-recyclage du bloc avant sa première
+     * modification. Le rollback peut ainsi distinguer un bloc naturel d'un
+     * bloc déjà posé par un joueur.
+     */
+    public void rememberOriginal(
+            Location location,
+            BlockData originalData,
+            boolean artificial) {
         if (location == null || originalData == null) {
             return;
         }
+
         Location key = blockLocation(location);
-        originalBlocks.putIfAbsent(key, originalData.clone());
+        if (originalBlocks.containsKey(key)) {
+            return;
+        }
+        originalBlocks.put(key, originalData.clone());
+        if (artificial) {
+            originalArtificialBlocks.add(key);
+        }
+    }
+
+    public boolean wasOriginalArtificial(Location location) {
+        return location != null
+                && originalArtificialBlocks.contains(blockLocation(location));
     }
 
     /**

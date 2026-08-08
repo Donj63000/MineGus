@@ -56,6 +56,15 @@ commands:
     usage: |
       /job mineur
       /job info
+  niveau:
+    description: Affiche et administre la progression globale du joueur
+    aliases: [level, progression]
+    usage: |
+      /niveau
+      /niveau info [joueur]
+      /niveau addxp <joueur> <quantité>
+      /niveau setlevel <joueur> <1-100>
+      /niveau reset <joueur>
 
 permissions:
   mineplugin.mineur.use:
@@ -78,6 +87,9 @@ permissions:
     default: op
   mineplugin.admin:
     description: Utiliser les sous-commandes d'administration de /minegus
+    default: op
+  mineplugin.progression.admin:
+    description: Consulter et modifier le niveau global des joueurs
     default: op
 
 softdepend:

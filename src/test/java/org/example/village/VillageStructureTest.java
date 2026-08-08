@@ -489,6 +489,98 @@ class VillageStructureTest {
         assertTrue(values.contains(Material.CHAIN));
     }
 
+    @Test
+    void coveredPassageKeepsAThreeBlockHighWalkway() {
+        Map<String, Material> blocks = new HashMap<>();
+        TerrainManager.SetBlock setBlock =
+                (x, y, z, material) -> blocks.put(
+                        key(x, y, z),
+                        material
+                );
+        VillageLayoutPlan.PassagePlan passage =
+                new VillageLayoutPlan.PassagePlan(
+                        0,
+                        0,
+                        BlockFace.EAST,
+                        1,
+                        VillageLayoutPlan.PassageStyle.TIMBER
+                );
+
+        MedievalPassageBuilder.build(
+                null,
+                passage,
+                64,
+                setBlock
+        ).forEach(Runnable::run);
+
+        for (int x = -1; x <= 1; x++) {
+            for (int y = 65; y <= 67; y++) {
+                assertEquals(
+                        Material.AIR,
+                        blocks.get(key(x, y, 0))
+                );
+            }
+        }
+        assertTrue(blocks.values().contains(Material.LANTERN));
+        assertTrue(blocks.values().contains(Material.YELLOW_STAINED_GLASS));
+        assertTrue(blocks.values().contains(Material.STRIPPED_SPRUCE_LOG));
+    }
+
+    @Test
+    void stableContainsFourStallsAndKeepsItsCentralAisleOpen() {
+        Map<String, Material> blocks = new HashMap<>();
+        TerrainManager.SetBlock setBlock =
+                (x, y, z, material) -> blocks.put(
+                        key(x, y, z),
+                        material
+                );
+        VillageLayoutPlan.LotPlan stable =
+                new VillageLayoutPlan.LotPlan(
+                        0,
+                        0,
+                        0,
+                        0,
+                        VillageLayoutPlan.LotRole.STABLE,
+                        BlockFace.WEST,
+                        -7,
+                        -5,
+                        15,
+                        11,
+                        -8,
+                        0,
+                        null,
+                        0,
+                        3,
+                        false
+                );
+
+        SpecialBuildings.buildStable(
+                null,
+                stable,
+                65,
+                setBlock
+        ).forEach(Runnable::run);
+
+        assertTrue(blocks.values().contains(Material.HAY_BLOCK));
+        assertTrue(blocks.values().contains(Material.WATER_CAULDRON));
+        assertTrue(blocks.values().contains(Material.DARK_OAK_FENCE_GATE));
+        assertTrue(blocks.values().contains(Material.WHITE_TERRACOTTA));
+
+        // Pour une façade OUEST, l'axe longitudinal suit X.
+        for (int x = -5; x <= 5; x++) {
+            for (int y = 66; y <= 68; y++) {
+                Material material = blocks.get(key(x, y, 0));
+                assertTrue(
+                        material == null || material == Material.AIR,
+                        "Allée centrale bloquée en "
+                                + key(x, y, 0)
+                                + " par "
+                                + material
+                );
+            }
+        }
+    }
+
     private static String key(int x, int y, int z) {
         return x + ":" + y + ":" + z;
     }

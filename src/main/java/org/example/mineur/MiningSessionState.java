@@ -19,10 +19,27 @@ import java.util.UUID;
  */
 public final class MiningSessionState {
 
-    public static final int CURRENT_SCHEMA_VERSION = 5;
+    public static final int CURRENT_SCHEMA_VERSION = 6;
     private static final int MAX_TRUSTED_PLAYERS = 256;
     private static final int MAX_STORED_CONTAINERS = 256;
     private static final int MAX_INSPECTED_LIST_ENTRIES = 1_024;
+
+    /**
+     * Origine persistée d'une pause.
+     *
+     * <p>Les versions antérieures au schéma 6 ne stockaient qu'un booléen.
+     * {@link #LEGACY_UNKNOWN} permet de reconnaître ces anciens états et de
+     * réparer une fois les pauses erronées créées au démarrage lorsque le
+     * propriétaire était hors ligne.</p>
+     */
+    public enum PauseReason {
+        NONE,
+        MANUAL,
+        PROTECTION,
+        ERROR,
+        SAFETY,
+        LEGACY_UNKNOWN
+    }
 
     public UUID id = UUID.randomUUID();
     public UUID worldUid;
@@ -52,6 +69,7 @@ public final class MiningSessionState {
     public StructureBounds structureBounds;
     public boolean useBarrelMaster = false;
     public boolean paused = false;
+    public PauseReason pauseReason = PauseReason.NONE;
     public boolean waitingStorage = false;
     public boolean selected = false;
     public final Set<UUID> trusted = new HashSet<>();
@@ -150,6 +168,7 @@ public final class MiningSessionState {
         );
         map.put("useBarrelMaster", useBarrelMaster);
         map.put("paused", paused);
+        map.put("pauseReason", normalizedPauseReason().name());
         map.put("waitingStorage", waitingStorage);
         map.put("selected", selected);
         map.put("chainTunnelAfterQuarry", chainTunnelAfterQuarry);
@@ -273,6 +292,7 @@ public final class MiningSessionState {
 
         state.useBarrelMaster = booleanValue(map.get("useBarrelMaster"), false);
         state.paused = booleanValue(map.get("paused"), false);
+        state.pauseReason = deserializePauseReason(map, state.paused, schemaVersion);
         state.waitingStorage = booleanValue(map.get("waitingStorage"), false);
         state.selected = booleanValue(map.get("selected"), false);
         state.chainTunnelAfterQuarry = booleanValue(map.get("chainTunnelAfterQuarry"), false);
@@ -306,6 +326,78 @@ public final class MiningSessionState {
         state.cursor.width = Math.max(1, state.cursor.width);
         state.cursor.length = Math.max(1, state.cursor.length);
         return state;
+    }
+
+    /**
+     * Met la session en pause en conservant une cause exploitable après un
+     * redémarrage. Une cause absente ou incohérente est traitée comme une
+     * erreur interne plutôt que comme une pause manuelle.
+     */
+    public void pause(PauseReason reason) {
+        paused = true;
+        pauseReason = reason != null && reason != PauseReason.NONE
+                ? reason
+                : PauseReason.ERROR;
+    }
+
+    /**
+     * Réactive la session et efface atomiquement la cause de pause.
+     */
+    public void resume() {
+        paused = false;
+        pauseReason = PauseReason.NONE;
+    }
+
+    /**
+     * Répare une pause provenant d'un ancien schéma qui ne permettait pas de
+     * distinguer une commande manuelle du faux blocage « propriétaire hors
+     * ligne » observé pendant le chargement.
+     *
+     * @return {@code true} lorsque la session a été réactivée
+     */
+    public boolean resumeLegacyUnknownPause() {
+        if (!paused || pauseReason != PauseReason.LEGACY_UNKNOWN) {
+            return false;
+        }
+        resume();
+        return true;
+    }
+
+    private PauseReason normalizedPauseReason() {
+        if (!paused) {
+            pauseReason = PauseReason.NONE;
+            return pauseReason;
+        }
+        if (pauseReason == null || pauseReason == PauseReason.NONE) {
+            pauseReason = PauseReason.ERROR;
+        }
+        return pauseReason;
+    }
+
+    private static PauseReason deserializePauseReason(Map<String, Object> map,
+                                                      boolean paused,
+                                                      int schemaVersion) {
+        if (!paused) {
+            return PauseReason.NONE;
+        }
+
+        /*
+         * Seuls les schémas réellement antérieurs à 6 peuvent être migrés.
+         * Une clé absente dans un fichier moderne indique au contraire une
+         * corruption : la session reste prudemment en pause.
+         */
+        if (!map.containsKey("pauseReason")) {
+            return schemaVersion < 6
+                    ? PauseReason.LEGACY_UNKNOWN
+                    : PauseReason.ERROR;
+        }
+
+        PauseReason reason = enumValue(
+                PauseReason.class,
+                map.get("pauseReason"),
+                PauseReason.ERROR
+        );
+        return reason != PauseReason.NONE ? reason : PauseReason.ERROR;
     }
 
     /**

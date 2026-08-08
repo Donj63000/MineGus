@@ -1,0 +1,4742 @@
+diff --git a/src/main/java/org/example/MinePlugin.java b/src/main/java/org/example/MinePlugin.java
+index ba7df6ffc271a70f296df2cc4c4e4b4be13b81cc..4bb2d69d4d6cf4c4816d7e67b00deefbd2dd89c4 100644
+--- a/src/main/java/org/example/MinePlugin.java
++++ b/src/main/java/org/example/MinePlugin.java
+@@ -150,8 +150,9 @@ public class MinePlugin extends JavaPlugin implements Listener {
+             getLogger().warning("MerchantManager desactive dans cet environnement: " + throwable.getClass().getSimpleName());
+         }
+ 
+-        // Tâche de surveillance des marchands de village
++        // Population persistante et surveillance des marchands du village.
+         try {
++            VillageEntityManager.initializePopulationListener(this);
+             VillageEntityManager.startMerchantGuardTask(this);
+         } catch (Throwable throwable) {
+             getLogger().warning("VillageEntityManager desactive dans cet environnement: " + throwable.getClass().getSimpleName());
+diff --git a/src/main/java/org/example/Village.java b/src/main/java/org/example/Village.java
+index 077be9ef22bf73de534633658b30f3ec84f519cb..d565c25e6f289db51c5b81b5e31d2fb0ff1cde4a 100644
+--- a/src/main/java/org/example/Village.java
++++ b/src/main/java/org/example/Village.java
+@@ -6,6 +6,7 @@ import org.bukkit.Location;
+ import org.bukkit.Material;
+ import org.bukkit.World;
+ import org.bukkit.block.Block;
++import org.bukkit.block.BlockFace;
+ import org.bukkit.block.CreatureSpawner;
+ import org.bukkit.block.data.BlockData;
+ import org.bukkit.command.Command;
+@@ -28,6 +29,8 @@ import org.example.village.VillageLayoutPlan;
+ import org.example.village.VillageLayoutPlanner;
+ import org.example.village.VillageLayoutSettings;
+ import org.example.village.VillageLightingBuilder;
++import org.example.village.VillagePopulationSettings;
++import org.example.village.VillageStyle;
+ import org.example.village.WallBuilder;
+ 
+ import java.util.ArrayList;
+@@ -59,9 +62,9 @@ import java.util.logging.Level;
+  */
+ public final class Village implements CommandExecutor {
+ 
+-    private static final int VILLAGER_SPAWNERS = 4;
++    private static final int LEGACY_VILLAGER_SPAWNERS = 4;
+     private static final int GOLEM_SPAWNERS = 2;
+-    private static final int DEFAULT_WALL_GAP = 7;
++    private static final int DEFAULT_WALL_GAP = 8;
+     private static final int TERRAIN_FEATHER = 4;
+     private static final int MAX_ACTIONS_PER_TICK = 320;
+     private static final long MAX_BATCH_NANOS = 8_000_000L;
+@@ -70,6 +73,7 @@ public final class Village implements CommandExecutor {
+     private final JavaPlugin plugin;
+     private final int wallGap;
+     private final VillageLayoutSettings layoutSettings;
++    private final VillagePopulationSettings populationSettings;
+ 
+     /*
+      * Ces deux champs sont conservés pour la compatibilité avec les tests et
+@@ -88,13 +92,13 @@ public final class Village implements CommandExecutor {
+                 .setExecutor(this);
+ 
+         FileConfiguration cfg = plugin.getConfig();
+-        int rows = cfg.getInt("village.rows", 4);
+-        int cols = cfg.getInt("village.cols", 5);
++        int rows = cfg.getInt("village.rows", 5);
++        int cols = cfg.getInt("village.cols", 7);
+         int houseSmall = cfg.getInt("village.houseSmall", 9);
+         int houseBig = cfg.getInt("village.houseBig", 11);
+         int roadHalf = cfg.getInt("village.roadHalf", 2);
+         int spacing = cfg.getInt("village.spacing", 20);
+-        int configuredPlazaSize = cfg.getInt("village.plazaSize", 13);
++        int configuredPlazaSize = cfg.getInt("village.plazaSize", 15);
+ 
+         /*
+          * Le porche du donjon occupe les six premiers blocs devant la
+@@ -113,13 +117,15 @@ public final class Village implements CommandExecutor {
+                 spacing,
+                 roadHalf,
+                 configuredPlazaSize,
+-                cfg.getInt("village.houseCountMin", 12),
+-                cfg.getInt("village.houseCountMax", 16),
++                cfg.getInt("village.houseCountMin", 26),
++                cfg.getInt("village.houseCountMax", 32),
+                 cfg.getInt("village.mainStreetHalf", 2),
+                 cfg.getInt("village.sideStreetHalf", 1),
+                 cfg.getInt("village.terrainMaxStep", 2),
+                 cfg.getString("village.decorDensity", "high")
+         );
++        this.populationSettings =
++                VillagePopulationSettings.from(cfg);
+     }
+ 
+     /**
+@@ -135,7 +141,10 @@ public final class Village implements CommandExecutor {
+             return;
+         }
+ 
+-        int desired = Math.min(VILLAGER_SPAWNERS, totalHouses);
++        int desired = Math.min(
++                LEGACY_VILLAGER_SPAWNERS,
++                totalHouses
++        );
+         double step = (double) totalHouses / desired;
+         for (int i = 0; i < desired; i++) {
+             int idx = (int) Math.floor(i * step + step / 2.0D);
+@@ -336,9 +345,9 @@ public final class Village implements CommandExecutor {
+         ));
+ 
+         /*
+-         * Les spawners sont placés sous les maisons réellement retenues par le
+-         * planificateur, et non sur quatre coordonnées arbitraires susceptibles
+-         * de tomber dans une route ou un bâtiment.
++         * Les spawners sont répartis dans les bâtiments réellement retenus par
++         * le planificateur. Ils restent donc accessibles et disposent du volume
++         * libre nécessaire, sans tomber dans une route ou sous le terrain.
+          */
+         todo.addAll(buildResidentialVillagerSpawners(
+                 session,
+@@ -419,26 +428,16 @@ public final class Village implements CommandExecutor {
+             ));
+         }
+ 
+-        final int ttlTicks = 20 * 60 * 30;
+         if (villageEntitiesEnabled) {
+             todo.add(() -> VillageEntityManager.spawnInitial(
+                     plugin,
+                     villageCenter,
+                     session.getAnchors(),
+                     resolvedVillageId,
+-                    ttlTicks
++                    populationSettings
+             ));
+         }
+ 
+-        Location mayorAnchor = layout.anchors()
+-                .getOrDefault("mayor", marketAnchor);
+-        todo.add(() -> spawnVillager(
+-                session,
+-                world,
+-                mayorAnchor.clone().add(0.5D, 1.0D, 0.5D),
+-                "Maire"
+-        ));
+-
+         buildActionsInBatches(todo, session);
+         return true;
+     }
+@@ -538,7 +537,36 @@ public final class Village implements CommandExecutor {
+             Block block = world.getBlockAt(x, y, z);
+             if (block.getState() instanceof CreatureSpawner spawner) {
+                 spawner.setSpawnedType(type);
+-                spawner.update(true, false);
++
++                VillageGenerationSession owner = session != null
++                        ? session
++                        : currentSession;
++                if (owner != null
++                        && (type == EntityType.VILLAGER
++                        || type == EntityType.IRON_GOLEM)) {
++                    try {
++                        VillageEntityManager.configureVillageSpawner(
++                                plugin,
++                                spawner,
++                                type,
++                                owner.getVillageId(),
++                                populationSettings
++                        );
++                    } catch (Throwable throwable) {
++                        /*
++                         * Le bloc reste un spawner utilisable même dans un
++                         * environnement de test qui n'implémente pas le PDC.
++                         */
++                        plugin.getLogger().log(
++                                Level.WARNING,
++                                "Configuration sécurisée du spawner ignorée",
++                                throwable
++                        );
++                        spawner.update(true, false);
++                    }
++                } else {
++                    spawner.update(true, false);
++                }
+             }
+         };
+     }
+@@ -604,27 +632,6 @@ public final class Village implements CommandExecutor {
+         };
+     }
+ 
+-    private void spawnVillager(VillageGenerationSession session,
+-                               World world,
+-                               Location location,
+-                               String name) {
+-        try {
+-            world.getChunkAt(location).load();
+-            Villager villager = (Villager) world.spawnEntity(
+-                    location,
+-                    EntityType.VILLAGER
+-            );
+-            session.trackEntity(villager.getUniqueId());
+-            villager.setCustomName(name);
+-            villager.setCustomNameVisible(true);
+-            villager.setProfession(Villager.Profession.NONE);
+-        } catch (Throwable throwable) {
+-            plugin.getLogger().warning(
+-                    "Apparition du villageois ignorée : "
+-                            + throwable.getClass().getSimpleName());
+-        }
+-    }
+-
+     /**
+      * Prolonge la grand-rue jusqu'à la face intérieure du portail.
+      *
+@@ -718,31 +725,167 @@ public final class Village implements CommandExecutor {
+             World world,
+             VillageLayoutPlan layout,
+             int baseY) {
+-        List<VillageLayoutPlan.LotPlan> houses = layout.lots().stream()
+-                .filter(VillageLayoutPlan.LotPlan::isHouse)
+-                .toList();
+-        prepareVillagerSpawnerDistribution(houses.size());
++        List<VillageLayoutPlan.LotPlan> selected =
++                selectPopulationSpawnerLots(
++                        layout,
++                        populationSettings.villagerSpawnerCount()
++                );
+ 
+         List<Runnable> actions = new ArrayList<>();
+-        for (int index = 0; index < houses.size(); index++) {
+-            if (!villagerSpawnerIdx.contains(index)) {
+-                continue;
++        for (int index = 0; index < selected.size(); index++) {
++            VillageLayoutPlan.LotPlan lot = selected.get(index);
++            BlockFace right = VillageStyle.rightOf(lot.facing());
++            int sideRadius = (lot.facing() == BlockFace.NORTH
++                    || lot.facing() == BlockFace.SOUTH)
++                    ? (lot.footprintWidth() - 1) / 2
++                    : (lot.footprintDepth() - 1) / 2;
++            int lateral = Math.min(2, Math.max(0, sideRadius - 2));
++            if (index % 2 != 0) {
++                lateral = -lateral;
+             }
+ 
+-            VillageLayoutPlan.LotPlan lot = houses.get(index);
+-            int spawnerY = baseY + lot.terraceY() - 1;
++            int spawnerX = lot.centerX()
++                    + right.getModX() * lateral;
++            int spawnerZ = lot.centerZ()
++                    + right.getModZ() * lateral;
++
++            /*
++             * Le spawner est posé dans la pièce principale, un bloc au-dessus
++             * du plancher. L'ancienne implantation sous terre ne disposait pas
++             * des deux blocs d'air nécessaires à un villageois.
++             */
++            int spawnerY = baseY + lot.terraceY() + 2;
++            int finalSpawnerX = spawnerX;
++            int finalSpawnerZ = spawnerZ;
++            int finalSpawnerY = spawnerY;
++            actions.add(() -> setBlockTracked(
++                    session,
++                    world,
++                    finalSpawnerX,
++                    finalSpawnerY + 1,
++                    finalSpawnerZ,
++                    Material.AIR
++            ));
+             actions.add(createSpawnerAction(
+                     session,
+                     world,
+-                    lot.centerX(),
++                    spawnerX,
+                     spawnerY,
+-                    lot.centerZ(),
++                    spawnerZ,
+                     EntityType.VILLAGER
+             ));
+         }
+         return actions;
+     }
+ 
++    /**
++     * Sélection par éloignement maximal : le premier spawner dessert le centre,
++     * puis chaque nouveau point est choisi le plus loin possible de ceux déjà
++     * retenus. La population se répartit ainsi dans toute la ville.
++     */
++    private List<VillageLayoutPlan.LotPlan>
++    selectPopulationSpawnerLots(VillageLayoutPlan layout,
++                                int requestedCount) {
++        List<VillageLayoutPlan.LotPlan> candidates =
++                layout.lots().stream()
++                        .filter(this::supportsVillagerSpawner)
++                        .sorted((left, right) -> {
++                            int byX = Integer.compare(
++                                    left.centerX(),
++                                    right.centerX()
++                            );
++                            return byX != 0
++                                    ? byX
++                                    : Integer.compare(
++                                    left.centerZ(),
++                                    right.centerZ()
++                            );
++                        })
++                        .toList();
++        if (candidates.isEmpty() || requestedCount <= 0) {
++            return List.of();
++        }
++
++        int desired = Math.min(requestedCount, candidates.size());
++        List<VillageLayoutPlan.LotPlan> selected =
++                new ArrayList<>(desired);
++        Location plaza = layout.anchors().get("plaza");
++        int plazaX = plaza != null ? plaza.getBlockX() : 0;
++        int plazaZ = plaza != null ? plaza.getBlockZ() : 0;
++
++        VillageLayoutPlan.LotPlan first = candidates.stream()
++                .min((left, right) -> Long.compare(
++                        squaredDistance(
++                                left.centerX(),
++                                left.centerZ(),
++                                plazaX,
++                                plazaZ
++                        ),
++                        squaredDistance(
++                                right.centerX(),
++                                right.centerZ(),
++                                plazaX,
++                                plazaZ
++                        )
++                ))
++                .orElse(candidates.get(0));
++        selected.add(first);
++
++        while (selected.size() < desired) {
++            VillageLayoutPlan.LotPlan best = null;
++            long bestDistance = Long.MIN_VALUE;
++            for (VillageLayoutPlan.LotPlan candidate : candidates) {
++                if (selected.contains(candidate)) {
++                    continue;
++                }
++
++                long nearest = Long.MAX_VALUE;
++                for (VillageLayoutPlan.LotPlan existing : selected) {
++                    nearest = Math.min(
++                            nearest,
++                            squaredDistance(
++                                    candidate.centerX(),
++                                    candidate.centerZ(),
++                                    existing.centerX(),
++                                    existing.centerZ()
++                            )
++                    );
++                }
++
++                if (nearest > bestDistance) {
++                    best = candidate;
++                    bestDistance = nearest;
++                }
++            }
++
++            if (best == null) {
++                break;
++            }
++            selected.add(best);
++        }
++        return List.copyOf(selected);
++    }
++
++    private boolean supportsVillagerSpawner(
++            VillageLayoutPlan.LotPlan lot) {
++        if (lot.isHouse()) {
++            return true;
++        }
++        return switch (lot.role()) {
++            case INN, BAKERY, TOWN_HALL, CARPENTER, STABLE -> true;
++            default -> false;
++        };
++    }
++
++    private static long squaredDistance(int firstX,
++                                        int firstZ,
++                                        int secondX,
++                                        int secondZ) {
++        long dx = (long) firstX - secondX;
++        long dz = (long) firstZ - secondZ;
++        return dx * dx + dz * dz;
++    }
++
+     private List<Runnable> buildGolemSpawners(
+             VillageGenerationSession session,
+             World world,
+@@ -764,7 +907,7 @@ public final class Village implements CommandExecutor {
+                     session,
+                     world,
+                     plaza.getBlockX() + sign * offset,
+-                    baseY - 2,
++                    baseY + 1,
+                     plaza.getBlockZ(),
+                     EntityType.IRON_GOLEM
+             ));
+diff --git a/src/main/java/org/example/village/Disposition.java b/src/main/java/org/example/village/Disposition.java
+index 38814bf993d27331a924adf81fb17d4e2153cf26..a97dc66de700d0a45d617fbd7567508896f09a49 100644
+--- a/src/main/java/org/example/village/Disposition.java
++++ b/src/main/java/org/example/village/Disposition.java
+@@ -104,9 +104,27 @@ public final class Disposition {
+                     queue.addAll(SpecialBuildings.decorateInn(world, lot, lotBaseY, setBlock));
+                 }
+                 case BAKERY -> {
+-                    queue.addAll(HouseBuilder.buildHouse(world, lot, lotBaseY, setBlock, rng));
+-                    queue.addAll(SpecialBuildings.decorateBakery(world, lot, lotBaseY, setBlock));
++                    queue.addAll(HouseBuilder.buildHouse(
++                            world, lot, lotBaseY, setBlock, rng));
++                    queue.addAll(SpecialBuildings.decorateBakery(
++                            world, lot, lotBaseY, setBlock));
++                }
++                case TOWN_HALL -> {
++                    queue.addAll(HouseBuilder.buildHouse(
++                            world, lot, lotBaseY, setBlock, rng));
++                    queue.addAll(SpecialBuildings.decorateTownHall(
++                            world, lot, lotBaseY, setBlock));
++                    queue.addAll(buildFrontLanterns(
++                            world, lot, lotBaseY, setBlock));
+                 }
++                case CARPENTER -> {
++                    queue.addAll(HouseBuilder.buildHouse(
++                            world, lot, lotBaseY, setBlock, rng));
++                    queue.addAll(SpecialBuildings.decorateCarpenter(
++                            world, lot, lotBaseY, setBlock));
++                }
++                case STABLE -> queue.addAll(SpecialBuildings.buildStable(
++                        world, lot, lotBaseY, setBlock));
+                 case HOUSE_SINGLE, HOUSE_TWO_STORY ->
+                         queue.addAll(HouseBuilder.buildHouse(world, lot, lotBaseY, setBlock, rng));
+                 case FARM -> queue.addAll(HouseBuilder.buildFarm(
+@@ -134,6 +152,20 @@ public final class Disposition {
+         queue.addAll(VillageDecorationBuilder.build(
+                 world, layout, settings, baseY, setBlock, rng));
+ 
++        /*
++         * Les passages couverts sont construits après les lots et les décors.
++         * Leur nettoyage final garantit ainsi un gabarit praticable, même si
++         * une décoration secondaire avait été projetée près d'une ruelle.
++         */
++        for (PassagePlan passage : layout.passages()) {
++            queue.addAll(MedievalPassageBuilder.build(
++                    world,
++                    passage,
++                    baseY,
++                    setBlock
++            ));
++        }
++
+         // Le mobilier de rue vient en dernier afin que les terrassements de
+         // lots ne puissent plus écraser ses fondations.
+         queue.addAll(buildStreetLanterns(
+@@ -281,7 +313,10 @@ public final class Disposition {
+ 
+     private static List<Runnable> buildStreet(StreetPlan street, int baseY, TerrainManager.SetBlock sb) {
+         List<Runnable> tasks = new ArrayList<>();
+-        int shoulder = street.type() == StreetType.FOOTPATH ? 0 : 1;
++        int shoulder = switch (street.type()) {
++            case MAIN, SIDE -> 1;
++            case ALLEY, FOOTPATH -> 0;
++        };
+ 
+         if (street.horizontal()) {
+             int start = Math.min(street.startX(), street.endX());
+@@ -331,7 +366,15 @@ public final class Disposition {
+                 case 5, 6 -> Material.GRAVEL;
+                 default -> Material.COBBLESTONE;
+             };
+-            case FOOTPATH -> selector % 2 == 0 ? Material.PACKED_MUD : Material.DIRT_PATH;
++            case ALLEY -> switch (selector) {
++                case 0, 1 -> Material.MOSSY_COBBLESTONE;
++                case 2, 3, 4 -> Material.COBBLESTONE;
++                case 5 -> Material.PACKED_MUD;
++                default -> Material.GRAVEL;
++            };
++            case FOOTPATH -> selector % 2 == 0
++                    ? Material.PACKED_MUD
++                    : Material.DIRT_PATH;
+         };
+     }
+ 
+@@ -356,7 +399,8 @@ public final class Disposition {
+                                                        TerrainManager.SetBlock sb) {
+         List<Runnable> tasks = new ArrayList<>();
+         for (StreetPlan street : layout.streets()) {
+-            if (street.type() == StreetType.FOOTPATH) {
++            if (street.type() == StreetType.FOOTPATH
++                    || street.type() == StreetType.ALLEY) {
+                 continue;
+             }
+ 
+@@ -507,20 +551,38 @@ public final class Disposition {
+         int selector = hash(x, z, lot.row() + lot.col()) % 6;
+         if (inner) {
+             return switch (lot.role()) {
+-                case MARKET, SERVICE_YARD -> selector % 2 == 0 ? Material.GRAVEL : Material.PACKED_MUD;
++                case MARKET, SERVICE_YARD, STABLE ->
++                        selector % 2 == 0
++                                ? Material.GRAVEL
++                                : Material.PACKED_MUD;
+                 case FARM -> Material.FARMLAND;
+-                case PEN -> selector % 2 == 0 ? Material.GRASS_BLOCK : Material.COARSE_DIRT;
+-                case CHURCH -> selector % 2 == 0 ? Material.SMOOTH_STONE : Material.POLISHED_ANDESITE;
+-                case FORGE -> selector % 2 == 0 ? Material.COBBLED_DEEPSLATE : Material.GRAVEL;
+-                case INN, BAKERY -> selector == 0 ? Material.COARSE_DIRT : Material.GRASS_BLOCK;
++                case PEN -> selector % 2 == 0
++                        ? Material.GRASS_BLOCK
++                        : Material.COARSE_DIRT;
++                case CHURCH, TOWN_HALL -> selector % 2 == 0
++                        ? Material.SMOOTH_STONE
++                        : Material.POLISHED_ANDESITE;
++                case FORGE, CARPENTER -> selector % 2 == 0
++                        ? Material.COBBLED_DEEPSLATE
++                        : Material.GRAVEL;
++                case INN, BAKERY -> selector == 0
++                        ? Material.COARSE_DIRT
++                        : Material.GRASS_BLOCK;
+                 default -> selector == 0 ? Material.MOSS_BLOCK : Material.GRASS_BLOCK;
+             };
+         }
+         return switch (lot.role()) {
+             case MARKET -> selector % 2 == 0 ? Material.GRAVEL : Material.PACKED_MUD;
+-            case SERVICE_YARD -> selector % 2 == 0 ? Material.COARSE_DIRT : Material.GRAVEL;
+-            case FARM -> selector % 2 == 0 ? Material.COARSE_DIRT : Material.PACKED_MUD;
+-            case PEN, GREEN, DECOR -> selector % 3 == 0 ? Material.MOSS_BLOCK : Material.GRASS_BLOCK;
++            case SERVICE_YARD, STABLE, CARPENTER ->
++                    selector % 2 == 0
++                            ? Material.COARSE_DIRT
++                            : Material.GRAVEL;
++            case FARM -> selector % 2 == 0
++                    ? Material.COARSE_DIRT
++                    : Material.PACKED_MUD;
++            case PEN, GREEN, DECOR -> selector % 3 == 0
++                    ? Material.MOSS_BLOCK
++                    : Material.GRASS_BLOCK;
+             default -> selector == 0 ? Material.MOSS_BLOCK : selector == 1 ? Material.COARSE_DIRT : Material.GRASS_BLOCK;
+         };
+     }
+@@ -571,8 +633,9 @@ public final class Disposition {
+         }
+ 
+         Material surface = switch (lot.role()) {
+-            case CHURCH, FORGE, INN, BAKERY, MARKET -> Material.POLISHED_ANDESITE;
+-            case FARM, PEN -> Material.PACKED_MUD;
++            case CHURCH, FORGE, INN, BAKERY, MARKET, TOWN_HALL ->
++                    Material.POLISHED_ANDESITE;
++            case CARPENTER, STABLE, FARM, PEN -> Material.PACKED_MUD;
+             default -> Material.DIRT_PATH;
+         };
+         place(tasks, sb, x, y, z, surface);
+diff --git a/src/main/java/org/example/village/MedievalPassageBuilder.java b/src/main/java/org/example/village/MedievalPassageBuilder.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..43fce8e211586528531237e7a362b9dac72b0b2f
+--- /dev/null
++++ b/src/main/java/org/example/village/MedievalPassageBuilder.java
+@@ -0,0 +1,335 @@
++package org.example.village;
++
++import org.bukkit.Axis;
++import org.bukkit.Material;
++import org.bukkit.World;
++import org.bukkit.block.BlockFace;
++import org.bukkit.block.data.type.Stairs;
++
++import java.util.ArrayList;
++import java.util.List;
++
++import static org.example.village.VillageLayoutPlan.PassagePlan;
++import static org.example.village.VillageLayoutPlan.PassageStyle;
++
++/**
++ * Construit les passages couverts qui ponctuent les ruelles médiévales.
++ *
++ * <p>Chaque ouvrage conserve un gabarit libre de trois blocs de haut. Les
++ * fondations et les piles restent hors de l'axe de circulation afin que les
++ * villageois, golems et joueurs puissent réellement emprunter la venelle.</p>
++ */
++public final class MedievalPassageBuilder {
++
++    private MedievalPassageBuilder() {}
++
++    public static List<Runnable> build(World world,
++                                       PassagePlan passage,
++                                       int streetY,
++                                       TerrainManager.SetBlock setBlock) {
++        List<Runnable> tasks = new ArrayList<>();
++        if (passage == null || setBlock == null) {
++            return tasks;
++        }
++
++        PassagePalette palette = palette(passage.style());
++        boolean horizontal = passage.horizontalStreet();
++        int perpendicularX = horizontal ? 0 : 1;
++        int perpendicularZ = horizontal ? 1 : 0;
++        int alongX = horizontal ? 1 : 0;
++        int alongZ = horizontal ? 0 : 1;
++        int offset = passage.postOffset();
++
++        // Deux piles épaisses, ancrées sous le niveau de la rue.
++        for (int sign : new int[]{-1, 1}) {
++            int postX = passage.centerX()
++                    + perpendicularX * offset * sign;
++            int postZ = passage.centerZ()
++                    + perpendicularZ * offset * sign;
++
++            place(
++                    tasks,
++                    setBlock,
++                    postX,
++                    streetY - 1,
++                    postZ,
++                    Material.COBBLESTONE
++            );
++            place(
++                    tasks,
++                    setBlock,
++                    postX,
++                    streetY,
++                    postZ,
++                    palette.plinth()
++            );
++            for (int dy = 1; dy <= 4; dy++) {
++                Material material = dy == 1
++                        ? palette.plinth()
++                        : palette.pillar();
++                place(
++                        tasks,
++                        setBlock,
++                        postX,
++                        streetY + dy,
++                        postZ,
++                        material
++                );
++            }
++
++            // Contrefort court du côté extérieur de la ruelle.
++            int braceX = postX + perpendicularX * sign;
++            int braceZ = postZ + perpendicularZ * sign;
++            place(
++                    tasks,
++                    setBlock,
++                    braceX,
++                    streetY,
++                    braceZ,
++                    palette.plinth()
++            );
++            place(
++                    tasks,
++                    setBlock,
++                    braceX,
++                    streetY + 1,
++                    braceZ,
++                    palette.wall()
++            );
++        }
++
++        /*
++         * Traverse porteuse. L'orientation des bûches est appliquée dans une
++         * tâche distincte après la pose du matériau.
++         */
++        Axis beamAxis = horizontal ? Axis.Z : Axis.X;
++        for (int across = -offset; across <= offset; across++) {
++            int x = passage.centerX() + perpendicularX * across;
++            int z = passage.centerZ() + perpendicularZ * across;
++            place(
++                    tasks,
++                    setBlock,
++                    x,
++                    streetY + 4,
++                    z,
++                    palette.beam()
++            );
++            tasks.add(() -> VillageStyle.setLogAxis(
++                    world,
++                    x,
++                    streetY + 4,
++                    z,
++                    palette.beam(),
++                    beamAxis
++            ));
++        }
++
++        /*
++         * Petit étage-pont fermé sur les côtés. Il donne l'impression qu'une
++         * pièce relie deux maisons sans ajouter de collision au rez-de-chaussée.
++         */
++        for (int along = -1; along <= 1; along++) {
++            for (int across = -offset; across <= offset; across++) {
++                int x = passage.centerX()
++                        + alongX * along
++                        + perpendicularX * across;
++                int z = passage.centerZ()
++                        + alongZ * along
++                        + perpendicularZ * across;
++                Material floor = Math.abs(across) == offset
++                        ? palette.beam()
++                        : palette.floor();
++                place(
++                        tasks,
++                        setBlock,
++                        x,
++                        streetY + 5,
++                        z,
++                        floor
++                );
++            }
++        }
++
++        // Pignons latéraux et meurtrières vitrées.
++        for (int sign : new int[]{-1, 1}) {
++            int wallX = passage.centerX()
++                    + perpendicularX * offset * sign;
++            int wallZ = passage.centerZ()
++                    + perpendicularZ * offset * sign;
++            for (int along = -1; along <= 1; along++) {
++                int x = wallX + alongX * along;
++                int z = wallZ + alongZ * along;
++                place(
++                        tasks,
++                        setBlock,
++                        x,
++                        streetY + 6,
++                        z,
++                        along == 0
++                                ? Material.YELLOW_STAINED_GLASS
++                                : palette.wall()
++                );
++            }
++        }
++
++        /*
++         * Toiture à deux versants. Les marches regardent vers l'extérieur ;
++         * une ligne de dalles ferme le faîtage et empêche tout trou visible.
++         */
++        BlockFace firstSlope = horizontal
++                ? BlockFace.NORTH
++                : BlockFace.WEST;
++        BlockFace secondSlope = VillageStyle.opposite(firstSlope);
++        for (int along = -2; along <= 2; along++) {
++            int firstX = passage.centerX()
++                    + alongX * along
++                    - perpendicularX * (offset + 1);
++            int firstZ = passage.centerZ()
++                    + alongZ * along
++                    - perpendicularZ * (offset + 1);
++            int secondX = passage.centerX()
++                    + alongX * along
++                    + perpendicularX * (offset + 1);
++            int secondZ = passage.centerZ()
++                    + alongZ * along
++                    + perpendicularZ * (offset + 1);
++
++            place(
++                    tasks,
++                    setBlock,
++                    firstX,
++                    streetY + 6,
++                    firstZ,
++                    palette.roofStairs()
++            );
++            place(
++                    tasks,
++                    setBlock,
++                    secondX,
++                    streetY + 6,
++                    secondZ,
++                    palette.roofStairs()
++            );
++            tasks.add(() -> VillageStyle.setStair(
++                    world,
++                    firstX,
++                    streetY + 6,
++                    firstZ,
++                    palette.roofStairs(),
++                    firstSlope,
++                    Stairs.Half.BOTTOM,
++                    Stairs.Shape.STRAIGHT
++            ));
++            tasks.add(() -> VillageStyle.setStair(
++                    world,
++                    secondX,
++                    streetY + 6,
++                    secondZ,
++                    palette.roofStairs(),
++                    secondSlope,
++                    Stairs.Half.BOTTOM,
++                    Stairs.Shape.STRAIGHT
++            ));
++
++            int ridgeX = passage.centerX() + alongX * along;
++            int ridgeZ = passage.centerZ() + alongZ * along;
++            place(
++                    tasks,
++                    setBlock,
++                    ridgeX,
++                    streetY + 7,
++                    ridgeZ,
++                    palette.roofSlab()
++            );
++        }
++
++        // Éclairage déporté : le centre conserve trois blocs de hauteur libre.
++        int lanternX = passage.centerX()
++                + alongX
++                + perpendicularX * Math.max(1, offset - 1);
++        int lanternZ = passage.centerZ()
++                + alongZ
++                + perpendicularZ * Math.max(1, offset - 1);
++        place(
++                tasks,
++                setBlock,
++                lanternX,
++                streetY + 3,
++                lanternZ,
++                Material.CHAIN
++        );
++        place(
++                tasks,
++                setBlock,
++                lanternX,
++                streetY + 2,
++                lanternZ,
++                Material.LANTERN
++        );
++
++        /*
++         * Nettoyage final du gabarit central. Il est volontairement programmé
++         * après les détails pour qu'aucune chaîne ou décoration ne bouche la
++         * voie principale.
++         */
++        for (int along = -1; along <= 1; along++) {
++            for (int dy = 1; dy <= 3; dy++) {
++                int x = passage.centerX() + alongX * along;
++                int z = passage.centerZ() + alongZ * along;
++                place(
++                        tasks,
++                        setBlock,
++                        x,
++                        streetY + dy,
++                        z,
++                        Material.AIR
++                );
++            }
++        }
++
++        return tasks;
++    }
++
++    private static PassagePalette palette(PassageStyle style) {
++        if (style == PassageStyle.STONE) {
++            return new PassagePalette(
++                    Material.STONE_BRICKS,
++                    Material.MOSSY_STONE_BRICKS,
++                    Material.STRIPPED_DARK_OAK_LOG,
++                    Material.DARK_OAK_PLANKS,
++                    Material.DEEPSLATE_BRICK_STAIRS,
++                    Material.DEEPSLATE_BRICK_SLAB
++            );
++        }
++        return new PassagePalette(
++                Material.COBBLESTONE,
++                Material.WHITE_TERRACOTTA,
++                Material.STRIPPED_SPRUCE_LOG,
++                Material.SPRUCE_PLANKS,
++                Material.DARK_OAK_STAIRS,
++                Material.DARK_OAK_SLAB
++        );
++    }
++
++    private static void place(List<Runnable> tasks,
++                              TerrainManager.SetBlock setBlock,
++                              int x,
++                              int y,
++                              int z,
++                              Material material) {
++        tasks.add(() -> setBlock.set(x, y, z, material));
++    }
++
++    private record PassagePalette(
++            Material plinth,
++            Material wall,
++            Material pillar,
++            Material floor,
++            Material roofStairs,
++            Material roofSlab
++    ) {
++        Material beam() {
++            return pillar;
++        }
++    }
++}
+diff --git a/src/main/java/org/example/village/SpecialBuildings.java b/src/main/java/org/example/village/SpecialBuildings.java
+index c24fec2b83ce866a2693819a2d6196770f0357a6..f18eef6593029ada1ee602129b7e771a9ed4dfde 100644
+--- a/src/main/java/org/example/village/SpecialBuildings.java
++++ b/src/main/java/org/example/village/SpecialBuildings.java
+@@ -428,6 +428,400 @@ public final class SpecialBuildings {
+         return tasks;
+     }
+ 
++
++    /**
++     * Renforce la silhouette de la mairie : façade civique, balcon, cloche,
++     * panneau d'affichage et petite salle du conseil. La structure principale
++     * reste construite par {@link HouseBuilder}, ce qui conserve la même
++     * grammaire architecturale que les maisons voisines.
++     */
++    public static List<Runnable> decorateTownHall(World world,
++                                                  LotPlan lot,
++                                                  int baseY,
++                                                  TerrainManager.SetBlock sb) {
++        List<Runnable> tasks = new ArrayList<>();
++        BlockFace front = lot.facing();
++        int frontRadius = frontRadius(lot);
++        int sideRadius = sideRadius(lot);
++
++        // Perron municipal et tapis d'entrée.
++        for (int forward = frontRadius + 1; forward <= frontRadius + 3; forward++) {
++            for (int lateral = -2; lateral <= 2; lateral++) {
++                LocalPoint point = localPoint(lot, lateral, forward);
++                Material paving = Math.floorMod(lateral + forward, 3) == 0
++                        ? Material.POLISHED_ANDESITE
++                        : Material.STONE_BRICKS;
++                place(tasks, sb, point.x(), baseY, point.z(), paving);
++            }
++        }
++        for (int lateral = -1; lateral <= 1; lateral++) {
++            LocalPoint step = localPoint(lot, lateral, frontRadius + 1);
++            stair(tasks, world, sb, step.x(), baseY + 1, step.z(),
++                    Material.STONE_BRICK_STAIRS, front);
++        }
++
++        // Balcon central : les deux poutres latérales le relient visuellement
++        // à la façade et évitent l'effet de dalle flottante.
++        for (int lateral = -3; lateral <= 3; lateral++) {
++            LocalPoint balcony = localPoint(lot, lateral, frontRadius + 1);
++            slab(tasks, world, sb, balcony.x(), baseY + 5, balcony.z(),
++                    Material.DARK_OAK_SLAB, Slab.Type.TOP);
++            if (Math.abs(lateral) == 3) {
++                for (int y = baseY + 1; y <= baseY + 4; y++) {
++                    place(tasks, sb, balcony.x(), y, balcony.z(),
++                            Material.STRIPPED_DARK_OAK_LOG);
++                }
++            }
++            if (lateral != 0) {
++                place(tasks, sb, balcony.x(), baseY + 6, balcony.z(),
++                        Material.DARK_OAK_FENCE);
++            }
++        }
++
++        LocalPoint bell = localPoint(lot, 0, frontRadius + 1);
++        place(tasks, sb, bell.x(), baseY + 7, bell.z(), Material.CHAIN);
++        place(tasks, sb, bell.x(), baseY + 6, bell.z(), Material.BELL);
++        tasks.add(() -> VillageStyle.setDirectional(
++                world, bell.x(), baseY + 6, bell.z(),
++                Material.BELL, front));
++
++        // Bannières municipales symétriques.
++        for (int lateral : new int[]{-4, 4}) {
++            LocalPoint banner = localPoint(lot, lateral, frontRadius + 1);
++            place(tasks, sb, banner.x(), baseY + 4, banner.z(),
++                    Material.BLUE_WALL_BANNER);
++            tasks.add(() -> VillageStyle.setDirectional(
++                    world, banner.x(), baseY + 4, banner.z(),
++                    Material.BLUE_WALL_BANNER, front));
++        }
++
++        // Panneau d'affichage public protégé par un petit auvent.
++        int boardSide = lot.wingSide() == VillageStyle.rightOf(front) ? -1 : 1;
++        int boardLateral = boardSide * (sideRadius + 2);
++        for (int forward = -1; forward <= 1; forward++) {
++            LocalPoint board = localPoint(lot, boardLateral, forward);
++            place(tasks, sb, board.x(), baseY + 1, board.z(),
++                    Material.STRIPPED_SPRUCE_LOG);
++            place(tasks, sb, board.x(), baseY + 2, board.z(),
++                    Material.OAK_WALL_SIGN);
++            tasks.add(() -> VillageStyle.setDirectional(
++                    world, board.x(), baseY + 2, board.z(),
++                    Material.OAK_WALL_SIGN,
++                    boardSide < 0
++                            ? VillageStyle.leftOf(front)
++                            : VillageStyle.rightOf(front)));
++            slab(tasks, world, sb, board.x(), baseY + 3, board.z(),
++                    Material.SPRUCE_SLAB, Slab.Type.TOP);
++        }
++        LocalPoint noticeLantern = localPoint(lot, boardLateral, 0);
++        place(tasks, sb, noticeLantern.x(), baseY + 4,
++                noticeLantern.z(), Material.LANTERN);
++
++        // Mobilier intérieur de la salle du conseil.
++        LocalPoint lectern = localPoint(lot, 0, -frontRadius + 2);
++        place(tasks, sb, lectern.x(), baseY + 1, lectern.z(),
++                Material.LECTERN);
++        tasks.add(() -> VillageStyle.setDirectional(
++                world, lectern.x(), baseY + 1, lectern.z(),
++                Material.LECTERN, front));
++
++        for (int lateral = -3; lateral <= 3; lateral++) {
++            LocalPoint table = localPoint(lot, lateral, 0);
++            place(tasks, sb, table.x(), baseY + 1, table.z(),
++                    lateral == 0 ? Material.CARTOGRAPHY_TABLE : Material.SPRUCE_SLAB);
++        }
++        for (int lateral : new int[]{-3, 3}) {
++            for (int forward : new int[]{-2, 2}) {
++                LocalPoint chair = localPoint(lot, lateral, forward);
++                stair(tasks, world, sb, chair.x(), baseY + 1, chair.z(),
++                        Material.SPRUCE_STAIRS,
++                        forward < 0 ? front : front.getOppositeFace());
++            }
++        }
++
++        return tasks;
++    }
++
++    /**
++     * Ajoute au logis du charpentier une cour de travail lisible : appentis,
++     * établi, chevalets et réserves de bois. Les éléments restent dans le
++     * jardin du lot afin de ne jamais empiéter sur la ruelle.
++     */
++    public static List<Runnable> decorateCarpenter(World world,
++                                                   LotPlan lot,
++                                                   int baseY,
++                                                   TerrainManager.SetBlock sb) {
++        List<Runnable> tasks = new ArrayList<>();
++        BlockFace front = lot.facing();
++        int frontRadius = frontRadius(lot);
++        int sideRadius = sideRadius(lot);
++        int yardSide = lot.wingSide() == VillageStyle.rightOf(front) ? -1 : 1;
++        int yardLateral = yardSide * (sideRadius + 2);
++
++        // Cour tassée.
++        for (int lateral = yardLateral - 2;
++             lateral <= yardLateral + 2;
++             lateral++) {
++            for (int forward = -3; forward <= 3; forward++) {
++                LocalPoint point = localPoint(lot, lateral, forward);
++                Material ground = Math.floorMod(lateral * 7 + forward, 4) == 0
++                        ? Material.GRAVEL
++                        : Material.PACKED_MUD;
++                place(tasks, sb, point.x(), baseY, point.z(), ground);
++            }
++        }
++
++        // Appentis autonome orienté dans le repère local du bâtiment.
++        BlockFace sideFace = yardSide < 0
++                ? VillageStyle.leftOf(front)
++                : VillageStyle.rightOf(front);
++        for (int forward : new int[]{-3, 3}) {
++            LocalPoint post = localPoint(lot, yardLateral + yardSide, forward);
++            for (int y = baseY + 1; y <= baseY + 4; y++) {
++                place(tasks, sb, post.x(), y, post.z(),
++                        Material.STRIPPED_SPRUCE_LOG);
++            }
++        }
++        for (int lateral = yardLateral - 2;
++             lateral <= yardLateral + 2;
++             lateral++) {
++            for (int forward = -4; forward <= 4; forward++) {
++                LocalPoint roof = localPoint(lot, lateral, forward);
++                int rise = lateral == yardLateral - yardSide * 2 ? 1 : 0;
++                place(tasks, sb, roof.x(), baseY + 5 + rise, roof.z(),
++                        Material.SPRUCE_PLANKS);
++                if (lateral == yardLateral + yardSide * 2) {
++                    stair(tasks, world, sb, roof.x(), baseY + 5, roof.z(),
++                            Material.SPRUCE_STAIRS, sideFace.getOppositeFace());
++                }
++            }
++        }
++
++        // Poste de débit et établis.
++        LocalPoint saw = localPoint(lot, yardLateral, 0);
++        place(tasks, sb, saw.x(), baseY + 1, saw.z(),
++                Material.STONECUTTER);
++        tasks.add(() -> VillageStyle.setDirectional(
++                world, saw.x(), baseY + 1, saw.z(),
++                Material.STONECUTTER, front));
++        LocalPoint workbench = localPoint(lot, yardLateral, -2);
++        place(tasks, sb, workbench.x(), baseY + 1, workbench.z(),
++                Material.CRAFTING_TABLE);
++        LocalPoint barrel = localPoint(lot, yardLateral, 2);
++        place(tasks, sb, barrel.x(), baseY + 1, barrel.z(),
++                Material.BARREL);
++
++        // Deux chevalets matérialisent des pièces en cours d'assemblage.
++        for (int forward : new int[]{-1, 1}) {
++            for (int lateral = yardLateral - 1;
++                 lateral <= yardLateral + 1;
++                 lateral++) {
++                LocalPoint beam = localPoint(lot, lateral, forward);
++                place(tasks, sb, beam.x(), baseY + 2, beam.z(),
++                        Material.OAK_SLAB);
++            }
++            LocalPoint leftSupport = localPoint(lot, yardLateral - 1, forward);
++            LocalPoint rightSupport = localPoint(lot, yardLateral + 1, forward);
++            place(tasks, sb, leftSupport.x(), baseY + 1,
++                    leftSupport.z(), Material.OAK_FENCE);
++            place(tasks, sb, rightSupport.x(), baseY + 1,
++                    rightSupport.z(), Material.OAK_FENCE);
++        }
++
++        // Tas de grumes orientées selon la façade.
++        for (int forward = -3; forward <= 3; forward += 2) {
++            LocalPoint log = localPoint(lot, yardLateral + yardSide, forward);
++            place(tasks, sb, log.x(), baseY + 1, log.z(),
++                    Material.STRIPPED_OAK_LOG);
++            tasks.add(() -> VillageStyle.setLogAxis(
++                    world, log.x(), baseY + 1, log.z(),
++                    Material.STRIPPED_OAK_LOG,
++                    front == BlockFace.NORTH || front == BlockFace.SOUTH
++                            ? org.bukkit.Axis.Z
++                            : org.bukkit.Axis.X));
++        }
++
++        LocalPoint sign = localPoint(lot, -2, frontRadius + 1);
++        place(tasks, sb, sign.x(), baseY + 3, sign.z(),
++                Material.SPRUCE_WALL_SIGN);
++        tasks.add(() -> VillageStyle.setDirectional(
++                world, sign.x(), baseY + 3, sign.z(),
++                Material.SPRUCE_WALL_SIGN, front));
++
++        return tasks;
++    }
++
++    /**
++     * Construit une écurie traversante en pierre et colombage. L'intérieur
++     * conserve un couloir central de trois blocs, quatre stalles, du fourrage
++     * et un point d'eau ; l'entrée est volontairement large pour les chevaux.
++     */
++    public static List<Runnable> buildStable(World world,
++                                             LotPlan lot,
++                                             int baseY,
++                                             TerrainManager.SetBlock sb) {
++        List<Runnable> tasks = new ArrayList<>();
++        BlockFace front = lot.facing();
++        int frontRadius = frontRadius(lot);
++        int sideRadius = sideRadius(lot);
++        int minX = lot.buildX();
++        int minZ = lot.buildZ();
++        int maxX = minX + lot.footprintWidth() - 1;
++        int maxZ = minZ + lot.footprintDepth() - 1;
++
++        // Fondations et sol drainant.
++        for (int lateral = -sideRadius; lateral <= sideRadius; lateral++) {
++            for (int forward = -frontRadius; forward <= frontRadius; forward++) {
++                LocalPoint point = localPoint(lot, lateral, forward);
++                place(tasks, sb, point.x(), baseY - 1, point.z(),
++                        Material.COBBLESTONE);
++                boolean aisle = Math.abs(lateral) <= 1;
++                Material floor = aisle
++                        ? (Math.floorMod(forward, 3) == 0
++                                ? Material.PACKED_MUD
++                                : Material.GRAVEL)
++                        : Material.SPRUCE_PLANKS;
++                place(tasks, sb, point.x(), baseY, point.z(), floor);
++            }
++        }
++
++        // Soubassement et ossature. L'entrée frontale reste ouverte sur trois
++        // blocs de large et quatre de haut.
++        for (int y = baseY + 1; y <= baseY + 4; y++) {
++            for (int lateral = -sideRadius; lateral <= sideRadius; lateral++) {
++                for (int forward : new int[]{-frontRadius, frontRadius}) {
++                    boolean entrance = forward == frontRadius
++                            && Math.abs(lateral) <= 1;
++                    if (entrance) {
++                        continue;
++                    }
++                    LocalPoint point = localPoint(lot, lateral, forward);
++                    boolean post = Math.abs(lateral) == sideRadius
++                            || Math.floorMod(lateral + sideRadius, 4) == 0;
++                    Material wall = post
++                            ? Material.STRIPPED_DARK_OAK_LOG
++                            : (y == baseY + 1
++                                    ? Material.COBBLESTONE
++                                    : Material.WHITE_TERRACOTTA);
++                    place(tasks, sb, point.x(), y, point.z(), wall);
++                }
++            }
++            for (int forward = -frontRadius + 1;
++                 forward < frontRadius;
++                 forward++) {
++                for (int lateral : new int[]{-sideRadius, sideRadius}) {
++                    LocalPoint point = localPoint(lot, lateral, forward);
++                    boolean post = Math.floorMod(
++                            forward + frontRadius,
++                            4
++                    ) == 0;
++                    Material wall = post
++                            ? Material.STRIPPED_DARK_OAK_LOG
++                            : (y == baseY + 1
++                                    ? Material.COBBLESTONE
++                                    : Material.SPRUCE_PLANKS);
++                    place(tasks, sb, point.x(), y, point.z(), wall);
++                }
++            }
++        }
++
++        // Linteau massif au-dessus du portail.
++        for (int lateral = -2; lateral <= 2; lateral++) {
++            LocalPoint lintel = localPoint(lot, lateral, frontRadius);
++            place(tasks, sb, lintel.x(), baseY + 5, lintel.z(),
++                    Material.STRIPPED_DARK_OAK_LOG);
++        }
++
++        // Quatre stalles latérales et leur porte basse.
++        int stallDepth = Math.max(3, frontRadius - 2);
++        for (int side : new int[]{-1, 1}) {
++            int dividerLateral = side * 2;
++            for (int forward = -stallDepth; forward <= stallDepth; forward++) {
++                LocalPoint divider = localPoint(lot, dividerLateral, forward);
++                place(tasks, sb, divider.x(), baseY + 1, divider.z(),
++                        Material.DARK_OAK_FENCE);
++            }
++            for (int forward : new int[]{-2, 3}) {
++                for (int lateral = 2;
++                     lateral < sideRadius;
++                     lateral++) {
++                    LocalPoint divider = localPoint(
++                            lot,
++                            side * lateral,
++                            forward
++                    );
++                    place(tasks, sb, divider.x(), baseY + 1, divider.z(),
++                            Material.DARK_OAK_FENCE);
++                }
++            }
++
++            for (int forward : new int[]{-4, 1}) {
++                LocalPoint gate = localPoint(lot, dividerLateral, forward);
++                place(tasks, sb, gate.x(), baseY + 1, gate.z(),
++                        Material.DARK_OAK_FENCE_GATE);
++                tasks.add(() -> VillageStyle.setDirectional(
++                        world, gate.x(), baseY + 1, gate.z(),
++                        Material.DARK_OAK_FENCE_GATE, front));
++            }
++        }
++
++        // Fourrage, sellerie et eau.
++        for (int side : new int[]{-1, 1}) {
++            LocalPoint hay = localPoint(
++                    lot,
++                    side * (sideRadius - 1),
++                    -frontRadius + 2
++            );
++            place(tasks, sb, hay.x(), baseY + 1, hay.z(),
++                    Material.HAY_BLOCK);
++            place(tasks, sb, hay.x(), baseY + 2, hay.z(),
++                    Material.HAY_BLOCK);
++        }
++        LocalPoint water = localPoint(lot, sideRadius - 1, frontRadius - 2);
++        place(tasks, sb, water.x(), baseY + 1, water.z(),
++                Material.WATER_CAULDRON);
++        LocalPoint tack = localPoint(lot, -sideRadius + 1, frontRadius - 2);
++        place(tasks, sb, tack.x(), baseY + 1, tack.z(),
++                Material.BARREL);
++        place(tasks, sb, tack.x(), baseY + 2, tack.z(),
++                Material.TRIPWIRE_HOOK);
++        tasks.add(() -> VillageStyle.setDirectional(
++                world, tack.x(), baseY + 2, tack.z(),
++                Material.TRIPWIRE_HOOK,
++                VillageStyle.rightOf(front)));
++
++        VillageRoofBuilder.buildGable(
++                tasks,
++                world,
++                sb,
++                minX,
++                maxX,
++                minZ,
++                maxZ,
++                baseY + 6,
++                front,
++                Material.DARK_OAK_PLANKS,
++                Material.DARK_OAK_STAIRS,
++                Material.DARK_OAK_SLAB,
++                Material.SPRUCE_PLANKS,
++                Material.STRIPPED_DARK_OAK_LOG,
++                Material.DARK_OAK_FENCE
++        );
++
++        // Enseigne et lanterne à l'extérieur du portail.
++        LocalPoint sign = localPoint(lot, -3, frontRadius + 1);
++        place(tasks, sb, sign.x(), baseY + 3, sign.z(),
++                Material.DARK_OAK_WALL_SIGN);
++        tasks.add(() -> VillageStyle.setDirectional(
++                world, sign.x(), baseY + 3, sign.z(),
++                Material.DARK_OAK_WALL_SIGN, front));
++        LocalPoint lantern = localPoint(lot, 3, frontRadius + 1);
++        place(tasks, sb, lantern.x(), baseY + 3, lantern.z(),
++                Material.LANTERN);
++
++        return tasks;
++    }
++
+     public static List<Runnable> buildGreenLot(LotPlan lot, int baseY, TerrainManager.SetBlock sb, LandmarkType type) {
+         List<Runnable> tasks = new ArrayList<>();
+         for (int x = lot.minX(); x <= lot.maxX(); x++) {
+diff --git a/src/main/java/org/example/village/VillageDecorationBuilder.java b/src/main/java/org/example/village/VillageDecorationBuilder.java
+index 664cd8a84867bb10022ce0a1cae7a164b4892cc7..010a0f4a669f4903eb5f382cc3ca48de646bcf7b 100644
+--- a/src/main/java/org/example/village/VillageDecorationBuilder.java
++++ b/src/main/java/org/example/village/VillageDecorationBuilder.java
+@@ -20,6 +20,7 @@ import java.util.Set;
+ import static org.example.village.VillageLayoutPlan.Bounds;
+ import static org.example.village.VillageLayoutPlan.LotPlan;
+ import static org.example.village.VillageLayoutPlan.LotRole;
++import static org.example.village.VillageLayoutPlan.PassagePlan;
+ import static org.example.village.VillageLayoutPlan.StreetPlan;
+ 
+ /**
+@@ -218,6 +219,20 @@ public final class VillageDecorationBuilder {
+             }
+         }
+ 
++        /*
++         * Les passages débordent légèrement de la chaussée par leurs
++         * contreforts et leur toiture. Cette réserve explicite empêche un arbre,
++         * une charrette ou un autre décor de traverser l'ouvrage.
++         */
++        for (PassagePlan passage : layout.passages()) {
++            occupancy.reserve(
++                    passage.structureMinX() - 1,
++                    passage.structureMaxX() + 1,
++                    passage.structureMinZ() - 1,
++                    passage.structureMaxZ() + 1
++            );
++        }
++
+         for (LotPlan lot : layout.lots()) {
+             occupancy.reserve(
+                     lot.siteMinX() - 1,
+diff --git a/src/main/java/org/example/village/VillageEntityManager.java b/src/main/java/org/example/village/VillageEntityManager.java
+index 297bd40cd77ba8fd67c6da0aed719f021f43034f..64189c7d0c513c698685eed1049098748db727f9 100644
+--- a/src/main/java/org/example/village/VillageEntityManager.java
++++ b/src/main/java/org/example/village/VillageEntityManager.java
+@@ -3,27 +3,39 @@ package org.example.village;
+ import org.bukkit.Bukkit;
+ import org.bukkit.Location;
+ import org.bukkit.Material;
++import org.bukkit.NamespacedKey;
+ import org.bukkit.World;
++import org.bukkit.block.Block;
++import org.bukkit.block.CreatureSpawner;
+ import org.bukkit.entity.Entity;
+ import org.bukkit.entity.EntityType;
+ import org.bukkit.entity.IronGolem;
+-import org.bukkit.entity.LivingEntity;
+-import org.bukkit.entity.Player;
+ import org.bukkit.entity.Villager;
++import org.bukkit.event.EventHandler;
++import org.bukkit.event.Listener;
++import org.bukkit.event.entity.SpawnerSpawnEvent;
+ import org.bukkit.inventory.ItemStack;
+ import org.bukkit.inventory.MerchantRecipe;
+ import org.bukkit.metadata.FixedMetadataValue;
++import org.bukkit.metadata.MetadataValue;
++import org.bukkit.persistence.PersistentDataContainer;
++import org.bukkit.persistence.PersistentDataType;
+ import org.bukkit.plugin.Plugin;
+ import org.bukkit.scheduler.BukkitRunnable;
++import org.bukkit.scheduler.BukkitTask;
+ 
+ import java.util.ArrayList;
++import java.util.Collections;
+ import java.util.Comparator;
+ import java.util.HashMap;
+ import java.util.Iterator;
++import java.util.LinkedHashMap;
+ import java.util.List;
+ import java.util.Map;
+ import java.util.Random;
++import java.util.Set;
+ import java.util.UUID;
++import java.util.WeakHashMap;
+ 
+ /**
+  * Gestion des PNJ / golems d'un village: spawn initial, nettoyage, quota global.
+@@ -31,16 +43,261 @@ import java.util.UUID;
+ public final class VillageEntityManager {
+ 
+     public static final String TAG = "MINEGUS_VILLAGE_ID";
+-    private static final int DEFAULT_CAP = 40;
++    private static final int DEFAULT_CAP = 56;
+     private static final int INFINITE_TRADES = 999999;
+     private static final int MERCHANT_GUARD_RADIUS = 40;
+-
+-    private static final Map<Integer, Location> VILLAGE_CENTERS = new HashMap<>();
+-    private static final Map<Integer, Map<String, Location>> VILLAGE_ANCHORS = new HashMap<>();
++    private static final byte SPAWNER_KIND_VILLAGER = 1;
++    private static final byte SPAWNER_KIND_GOLEM = 2;
++    private static final int GOLEM_CAP = 4;
++
++    private static final Map<Integer, Location> VILLAGE_CENTERS =
++            new HashMap<>();
++    private static final Map<Integer, Map<String, Location>> VILLAGE_ANCHORS =
++            new HashMap<>();
+     private static final Map<UUID, MerchantInfo> MERCHANTS = new HashMap<>();
++    private static final Map<Integer, BukkitTask> CAP_TASKS = new HashMap<>();
++    private static final Map<Integer, BukkitTask> EXPIRY_TASKS =
++            new HashMap<>();
++
++    /*
++     * Une instance de plugin ne doit enregistrer le listener qu'une seule fois.
++     * Le WeakHashMap évite de retenir une ancienne instance après un /reload.
++     */
++    private static final Set<Plugin> LISTENER_PLUGINS =
++            Collections.newSetFromMap(new WeakHashMap<>());
++
++    /*
++     * Les clés PDC sont immuables et réutilisées pour toutes les opérations.
++     * Le cache faible ne retient pas une ancienne instance du plugin après un
++     * rechargement du serveur.
++     */
++    private static final Map<Plugin, PopulationKeys> PERSISTENT_KEYS =
++            new WeakHashMap<>();
+ 
+     private VillageEntityManager() {}
+ 
++    /**
++     * Enregistre la garde des spawners du village. Cette méthode est idempotente
++     * et peut donc être appelée à la fois au démarrage du plugin et lors de la
++     * configuration d'un spawner.
++     */
++    public static void initializePopulationListener(Plugin plugin) {
++        if (plugin == null) {
++            return;
++        }
++
++        synchronized (LISTENER_PLUGINS) {
++            if (!LISTENER_PLUGINS.add(plugin)) {
++                return;
++            }
++            plugin.getServer().getPluginManager().registerEvents(
++                    new VillageSpawnerListener(plugin),
++                    plugin
++            );
++        }
++    }
++
++    /**
++     * Configure et marque un spawner appartenant à une ville MineGus.
++     *
++     * <p>Le marqueur persistant permet au listener de retrouver le village
++     * après un redémarrage. Les délais sont volontairement longs et la
++     * génération est limitée à une entité par cycle.</p>
++     */
++    public static void configureVillageSpawner(
++            Plugin plugin,
++            CreatureSpawner spawner,
++            EntityType entityType,
++            int villageId,
++            VillagePopulationSettings settings) {
++        if (plugin == null
++                || spawner == null
++                || settings == null
++                || (entityType != EntityType.VILLAGER
++                && entityType != EntityType.IRON_GOLEM)) {
++            return;
++        }
++
++        initializePopulationListener(plugin);
++
++        byte kind = entityType == EntityType.VILLAGER
++                ? SPAWNER_KIND_VILLAGER
++                : SPAWNER_KIND_GOLEM;
++        int cap = kind == SPAWNER_KIND_VILLAGER
++                ? settings.populationCap()
++                : GOLEM_CAP;
++
++        PersistentDataContainer data = spawner.getPersistentDataContainer();
++        data.set(spawnerKindKey(plugin), PersistentDataType.BYTE, kind);
++        data.set(villageIdKey(plugin), PersistentDataType.INTEGER, villageId);
++        data.set(spawnerCapKey(plugin), PersistentDataType.INTEGER, cap);
++
++        int delayMultiplier = kind == SPAWNER_KIND_VILLAGER ? 1 : 4;
++        int minimumDelay = Math.min(
++                72_000,
++                settings.minDelayTicks() * delayMultiplier
++        );
++        int maximumDelay = Math.min(
++                72_000,
++                settings.maxDelayTicks() * delayMultiplier
++        );
++        maximumDelay = Math.max(minimumDelay, maximumDelay);
++
++        /*
++         * On ouvre d'abord la borne maximale : l'API refuse de descendre le
++         * maximum sous le minimum actuellement enregistré dans le bloc. Le
++         * couple final est ensuite appliqué dans un ordre toujours valide.
++         */
++        spawner.setMaxSpawnDelay(72_000);
++        spawner.setMinSpawnDelay(minimumDelay);
++        spawner.setMaxSpawnDelay(maximumDelay);
++        spawner.setDelay(minimumDelay);
++        spawner.setSpawnCount(1);
++        spawner.setMaxNearbyEntities(
++                kind == SPAWNER_KIND_VILLAGER
++                        ? settings.maxNearbyEntities()
++                        : GOLEM_CAP
++        );
++        spawner.setRequiredPlayerRange(settings.requiredPlayerRange());
++        spawner.setSpawnRange(
++                kind == SPAWNER_KIND_VILLAGER
++                        ? settings.spawnRange()
++                        : Math.min(2, settings.spawnRange())
++        );
++        spawner.setSpawnedType(entityType);
++        spawner.update(true, false);
++    }
++
++    private static final class VillageSpawnerListener implements Listener {
++        private final Plugin plugin;
++
++        private VillageSpawnerListener(Plugin plugin) {
++            this.plugin = plugin;
++        }
++
++        @EventHandler(ignoreCancelled = true)
++        public void onSpawnerSpawn(SpawnerSpawnEvent event) {
++            CreatureSpawner spawner = event.getSpawner();
++            if (spawner == null) {
++                return;
++            }
++            PersistentDataContainer data =
++                    spawner.getPersistentDataContainer();
++
++            Byte kind = data.get(
++                    spawnerKindKey(plugin),
++                    PersistentDataType.BYTE
++            );
++            Integer villageId = data.get(
++                    villageIdKey(plugin),
++                    PersistentDataType.INTEGER
++            );
++            Integer configuredCap = data.get(
++                    spawnerCapKey(plugin),
++                    PersistentDataType.INTEGER
++            );
++            if (kind == null || villageId == null) {
++                return;
++            }
++
++            Entity entity = event.getEntity();
++            boolean villagerSpawn = kind == SPAWNER_KIND_VILLAGER
++                    && entity instanceof Villager;
++            boolean golemSpawn = kind == SPAWNER_KIND_GOLEM
++                    && entity instanceof IronGolem;
++            if (!villagerSpawn && !golemSpawn) {
++                /*
++                 * Un joueur a pu modifier le type du spawner sans retirer ses
++                 * données persistantes. On bloque alors cette génération plutôt
++                 * que de laisser contourner le quota.
++                 */
++                event.setCancelled(true);
++                return;
++            }
++
++            int cap = configuredCap != null
++                    ? Math.max(1, Math.min(120, configuredCap))
++                    : (villagerSpawn ? DEFAULT_CAP : GOLEM_CAP);
++            int current = countVillageEntities(
++                    plugin,
++                    entity.getWorld(),
++                    villageId,
++                    villagerSpawn ? Villager.class : IronGolem.class
++            );
++            if (current >= cap) {
++                event.setCancelled(true);
++                return;
++            }
++
++            tagEntity(entity, plugin, villageId);
++            if (entity instanceof Villager villager) {
++                List<Villager.Profession> professions =
++                        genericProfessions();
++                int index = Math.floorMod(
++                        villager.getUniqueId().hashCode(),
++                        professions.size()
++                );
++                villager.setProfession(professions.get(index));
++                villager.setAdult();
++                villager.setRemoveWhenFarAway(false);
++            } else if (entity instanceof IronGolem golem) {
++                golem.setPlayerCreated(true);
++                golem.setRemoveWhenFarAway(false);
++            }
++        }
++    }
++
++    private static int countVillageEntities(Plugin plugin,
++                                            World world,
++                                            int villageId,
++                                            Class<? extends Entity> type) {
++        int count = 0;
++        for (Entity entity : world.getEntities()) {
++            if (type.isInstance(entity)
++                    && isVillageEntity(entity, plugin, villageId)) {
++                count++;
++            }
++        }
++        return count;
++    }
++
++    private static PopulationKeys persistentKeys(Plugin plugin) {
++        synchronized (PERSISTENT_KEYS) {
++            return PERSISTENT_KEYS.computeIfAbsent(
++                    plugin,
++                    owner -> new PopulationKeys(
++                            new NamespacedKey(owner, "village_id"),
++                            new NamespacedKey(
++                                    owner,
++                                    "village_spawner_kind"
++                            ),
++                            new NamespacedKey(
++                                    owner,
++                                    "village_spawner_cap"
++                            )
++                    )
++            );
++        }
++    }
++
++    private static NamespacedKey villageIdKey(Plugin plugin) {
++        return persistentKeys(plugin).villageId();
++    }
++
++    private static NamespacedKey spawnerKindKey(Plugin plugin) {
++        return persistentKeys(plugin).spawnerKind();
++    }
++
++    private static NamespacedKey spawnerCapKey(Plugin plugin) {
++        return persistentKeys(plugin).spawnerCap();
++    }
++
++    private record PopulationKeys(
++            NamespacedKey villageId,
++            NamespacedKey spawnerKind,
++            NamespacedKey spawnerCap) {
++    }
++
+     private enum MerchantType {
+         MINER,
+         LUMBERJACK,
+@@ -89,7 +346,13 @@ public final class VillageEntityManager {
+                                     Location center,
+                                     int villageId,
+                                     int ttlTicks) {
+-        spawnInitial(plugin, center, Map.of(), villageId, ttlTicks);
++        spawnInitial(
++                plugin,
++                center,
++                Map.of(),
++                villageId,
++                compatibilityPopulationSettings(ttlTicks)
++        );
+     }
+ 
+     public static void spawnInitial(Plugin plugin,
+@@ -97,39 +360,119 @@ public final class VillageEntityManager {
+                                     Map<String, Location> anchors,
+                                     int villageId,
+                                     int ttlTicks) {
++        spawnInitial(
++                plugin,
++                center,
++                anchors,
++                villageId,
++                compatibilityPopulationSettings(ttlTicks)
++        );
++    }
+ 
++    /**
++     * Crée une population initiale répartie entre les quartiers de la ville.
++     * Les habitants génériques occupent prioritairement les maisons tandis que
++     * les PNJ nommés apparaissent près de leur lieu de travail.
++     */
++    public static void spawnInitial(
++            Plugin plugin,
++            Location center,
++            Map<String, Location> anchors,
++            int villageId,
++            VillagePopulationSettings settings) {
++        if (plugin == null || center == null || settings == null) {
++            return;
++        }
++
++        initializePopulationListener(plugin);
+         VILLAGE_CENTERS.put(villageId, center.clone());
+-        VILLAGE_ANCHORS.put(villageId, anchors != null ? new HashMap<>(anchors) : Map.of());
++        VILLAGE_ANCHORS.put(villageId, cloneAnchors(anchors));
+ 
+         Location spawnCenter = anchorOr(anchors, "plaza", center);
+         World world = spawnCenter.getWorld();
+         if (world == null) {
+             return;
+         }
+-        Random random = new Random();
+ 
+-        for (int i = 0; i < 6; i++) {
+-            Villager villager = (Villager) world.spawnEntity(randAround(spawnCenter), EntityType.VILLAGER);
+-            List<Villager.Profession> genericProfessions = genericProfessions();
+-            villager.setProfession(genericProfessions.get(random.nextInt(genericProfessions.size())));
++        Random random = new Random(
++                ((long) villageId << 32) ^ world.getSeed()
++        );
++        List<Location> residentAnchors =
++                collectResidentAnchors(anchors, spawnCenter);
++
++        for (int i = 0; i < settings.initialResidents(); i++) {
++            Location anchor = residentAnchors.get(
++                    i % residentAnchors.size()
++            );
++            Location spawnLocation = findSafeSpawn(
++                    anchor,
++                    random,
++                    3
++            );
++            Villager villager = (Villager) world.spawnEntity(
++                    spawnLocation,
++                    EntityType.VILLAGER
++            );
++            List<Villager.Profession> professions =
++                    genericProfessions();
++            villager.setProfession(professions.get(
++                    random.nextInt(professions.size())
++            ));
++            villager.setAdult();
++            villager.setRemoveWhenFarAway(false);
+             tagEntity(villager, plugin, villageId);
+         }
+ 
+-        Villager miner = spawnNamed(world, plugin,
+-                aroundAnchor(anchorOr(anchors, "service_yard", anchorOr(anchors, "gate", spawnCenter))),
+-                "§eMineur", Villager.Profession.TOOLSMITH, villageId);
+-        Villager lumberjack = spawnNamed(world, plugin,
+-                aroundAnchor(anchorOr(anchors, "gate", spawnCenter)),
+-                "§6Bûcheron", Villager.Profession.FLETCHER, villageId);
+-        Villager farmer = spawnNamed(world, plugin,
+-                aroundAnchor(anchorOr(anchors, "farm", spawnCenter)),
+-                "§aAgriculteur", Villager.Profession.FARMER, villageId);
+-        Villager breeder = spawnNamed(world, plugin,
+-                aroundAnchor(anchorOr(anchors, "pen", spawnCenter)),
+-                "§dÉleveur", Villager.Profession.SHEPHERD, villageId);
+-        Villager blacksmith = spawnNamed(world, plugin,
+-                aroundAnchor(anchorOr(anchors, "forge", spawnCenter)),
+-                "§cForgeron", Villager.Profession.ARMORER, villageId);
++        Villager miner = spawnNamedAtAnchor(
++                world,
++                plugin,
++                anchorOr(
++                        anchors,
++                        "service_yard",
++                        anchorOr(anchors, "gate", spawnCenter)
++                ),
++                "§eMineur",
++                Villager.Profession.TOOLSMITH,
++                villageId,
++                random
++        );
++        Villager lumberjack = spawnNamedAtAnchor(
++                world,
++                plugin,
++                anchorOr(anchors, "carpenter",
++                        anchorOr(anchors, "gate", spawnCenter)),
++                "§6Bûcheron",
++                Villager.Profession.FLETCHER,
++                villageId,
++                random
++        );
++        Villager farmer = spawnNamedAtAnchor(
++                world,
++                plugin,
++                anchorOr(anchors, "farm", spawnCenter),
++                "§aAgriculteur",
++                Villager.Profession.FARMER,
++                villageId,
++                random
++        );
++        Villager breeder = spawnNamedAtAnchor(
++                world,
++                plugin,
++                anchorOr(anchors, "pen", spawnCenter),
++                "§dÉleveur",
++                Villager.Profession.SHEPHERD,
++                villageId,
++                random
++        );
++        Villager blacksmith = spawnNamedAtAnchor(
++                world,
++                plugin,
++                anchorOr(anchors, "forge", spawnCenter),
++                "§cForgeron",
++                Villager.Profession.ARMORER,
++                villageId,
++                random
++        );
+ 
+         setupMinerTrades(miner);
+         setupLumberjackTrades(lumberjack);
+@@ -137,26 +480,121 @@ public final class VillageEntityManager {
+         setupBreederTrades(breeder);
+         setupBlacksmithTrades(blacksmith);
+ 
+-        registerMerchant(miner, villageId, MerchantType.MINER);
+-        registerMerchant(lumberjack, villageId, MerchantType.LUMBERJACK);
+-        registerMerchant(farmer, villageId, MerchantType.FARMER);
+-        registerMerchant(breeder, villageId, MerchantType.BREEDER);
+-        registerMerchant(blacksmith, villageId, MerchantType.BLACKSMITH);
++        registerMerchant(
++                miner,
++                villageId,
++                MerchantType.MINER
++        );
++        registerMerchant(
++                lumberjack,
++                villageId,
++                MerchantType.LUMBERJACK
++        );
++        registerMerchant(
++                farmer,
++                villageId,
++                MerchantType.FARMER
++        );
++        registerMerchant(
++                breeder,
++                villageId,
++                MerchantType.BREEDER
++        );
++        registerMerchant(
++                blacksmith,
++                villageId,
++                MerchantType.BLACKSMITH
++        );
++
++        // PNJ civils supplémentaires : ils donnent une fonction visible aux
++        // nouveaux bâtiments, sans recevoir les échanges spéciaux du plugin.
++        spawnNamedAtAnchor(
++                world,
++                plugin,
++                anchorOr(anchors, "mayor", spawnCenter),
++                "§bMaire",
++                Villager.Profession.LIBRARIAN,
++                villageId,
++                random
++        );
++        spawnNamedAtAnchor(
++                world,
++                plugin,
++                anchorOr(anchors, "church", spawnCenter),
++                "§fPrêtre",
++                Villager.Profession.CLERIC,
++                villageId,
++                random
++        );
++        spawnNamedAtAnchor(
++                world,
++                plugin,
++                anchorOr(anchors, "carpenter", spawnCenter),
++                "§6Charpentier",
++                Villager.Profession.FLETCHER,
++                villageId,
++                random
++        );
++        spawnNamedAtAnchor(
++                world,
++                plugin,
++                anchorOr(anchors, "stable", spawnCenter),
++                "§ePalefrenier",
++                Villager.Profession.LEATHERWORKER,
++                villageId,
++                random
++        );
++        spawnNamedAtAnchor(
++                world,
++                plugin,
++                anchorOr(anchors, "bakery", spawnCenter),
++                "§6Boulangère",
++                Villager.Profession.FARMER,
++                villageId,
++                random
++        );
+ 
+         for (int i = 0; i < 2; i++) {
+-            IronGolem golem = (IronGolem) world.spawnEntity(aroundAnchor(anchorOr(anchors, "plaza", spawnCenter)), EntityType.IRON_GOLEM);
++            Location golemSpawn = findSafeSpawn(
++                    anchorOr(anchors, "plaza", spawnCenter),
++                    random,
++                    4
++            );
++            IronGolem golem = (IronGolem) world.spawnEntity(
++                    golemSpawn,
++                    EntityType.IRON_GOLEM
++            );
+             golem.setPlayerCreated(true);
++            golem.setRemoveWhenFarAway(false);
+             tagEntity(golem, plugin, villageId);
+         }
+ 
+-        new BukkitRunnable() {
+-            @Override
+-            public void run() {
+-                cleanup(plugin, villageId);
+-            }
+-        }.runTaskLater(plugin, ttlTicks);
++        scheduleExpiry(
++                plugin,
++                villageId,
++                settings.lifetimeTicks()
++        );
++        startCapTask(
++                plugin,
++                villageId,
++                spawnCenter,
++                settings.populationCap()
++        );
++    }
+ 
+-        startCapTask(plugin, spawnCenter, DEFAULT_CAP);
++    private static VillagePopulationSettings
++    compatibilityPopulationSettings(int ttlTicks) {
++        return new VillagePopulationSettings(
++                6,
++                4,
++                DEFAULT_CAP,
++                1_200,
++                2_400,
++                4,
++                24,
++                3,
++                Math.max(0, ttlTicks)
++        );
+     }
+ 
+     private static MerchantRecipe diamondTrade(ItemStack result, int diamondCost) {
+@@ -256,36 +694,91 @@ public final class VillageEntityManager {
+         villager.setRecipes(recipes);
+     }
+ 
+-    public static void startCapTask(Plugin plugin, Location center, int cap) {
+-        int villageId = computeVillageId(center);
+-        new BukkitRunnable() {
++    public static void startCapTask(Plugin plugin,
++                                    Location center,
++                                    int cap) {
++        if (center == null) {
++            return;
++        }
++        startCapTask(
++                plugin,
++                computeVillageId(center),
++                center,
++                cap
++        );
++    }
++
++    /**
++     * Démarre une seule tâche de quota par village. Une régénération au même
++     * endroit remplace la tâche précédente au lieu d'empiler des timers.
++     */
++    public static void startCapTask(Plugin plugin,
++                                    int villageId,
++                                    Location center,
++                                    int cap) {
++        if (plugin == null
++                || center == null
++                || center.getWorld() == null) {
++            return;
++        }
++
++        BukkitTask previous = CAP_TASKS.remove(villageId);
++        if (previous != null) {
++            previous.cancel();
++        }
++
++        int safeCap = Math.max(1, Math.min(120, cap));
++        Location pivot = center.clone();
++        BukkitTask task = new BukkitRunnable() {
+             @Override
+             public void run() {
+-                enforceCap(plugin, villageId, center, cap);
++                enforceCap(
++                        plugin,
++                        villageId,
++                        pivot,
++                        safeCap
++                );
+             }
+         }.runTaskTimer(plugin, 200L, 200L);
++        CAP_TASKS.put(villageId, task);
+     }
+ 
+-    private static void enforceCap(Plugin plugin, int villageId, Location pivot, int cap) {
+-        List<LivingEntity> tagged = new ArrayList<>();
+-        for (World world : plugin.getServer().getWorlds()) {
+-            world.getEntities().stream()
+-                    .filter(entity -> entity.hasMetadata(TAG)
+-                            && entity.getMetadata(TAG).get(0).asInt() == villageId
+-                            && entity instanceof LivingEntity livingEntity
+-                            && !(livingEntity instanceof Player))
+-                    .map(entity -> (LivingEntity) entity)
+-                    .forEach(tagged::add);
++    private static void enforceCap(Plugin plugin,
++                                   int villageId,
++                                   Location pivot,
++                                   int cap) {
++        World villageWorld = pivot.getWorld();
++        if (villageWorld == null) {
++            return;
+         }
+ 
+-        if (tagged.size() <= cap) {
+-            return;
++        List<Villager> villagers = new ArrayList<>();
++        for (Entity entity : villageWorld.getEntities()) {
++            if (entity instanceof Villager villager
++                    && isVillageEntity(entity, plugin, villageId)) {
++                villagers.add(villager);
++            }
+         }
+ 
+-        tagged.sort(Comparator.comparingDouble(entity -> -entity.getLocation().distanceSquared(pivot)));
+-        for (int i = cap; i < tagged.size(); i++) {
+-            tagged.get(i).remove();
++        int overflow = villagers.size() - cap;
++        if (overflow <= 0) {
++            return;
+         }
++
++        /*
++         * Les PNJ nommés portent les métiers et échanges propres au plugin :
++         * ils sont toujours préservés. Parmi les habitants génériques, les plus
++         * éloignés du centre sont retirés en premier.
++         */
++        villagers.stream()
++                .filter(villager -> villager.getCustomName() == null)
++                .sorted(Comparator.comparingDouble(
++                        (Villager villager) ->
++                                villager.getLocation()
++                                        .distanceSquared(pivot)
++                ).reversed())
++                .limit(overflow)
++                .forEach(Entity::remove);
+     }
+ 
+     public static void startMerchantGuardTask(Plugin plugin) {
+@@ -298,7 +791,9 @@ public final class VillageEntityManager {
+     }
+ 
+     private static void guardMerchants(Plugin plugin) {
+-        Iterator<Map.Entry<UUID, MerchantInfo>> it = MERCHANTS.entrySet().iterator();
++        List<MerchantInfo> merchantsToRespawn = new ArrayList<>();
++        Iterator<Map.Entry<UUID, MerchantInfo>> it =
++                MERCHANTS.entrySet().iterator();
+         while (it.hasNext()) {
+             Map.Entry<UUID, MerchantInfo> entry = it.next();
+             UUID uuid = entry.getKey();
+@@ -312,15 +807,16 @@ public final class VillageEntityManager {
+                 }
+             }
+ 
+-            if (!(entity instanceof Villager villager)) {
+-                respawnMerchant(plugin, info);
+-                it.remove();
+-                continue;
+-            }
+-
+-            if (villager.isDead() || !villager.isValid()) {
+-                respawnMerchant(plugin, info);
++            if (!(entity instanceof Villager villager)
++                    || villager.isDead()
++                    || !villager.isValid()) {
++                /*
++                 * Le respawn ajoute une nouvelle entrée dans MERCHANTS. Il est
++                 * donc différé après l'itération afin de ne jamais modifier la
++                 * carte pendant que son Iterator est actif.
++                 */
+                 it.remove();
++                merchantsToRespawn.add(info);
+                 continue;
+             }
+ 
+@@ -328,18 +824,26 @@ public final class VillageEntityManager {
+             if (center == null || center.getWorld() == null) {
+                 continue;
+             }
+-            Location anchor = merchantAnchor(info.villageId, info.type, center);
++            Location anchor = merchantAnchor(
++                    info.villageId,
++                    info.type,
++                    center
++            );
+ 
+             if (!villager.getWorld().equals(center.getWorld())) {
+                 villager.teleport(anchor);
+                 continue;
+             }
+ 
+-            double maxDist2 = MERCHANT_GUARD_RADIUS * MERCHANT_GUARD_RADIUS;
++            double maxDist2 =
++                    MERCHANT_GUARD_RADIUS * MERCHANT_GUARD_RADIUS;
+             if (villager.getLocation().distanceSquared(center) > maxDist2) {
+                 villager.teleport(anchor);
+             }
+         }
++
++        merchantsToRespawn.forEach(info ->
++                respawnMerchant(plugin, info));
+     }
+ 
+     private static void respawnMerchant(Plugin plugin, MerchantInfo info) {
+@@ -394,33 +898,246 @@ public final class VillageEntityManager {
+         registerMerchant(villager, info.villageId, info.type);
+     }
+ 
++    private static void scheduleExpiry(Plugin plugin,
++                                       int villageId,
++                                       int lifetimeTicks) {
++        BukkitTask previous = EXPIRY_TASKS.remove(villageId);
++        if (previous != null) {
++            previous.cancel();
++        }
++        if (lifetimeTicks <= 0) {
++            return;
++        }
++
++        BukkitTask task = new BukkitRunnable() {
++            @Override
++            public void run() {
++                EXPIRY_TASKS.remove(villageId);
++                cleanup(plugin, villageId);
++            }
++        }.runTaskLater(plugin, lifetimeTicks);
++        EXPIRY_TASKS.put(villageId, task);
++    }
++
+     public static void cleanup(Plugin plugin, int villageId) {
+         GateGuardManager.stopGuardTask(villageId);
+         VILLAGE_CENTERS.remove(villageId);
+         VILLAGE_ANCHORS.remove(villageId);
+-        MERCHANTS.entrySet().removeIf(entry -> entry.getValue().villageId == villageId);
++        MERCHANTS.entrySet().removeIf(
++                entry -> entry.getValue().villageId == villageId
++        );
++
++        BukkitTask capTask = CAP_TASKS.remove(villageId);
++        if (capTask != null) {
++            capTask.cancel();
++        }
++        BukkitTask expiryTask = EXPIRY_TASKS.remove(villageId);
++        if (expiryTask != null) {
++            expiryTask.cancel();
++        }
++
++        if (plugin == null) {
++            return;
++        }
+         for (World world : plugin.getServer().getWorlds()) {
+             world.getEntities().stream()
+-                    .filter(entity -> entity.hasMetadata(TAG)
+-                            && entity.getMetadata(TAG).get(0).asInt() == villageId)
++                    .filter(entity ->
++                            isVillageEntity(
++                                    entity,
++                                    plugin,
++                                    villageId
++                            ))
+                     .forEach(Entity::remove);
+         }
+     }
+ 
+     public static int computeVillageId(Location center) {
+         World world = center.getWorld();
+-        int worldHash = world != null ? world.getUID().hashCode() : 0;
+-        return center.getBlockX() ^ center.getBlockZ() ^ worldHash;
++        int worldHash = world != null
++                ? world.getUID().hashCode()
++                : 0;
++        return center.getBlockX()
++                ^ center.getBlockZ()
++                ^ worldHash;
+     }
+ 
++    /**
++     * Associe une entité au village dans les métadonnées volatiles et dans le
++     * conteneur persistant. Le second marquage survit aux redémarrages.
++     */
+     public static void tagEntity(Entity entity, Plugin plugin, int id) {
++        if (entity == null || plugin == null) {
++            return;
++        }
++
+         entity.setPersistent(true);
+-        entity.setMetadata(TAG, new FixedMetadataValue(plugin, id));
++        entity.setMetadata(
++                TAG,
++                new FixedMetadataValue(plugin, id)
++        );
++        entity.getPersistentDataContainer().set(
++                villageIdKey(plugin),
++                PersistentDataType.INTEGER,
++                id
++        );
+     }
+ 
+-    private static Location randAround(Location center) {
+-        Random random = new Random();
+-        return center.clone().add(random.nextInt(10) - 5, 1, random.nextInt(10) - 5);
++    private static boolean isVillageEntity(Entity entity,
++                                           Plugin plugin,
++                                           int villageId) {
++        if (entity == null || plugin == null) {
++            return false;
++        }
++
++        Integer persistedId = entity.getPersistentDataContainer().get(
++                villageIdKey(plugin),
++                PersistentDataType.INTEGER
++        );
++        if (persistedId != null && persistedId == villageId) {
++            return true;
++        }
++
++        for (MetadataValue value : entity.getMetadata(TAG)) {
++            Plugin owner = value.getOwningPlugin();
++            if ((owner == null || owner == plugin)
++                    && value.asInt() == villageId) {
++                return true;
++            }
++        }
++        return false;
++    }
++
++    private static Map<String, Location> cloneAnchors(
++            Map<String, Location> anchors) {
++        if (anchors == null || anchors.isEmpty()) {
++            return Map.of();
++        }
++
++        Map<String, Location> copy = new LinkedHashMap<>();
++        anchors.forEach((key, location) -> {
++            if (key != null && location != null) {
++                copy.put(key, location.clone());
++            }
++        });
++        return copy;
++    }
++
++    private static List<Location> collectResidentAnchors(
++            Map<String, Location> anchors,
++            Location fallback) {
++        List<Location> result = new ArrayList<>();
++        if (anchors != null) {
++            anchors.entrySet().stream()
++                    .filter(entry ->
++                            entry.getKey() != null
++                                    && entry.getKey().startsWith(
++                                    "residence_"
++                            )
++                                    && entry.getValue() != null)
++                    .sorted(Map.Entry.comparingByKey())
++                    .map(Map.Entry::getValue)
++                    .map(Location::clone)
++                    .forEach(result::add);
++
++            for (String key : List.of(
++                    "plaza",
++                    "market",
++                    "town_hall",
++                    "inn",
++                    "bakery",
++                    "carpenter",
++                    "stable",
++                    "church")) {
++                Location anchor = anchors.get(key);
++                if (anchor != null) {
++                    result.add(anchor.clone());
++                }
++            }
++        }
++
++        if (result.isEmpty()) {
++            result.add(fallback.clone());
++        }
++        return result;
++    }
++
++    /**
++     * Cherche une colonne solide avec deux blocs libres. Le balayage vertical
++     * absorbe les terrasses et les petites différences de niveau du plan.
++     */
++    private static Location findSafeSpawn(Location anchor,
++                                          Random random,
++                                          int radius) {
++        World world = anchor.getWorld();
++        if (world == null) {
++            return anchor.clone();
++        }
++
++        int safeRadius = Math.max(0, Math.min(6, radius));
++        int attempts = Math.max(12, (safeRadius * 2 + 1) * 2);
++        for (int attempt = 0; attempt < attempts; attempt++) {
++            int x = anchor.getBlockX()
++                    + (safeRadius == 0
++                    ? 0
++                    : random.nextInt(safeRadius * 2 + 1)
++                    - safeRadius);
++            int z = anchor.getBlockZ()
++                    + (safeRadius == 0
++                    ? 0
++                    : random.nextInt(safeRadius * 2 + 1)
++                    - safeRadius);
++
++            for (int offsetY = 4; offsetY >= -2; offsetY--) {
++                int feetY = anchor.getBlockY() + offsetY;
++                if (feetY <= world.getMinHeight()
++                        || feetY + 1 >= world.getMaxHeight()) {
++                    continue;
++                }
++
++                Block floor = world.getBlockAt(x, feetY - 1, z);
++                Block feet = world.getBlockAt(x, feetY, z);
++                Block head = world.getBlockAt(x, feetY + 1, z);
++                if (floor.getType().isSolid()
++                        && feet.isPassable()
++                        && head.isPassable()
++                        && !feet.isLiquid()
++                        && !head.isLiquid()) {
++                    return new Location(
++                            world,
++                            x + 0.5D,
++                            feetY,
++                            z + 0.5D,
++                            random.nextFloat() * 360.0F,
++                            0.0F
++                    );
++                }
++            }
++        }
++
++        return new Location(
++                world,
++                anchor.getBlockX() + 0.5D,
++                anchor.getBlockY() + 1.0D,
++                anchor.getBlockZ() + 0.5D
++        );
++    }
++
++    private static Villager spawnNamedAtAnchor(
++            World world,
++            Plugin plugin,
++            Location anchor,
++            String name,
++            Villager.Profession profession,
++            int villageId,
++            Random random) {
++        return spawnNamed(
++                world,
++                plugin,
++                findSafeSpawn(anchor, random, 3),
++                name,
++                profession,
++                villageId
++        );
+     }
+ 
+     private static List<Villager.Profession> genericProfessions() {
+@@ -434,10 +1151,6 @@ public final class VillageEntityManager {
+         );
+     }
+ 
+-    private static Location aroundAnchor(Location anchor) {
+-        return randAround(anchor.clone().add(0.5, 0, 0.5));
+-    }
+-
+     private static Location anchorOr(Map<String, Location> anchors, String key, Location fallback) {
+         if (anchors != null && anchors.get(key) != null) {
+             return anchors.get(key);
+@@ -449,7 +1162,11 @@ public final class VillageEntityManager {
+         Map<String, Location> anchors = VILLAGE_ANCHORS.getOrDefault(villageId, Map.of());
+         Location anchor = switch (type) {
+             case MINER -> anchorOr(anchors, "service_yard", anchorOr(anchors, "gate", fallback));
+-            case LUMBERJACK -> anchorOr(anchors, "gate", fallback);
++            case LUMBERJACK -> anchorOr(
++                    anchors,
++                    "carpenter",
++                    anchorOr(anchors, "gate", fallback)
++            );
+             case FARMER -> anchorOr(anchors, "farm", fallback);
+             case BREEDER -> anchorOr(anchors, "pen", fallback);
+             case BLACKSMITH -> anchorOr(anchors, "forge", fallback);
+@@ -457,12 +1174,22 @@ public final class VillageEntityManager {
+         return anchor.clone().add(0.5, 1, 0.5);
+     }
+ 
+-    private static Villager spawnNamed(World world, Plugin plugin, Location location,
+-                                       String name, Villager.Profession profession, int villageId) {
+-        Villager villager = (Villager) world.spawnEntity(location, EntityType.VILLAGER);
++    private static Villager spawnNamed(World world,
++                                       Plugin plugin,
++                                       Location location,
++                                       String name,
++                                       Villager.Profession profession,
++                                       int villageId) {
++        world.getChunkAt(location).load();
++        Villager villager = (Villager) world.spawnEntity(
++                location,
++                EntityType.VILLAGER
++        );
+         villager.setCustomName(name);
+         villager.setCustomNameVisible(true);
+         villager.setProfession(profession);
++        villager.setAdult();
++        villager.setRemoveWhenFarAway(false);
+         tagEntity(villager, plugin, villageId);
+         return villager;
+     }
+diff --git a/src/main/java/org/example/village/VillageLayoutPlan.java b/src/main/java/org/example/village/VillageLayoutPlan.java
+index 5b3ee18347cbe8364f4ce719aa84352b778336bd..2d98747c1aeaf5fbb49ea2ade41030e68dcff018 100644
+--- a/src/main/java/org/example/village/VillageLayoutPlan.java
++++ b/src/main/java/org/example/village/VillageLayoutPlan.java
+@@ -18,6 +18,7 @@ import java.util.Map;
+ public record VillageLayoutPlan(
+         List<LotPlan> lots,
+         List<StreetPlan> streets,
++        List<PassagePlan> passages,
+         Bounds bounds,
+         Map<String, Location> anchors,
+         int houseCount,
+@@ -28,6 +29,9 @@ public record VillageLayoutPlan(
+         FORGE,
+         INN,
+         BAKERY,
++        TOWN_HALL,
++        CARPENTER,
++        STABLE,
+         HOUSE_SINGLE,
+         HOUSE_TWO_STORY,
+         FARM,
+@@ -47,9 +51,18 @@ public record VillageLayoutPlan(
+     public enum StreetType {
+         MAIN,
+         SIDE,
++        ALLEY,
+         FOOTPATH
+     }
+ 
++    /**
++     * Aspect architectural d'un passage couvert.
++     */
++    public enum PassageStyle {
++        TIMBER,
++        STONE
++    }
++
+     public enum HouseArchetype {
+         COTTAGE,
+         TOWNHOUSE,
+@@ -142,6 +155,105 @@ public record VillageLayoutPlan(
+         }
+     }
+ 
++    /**
++     * Petit passage couvert construit au-dessus d'une ruelle.
++     *
++     * <p>{@code streetDirection} décrit l'axe de circulation. Les deux piles
++     * sont automatiquement placées perpendiculairement à cet axe, à
++     * {@code halfWidth + 2} blocs du centre, afin de conserver une largeur
++     * praticable et de ne jamais poser un poteau au milieu de la chaussée.</p>
++     */
++    public record PassagePlan(
++            int centerX,
++            int centerZ,
++            BlockFace streetDirection,
++            int halfWidth,
++            PassageStyle style
++    ) {
++        public PassagePlan {
++            if (!isHorizontalFacing(streetDirection)) {
++                throw new IllegalArgumentException(
++                        "L'axe d'un passage doit être horizontal."
++                );
++            }
++            halfWidth = Math.max(0, halfWidth);
++            style = style == null ? PassageStyle.TIMBER : style;
++        }
++
++        public boolean horizontalStreet() {
++            return streetDirection == BlockFace.EAST
++                    || streetDirection == BlockFace.WEST;
++        }
++
++        public int postOffset() {
++            return halfWidth + 2;
++        }
++
++        public int firstPostX() {
++            return horizontalStreet() ? centerX : centerX - postOffset();
++        }
++
++        public int firstPostZ() {
++            return horizontalStreet() ? centerZ - postOffset() : centerZ;
++        }
++
++        public int secondPostX() {
++            return horizontalStreet() ? centerX : centerX + postOffset();
++        }
++
++        public int secondPostZ() {
++            return horizontalStreet() ? centerZ + postOffset() : centerZ;
++        }
++
++        /**
++         * Bornes de l'ouvrage complet, contreforts et débords de toiture
++         * compris. Elles servent à la fois au contrôle des collisions et au
++         * calcul de l'enceinte.
++         */
++        public int structureMinX() {
++            return horizontalStreet()
++                    ? centerX - 2
++                    : firstPostX() - 1;
++        }
++
++        public int structureMaxX() {
++            return horizontalStreet()
++                    ? centerX + 2
++                    : secondPostX() + 1;
++        }
++
++        public int structureMinZ() {
++            return horizontalStreet()
++                    ? firstPostZ() - 1
++                    : centerZ - 2;
++        }
++
++        public int structureMaxZ() {
++            return horizontalStreet()
++                    ? secondPostZ() + 1
++                    : centerZ + 2;
++        }
++
++        /**
++         * Indique si une cellule appartient à l'emprise de l'ouvrage, avec une
++         * marge optionnelle.
++         */
++        public boolean containsGround(int x, int z, int extra) {
++            int margin = Math.max(0, extra);
++            return x >= structureMinX() - margin
++                    && x <= structureMaxX() + margin
++                    && z >= structureMinZ() - margin
++                    && z <= structureMaxZ() + margin;
++        }
++
++        private static boolean isHorizontalFacing(BlockFace face) {
++            return face == BlockFace.NORTH
++                    || face == BlockFace.SOUTH
++                    || face == BlockFace.EAST
++                    || face == BlockFace.WEST;
++        }
++    }
++
+     public record Bounds(int minX, int maxX, int minZ, int maxZ) {
+         public Bounds {
+             if (minX > maxX || minZ > maxZ) {
+diff --git a/src/main/java/org/example/village/VillageLayoutPlanner.java b/src/main/java/org/example/village/VillageLayoutPlanner.java
+index 734b39fb51e27f2b6dd4dbd38afb4229b720d02a..067c9f53dd9acf2033e4121ee68da031e2d2856c 100644
+--- a/src/main/java/org/example/village/VillageLayoutPlanner.java
++++ b/src/main/java/org/example/village/VillageLayoutPlanner.java
+@@ -19,32 +19,41 @@ import static org.example.village.VillageLayoutPlan.HouseSpec;
+ import static org.example.village.VillageLayoutPlan.LandmarkType;
+ import static org.example.village.VillageLayoutPlan.LotPlan;
+ import static org.example.village.VillageLayoutPlan.LotRole;
++import static org.example.village.VillageLayoutPlan.PassagePlan;
++import static org.example.village.VillageLayoutPlan.PassageStyle;
+ import static org.example.village.VillageLayoutPlan.RoofStyle;
+ import static org.example.village.VillageLayoutPlan.StreetPlan;
+ import static org.example.village.VillageLayoutPlan.StreetType;
+ import static org.example.village.VillageLayoutPlan.YardStyle;
+ 
+ /**
+- * Produit un plan de village compact, hiérarchisé et réellement raccordé.
++ * Produit un plan de ville médiévale dense, hiérarchisé et réellement raccordé.
+  *
+- * <p>La composition suit une logique de village ancien : une rue principale,
+- * deux rues de ceinture, des voies artisanales, une place de marché et un
+- * parvis religieux. Les bâtiments sont implantés depuis le bord exact de leur
+- * rue ; les chemins d'accès ne se terminent donc plus arbitrairement dans une
+- * pelouse.</p>
++ * <p>La composition conserve une grand-rue lisible, mais ajoute des fronts
++ * bâtis continus, deux axes de quartier, quatre ruelles et plusieurs passages
++ * couverts. Les paramètres {@code rows} et {@code cols} pilotent désormais
++ * réellement le nombre de positions candidates et la largeur du bourg.</p>
+  */
+ public final class VillageLayoutPlanner {
+     private static final int MIN_GAP = 4;
+-    private static final int[] NUDGE_OFFSETS = {0, -3, 3, -6, 6, -9, 9};
++    private static final int[] NUDGE_OFFSETS = {
++            0, -2, 2, -4, 4, -6, 6, -8, 8, -10, 10
++    };
+ 
+     private VillageLayoutPlanner() {}
+ 
+-    public static VillageLayoutPlan plan(Location center, VillageLayoutSettings settings, Random rng) {
++    public static VillageLayoutPlan plan(Location center,
++                                         VillageLayoutSettings settings,
++                                         Random rng) {
+         if (center == null) {
+-            throw new IllegalArgumentException("Le centre du village est obligatoire.");
++            throw new IllegalArgumentException(
++                    "Le centre du village est obligatoire."
++            );
+         }
+         if (settings == null) {
+-            throw new IllegalArgumentException("Les paramètres du village sont obligatoires.");
++            throw new IllegalArgumentException(
++                    "Les paramètres du village sont obligatoires."
++            );
+         }
+ 
+         Random random = rng == null ? new Random() : rng;
+@@ -53,161 +62,440 @@ public final class VillageLayoutPlanner {
+         int cx = center.getBlockX();
+         int cz = center.getBlockZ();
+ 
++        /*
++         * Avec sept colonnes par défaut, la ville gagne deux vrais quartiers
++         * latéraux sans simplement étirer les pelouses entre les bâtiments.
++         */
++        int columnRadius = Math.max(2, (settings.cols() - 1) / 2);
+         int southLaneZ = cz + unit + 10;
+         int northLaneZ = cz - unit - 10;
+         int churchLaneZ = cz - (unit * 2) - 10;
+-        int outerStreetX = unit * 2 + 8;
+-        int farHouseX = unit * 3 - 2;
++        int outerStreetX = unit * columnRadius + 8;
++        int farHouseX = outerStreetX + Math.max(8, unit / 2);
+         int marketStreetZ = cz + plazaHalf + 2;
+         int mainSouthZ = cz + unit * 3 + 4;
++        int sideNorthZ = northLaneZ - 10;
++        int sideSouthZ = southLaneZ + 10;
++        int streetEdgeX = farHouseX + 10;
++
++        List<StreetPlan> streets = new ArrayList<>();
++
++        // Épine dorsale : du portail sud au parvis religieux.
++        streets.add(new StreetPlan(
++                cx,
++                mainSouthZ,
++                cx,
++                churchLaneZ,
++                StreetType.MAIN,
++                settings.mainStreetHalf()
++        ));
++
++        // Rues de quartier : elles forment une boucle complète et praticable.
++        streets.add(new StreetPlan(
++                cx - streetEdgeX,
++                southLaneZ,
++                cx + streetEdgeX,
++                southLaneZ,
++                StreetType.SIDE,
++                settings.sideStreetHalf()
++        ));
++        streets.add(new StreetPlan(
++                cx - outerStreetX - 10,
++                northLaneZ,
++                cx + outerStreetX + 10,
++                northLaneZ,
++                StreetType.SIDE,
++                settings.sideStreetHalf()
++        ));
++        streets.add(new StreetPlan(
++                cx - outerStreetX,
++                sideSouthZ,
++                cx - outerStreetX,
++                sideNorthZ,
++                StreetType.SIDE,
++                settings.sideStreetHalf()
++        ));
++        streets.add(new StreetPlan(
++                cx + outerStreetX,
++                sideSouthZ,
++                cx + outerStreetX,
++                sideNorthZ,
++                StreetType.SIDE,
++                settings.sideStreetHalf()
++        ));
++
++        // Voies fonctionnelles : marché, parvis et liaisons artisanales.
++        streets.add(new StreetPlan(
++                cx - plazaHalf - 14,
++                marketStreetZ,
++                cx + plazaHalf + 14,
++                marketStreetZ,
++                StreetType.SIDE,
++                settings.sideStreetHalf()
++        ));
++        streets.add(new StreetPlan(
++                cx - plazaHalf - 12,
++                churchLaneZ,
++                cx + plazaHalf + 12,
++                churchLaneZ,
++                StreetType.SIDE,
++                settings.sideStreetHalf()
++        ));
+ 
+-        List<StreetPlan> streets = List.of(
+-                // Épine dorsale : du portail sud au parvis de l'église.
+-                new StreetPlan(cx, mainSouthZ, cx, churchLaneZ, StreetType.MAIN, settings.mainStreetHalf()),
+-
+-                // Deux rues de quartier forment une boucle lisible autour du centre.
+-                new StreetPlan(cx - farHouseX - 8, southLaneZ,
+-                        cx + farHouseX + 8, southLaneZ,
+-                        StreetType.SIDE, settings.sideStreetHalf()),
+-                new StreetPlan(cx - outerStreetX - 8, northLaneZ,
+-                        cx + outerStreetX + 8, northLaneZ,
+-                        StreetType.SIDE, settings.sideStreetHalf()),
+-                new StreetPlan(cx - outerStreetX, southLaneZ,
+-                        cx - outerStreetX, northLaneZ,
+-                        StreetType.SIDE, settings.sideStreetHalf()),
+-                new StreetPlan(cx + outerStreetX, southLaneZ,
+-                        cx + outerStreetX, northLaneZ,
+-                        StreetType.SIDE, settings.sideStreetHalf()),
+-
+-                // Voies fonctionnelles courtes : marché, artisans et parvis.
+-                new StreetPlan(cx - plazaHalf - 14, marketStreetZ,
+-                        cx + plazaHalf + 14, marketStreetZ,
+-                        StreetType.SIDE, settings.sideStreetHalf()),
+-                new StreetPlan(cx - plazaHalf - 12, churchLaneZ,
+-                        cx + plazaHalf + 12, churchLaneZ,
+-                        StreetType.SIDE, settings.sideStreetHalf()),
+-                new StreetPlan(cx - outerStreetX, cz,
+-                        cx - plazaHalf - 10, cz,
+-                        StreetType.FOOTPATH, 0),
+-                new StreetPlan(cx + plazaHalf + 10, cz + 5,
+-                        cx + outerStreetX, cz + 5,
+-                        StreetType.FOOTPATH, 0)
++        addMedievalAlleys(
++                streets,
++                cx,
++                cz,
++                outerStreetX,
++                plazaHalf
+         );
+ 
+         int mainEdge = settings.mainStreetHalf() + 1;
+ 
+-        List<LotCandidate> fixed = List.of(
+-                new LotCandidate(LotRole.CHURCH, cx, churchLaneZ - 1, BlockFace.SOUTH,
+-                        HouseArchetype.COTTAGE, false, terrace(settings, 2), 4, true),
+-                new LotCandidate(LotRole.FORGE, cx + outerStreetX + 1, cz + 5, BlockFace.WEST,
+-                        HouseArchetype.WORKSHOP_HOUSE, false, terrace(settings, 1), 3, true),
+-                new LotCandidate(LotRole.INN, cx + mainEdge, cz - plazaHalf + 1, BlockFace.WEST,
+-                        HouseArchetype.TOWNHOUSE, false, 0, 3, true),
+-                new LotCandidate(LotRole.BAKERY, cx - mainEdge, cz - plazaHalf + 1, BlockFace.EAST,
+-                        HouseArchetype.COTTAGE, false, 0, 3, true),
+-                new LotCandidate(LotRole.FARM, cx + southLaneZ - cz + 2, southLaneZ + 1, BlockFace.NORTH,
+-                        HouseArchetype.COTTAGE, false, 0, 4, false),
+-                new LotCandidate(LotRole.PEN, cx - (southLaneZ - cz + 4), southLaneZ + 1, BlockFace.NORTH,
+-                        HouseArchetype.COTTAGE, false, 0, 4, false),
+-                new LotCandidate(LotRole.SERVICE_YARD, cx - outerStreetX - 1, cz, BlockFace.EAST,
+-                        HouseArchetype.WORKSHOP_HOUSE, false, 0, 3, false),
+-                new LotCandidate(LotRole.MARKET, cx - plazaHalf - 4, marketStreetZ + 1, BlockFace.NORTH,
+-                        HouseArchetype.COTTAGE, false, 0, 2, true),
+-                new LotCandidate(LotRole.MARKET, cx + plazaHalf + 4, marketStreetZ + 1, BlockFace.NORTH,
+-                        HouseArchetype.COTTAGE, false, 0, 2, true),
+-                new LotCandidate(LotRole.GREEN, cx - unit * 2, northLaneZ + 1, BlockFace.NORTH,
+-                        HouseArchetype.COTTAGE, false, terrace(settings, 1), 2, false),
+-                new LotCandidate(LotRole.DECOR, cx + unit * 2, northLaneZ + 1, BlockFace.NORTH,
+-                        HouseArchetype.COTTAGE, false, terrace(settings, 1), 2, false)
+-        );
++        List<LotCandidate> fixed = new ArrayList<>();
++        fixed.add(new LotCandidate(
++                LotRole.CHURCH,
++                cx,
++                churchLaneZ - 1,
++                BlockFace.SOUTH,
++                HouseArchetype.COTTAGE,
++                false,
++                terrace(settings, 2),
++                4,
++                true
++        ));
++        fixed.add(new LotCandidate(
++                LotRole.TOWN_HALL,
++                cx,
++                northLaneZ + 1,
++                BlockFace.NORTH,
++                HouseArchetype.TOWNHOUSE,
++                false,
++                terrace(settings, 1),
++                2,
++                true
++        ));
++        fixed.add(new LotCandidate(
++                LotRole.FORGE,
++                cx + outerStreetX + 1,
++                cz + 4,
++                BlockFace.WEST,
++                HouseArchetype.WORKSHOP_HOUSE,
++                false,
++                terrace(settings, 1),
++                3,
++                true
++        ));
++        fixed.add(new LotCandidate(
++                LotRole.CARPENTER,
++                cx - outerStreetX - 1,
++                cz + unit - 2,
++                BlockFace.EAST,
++                HouseArchetype.WORKSHOP_HOUSE,
++                false,
++                0,
++                2,
++                false
++        ));
++        fixed.add(new LotCandidate(
++                LotRole.STABLE,
++                cx + outerStreetX + 1,
++                cz + unit + 4,
++                BlockFace.WEST,
++                HouseArchetype.WORKSHOP_HOUSE,
++                false,
++                0,
++                2,
++                false
++        ));
++        fixed.add(new LotCandidate(
++                LotRole.INN,
++                cx + mainEdge,
++                cz - plazaHalf + 1,
++                BlockFace.WEST,
++                HouseArchetype.TOWNHOUSE,
++                false,
++                0,
++                3,
++                true
++        ));
++        fixed.add(new LotCandidate(
++                LotRole.BAKERY,
++                cx - mainEdge,
++                cz - plazaHalf + 1,
++                BlockFace.EAST,
++                HouseArchetype.COTTAGE,
++                false,
++                0,
++                3,
++                true
++        ));
++        fixed.add(new LotCandidate(
++                LotRole.FARM,
++                cx + unit + 12,
++                southLaneZ + 1,
++                BlockFace.NORTH,
++                HouseArchetype.COTTAGE,
++                false,
++                0,
++                4,
++                false
++        ));
++        fixed.add(new LotCandidate(
++                LotRole.PEN,
++                cx - unit - 14,
++                southLaneZ + 1,
++                BlockFace.NORTH,
++                HouseArchetype.COTTAGE,
++                false,
++                0,
++                4,
++                false
++        ));
++        fixed.add(new LotCandidate(
++                LotRole.SERVICE_YARD,
++                cx - outerStreetX - 1,
++                cz - 2,
++                BlockFace.EAST,
++                HouseArchetype.WORKSHOP_HOUSE,
++                false,
++                0,
++                3,
++                false
++        ));
++        fixed.add(new LotCandidate(
++                LotRole.MARKET,
++                cx - plazaHalf - 4,
++                marketStreetZ + 1,
++                BlockFace.NORTH,
++                HouseArchetype.COTTAGE,
++                false,
++                0,
++                2,
++                true
++        ));
++        fixed.add(new LotCandidate(
++                LotRole.MARKET,
++                cx + plazaHalf + 4,
++                marketStreetZ + 1,
++                BlockFace.NORTH,
++                HouseArchetype.COTTAGE,
++                false,
++                0,
++                2,
++                true
++        ));
++        fixed.add(new LotCandidate(
++                LotRole.GREEN,
++                cx - unit * 2,
++                northLaneZ + 1,
++                BlockFace.NORTH,
++                HouseArchetype.COTTAGE,
++                false,
++                terrace(settings, 1),
++                2,
++                false
++        ));
++        fixed.add(new LotCandidate(
++                LotRole.DECOR,
++                cx + unit * 2,
++                northLaneZ + 1,
++                BlockFace.NORTH,
++                HouseArchetype.COTTAGE,
++                false,
++                terrace(settings, 1),
++                2,
++                false
++        ));
+ 
++        /*
++         * Le noyau résidentiel est obligatoire : il ferme les perspectives
++         * principales même lorsque houseCountMin est configuré très bas.
++         */
+         List<LotCandidate> coreHouses = List.of(
+-                // Deux silhouettes ferment la perspective depuis le portail.
+-                new LotCandidate(LotRole.HOUSE_SINGLE, cx - mainEdge, southLaneZ + unit + 6, BlockFace.EAST,
+-                        HouseArchetype.COTTAGE, false, terrace(settings, 1), 3, false),
+-                new LotCandidate(LotRole.HOUSE_TWO_STORY, cx + mainEdge, southLaneZ + unit + 6, BlockFace.WEST,
+-                        HouseArchetype.TOWNHOUSE, false, terrace(settings, 1), 3, false),
+-
+-                // Deux maisons accompagnent la montée vers l'église.
+-                new LotCandidate(LotRole.HOUSE_TWO_STORY, cx - mainEdge, northLaneZ - 12, BlockFace.EAST,
+-                        HouseArchetype.FAMILY_HOUSE, false, terrace(settings, 1), 3, false),
+-                new LotCandidate(LotRole.HOUSE_TWO_STORY, cx + mainEdge, northLaneZ - 12, BlockFace.WEST,
+-                        HouseArchetype.TOWNHOUSE, false, terrace(settings, 1), 2, false),
+-
+-                // Front nord de la rue méridionale.
+-                new LotCandidate(LotRole.HOUSE_TWO_STORY, cx - farHouseX, southLaneZ - 1, BlockFace.SOUTH,
+-                        HouseArchetype.TOWNHOUSE, false, 0, 3, true),
+-                new LotCandidate(LotRole.HOUSE_SINGLE, cx - unit - 7, southLaneZ - 1, BlockFace.SOUTH,
+-                        HouseArchetype.FAMILY_HOUSE, false, 0, 3, false),
+-                new LotCandidate(LotRole.HOUSE_SINGLE, cx + unit + 8, southLaneZ - 1, BlockFace.SOUTH,
+-                        HouseArchetype.WORKSHOP_HOUSE, false, 0, 3, false),
+-                new LotCandidate(LotRole.HOUSE_SINGLE, cx + farHouseX, southLaneZ - 1, BlockFace.SOUTH,
+-                        HouseArchetype.COTTAGE, false, 0, 4, true),
+-
+-                // Front sud, proche des champs et de l'enclos.
+-                new LotCandidate(LotRole.HOUSE_SINGLE, cx - unit + 5, southLaneZ + 1, BlockFace.NORTH,
+-                        HouseArchetype.COTTAGE, false, 0, 4, false),
+-                new LotCandidate(LotRole.HOUSE_TWO_STORY, cx + unit - 8, southLaneZ + 1, BlockFace.NORTH,
+-                        HouseArchetype.FAMILY_HOUSE, false, 0, 3, false)
++                new LotCandidate(
++                        LotRole.HOUSE_SINGLE,
++                        cx - mainEdge,
++                        southLaneZ + unit + 6,
++                        BlockFace.EAST,
++                        HouseArchetype.COTTAGE,
++                        false,
++                        terrace(settings, 1),
++                        2,
++                        false
++                ),
++                new LotCandidate(
++                        LotRole.HOUSE_TWO_STORY,
++                        cx + mainEdge,
++                        southLaneZ + unit + 6,
++                        BlockFace.WEST,
++                        HouseArchetype.TOWNHOUSE,
++                        false,
++                        terrace(settings, 1),
++                        2,
++                        false
++                ),
++                new LotCandidate(
++                        LotRole.HOUSE_TWO_STORY,
++                        cx - mainEdge,
++                        northLaneZ - 12,
++                        BlockFace.EAST,
++                        HouseArchetype.FAMILY_HOUSE,
++                        false,
++                        terrace(settings, 1),
++                        2,
++                        false
++                ),
++                new LotCandidate(
++                        LotRole.HOUSE_TWO_STORY,
++                        cx + mainEdge,
++                        northLaneZ - 12,
++                        BlockFace.WEST,
++                        HouseArchetype.TOWNHOUSE,
++                        false,
++                        terrace(settings, 1),
++                        2,
++                        false
++                ),
++                new LotCandidate(
++                        LotRole.HOUSE_SINGLE,
++                        cx - unit - 7,
++                        southLaneZ - 1,
++                        BlockFace.SOUTH,
++                        HouseArchetype.FAMILY_HOUSE,
++                        false,
++                        0,
++                        2,
++                        false
++                ),
++                new LotCandidate(
++                        LotRole.HOUSE_SINGLE,
++                        cx + unit + 8,
++                        southLaneZ - 1,
++                        BlockFace.SOUTH,
++                        HouseArchetype.WORKSHOP_HOUSE,
++                        false,
++                        0,
++                        2,
++                        false
++                ),
++                new LotCandidate(
++                        LotRole.HOUSE_SINGLE,
++                        cx - unit + 5,
++                        southLaneZ + 1,
++                        BlockFace.NORTH,
++                        HouseArchetype.COTTAGE,
++                        false,
++                        0,
++                        2,
++                        false
++                ),
++                new LotCandidate(
++                        LotRole.HOUSE_TWO_STORY,
++                        cx + unit - 8,
++                        southLaneZ + 1,
++                        BlockFace.NORTH,
++                        HouseArchetype.FAMILY_HOUSE,
++                        false,
++                        0,
++                        2,
++                        false
++                )
+         );
+ 
+-        List<LotCandidate> optionalHouses = List.of(
+-                new LotCandidate(LotRole.HOUSE_SINGLE, cx - unit - 8, northLaneZ - 1, BlockFace.SOUTH,
+-                        HouseArchetype.COTTAGE, true, terrace(settings, 1), 3, false),
+-                new LotCandidate(LotRole.HOUSE_TWO_STORY, cx + unit + 8, northLaneZ - 1, BlockFace.SOUTH,
+-                        HouseArchetype.FAMILY_HOUSE, true, terrace(settings, 1), 3, false),
+-                new LotCandidate(LotRole.HOUSE_SINGLE, cx - unit + 2, northLaneZ + 1, BlockFace.NORTH,
+-                        HouseArchetype.WORKSHOP_HOUSE, true, 0, 3, false),
+-                new LotCandidate(LotRole.HOUSE_SINGLE, cx + unit - 2, northLaneZ + 1, BlockFace.NORTH,
+-                        HouseArchetype.TOWNHOUSE, true, 0, 2, false),
+-                new LotCandidate(LotRole.HOUSE_SINGLE, cx - outerStreetX - 1, cz - unit + 3, BlockFace.EAST,
+-                        HouseArchetype.COTTAGE, true, 0, 3, true),
+-                new LotCandidate(LotRole.HOUSE_SINGLE, cx + outerStreetX + 1, cz - unit + 6, BlockFace.WEST,
+-                        HouseArchetype.WORKSHOP_HOUSE, true, 0, 3, true)
++        List<LotCandidate> optionalHouses = createResidentialCandidates(
++                settings,
++                cx,
++                cz,
++                unit,
++                southLaneZ,
++                northLaneZ,
++                outerStreetX,
++                farHouseX
+         );
+ 
+-        int maxAvailableHouses = coreHouses.size() + optionalHouses.size();
+-        int configuredMax = Math.min(settings.houseCountMax(), maxAvailableHouses);
+-        int configuredMin = Math.min(configuredMax, Math.max(settings.houseCountMin(), coreHouses.size()));
++        int maxAvailableHouses = coreHouses.size()
++                + optionalHouses.size();
++        int configuredMax = Math.min(
++                settings.houseCountMax(),
++                maxAvailableHouses
++        );
++        int configuredMin = Math.min(
++                configuredMax,
++                Math.max(settings.houseCountMin(), coreHouses.size())
++        );
+         int targetHouseCount = configuredMin;
+         if (configuredMax > configuredMin) {
+-            // Biais léger vers un village fourni sans rendre la configuration inopérante.
++            /*
++             * Biais vers une ville fournie, sans rendre houseCountMin
++             * inopérant ni toujours forcer la valeur maximale.
++             */
+             int midpoint = (configuredMin + configuredMax + 1) / 2;
+-            targetHouseCount = midpoint + random.nextInt(configuredMax - midpoint + 1);
++            targetHouseCount = midpoint
++                    + random.nextInt(configuredMax - midpoint + 1);
+         }
+ 
+-        List<LotCandidate> selected = new ArrayList<>(fixed);
+-        selected.addAll(coreHouses);
+-        List<LotCandidate> optionalPool = new ArrayList<>(optionalHouses);
+-        Collections.shuffle(optionalPool, random);
+-        for (LotCandidate candidate : optionalPool) {
+-            if (houseCount(selected) >= targetHouseCount) {
+-                break;
+-            }
+-            selected.add(candidate);
+-        }
++        List<LotCandidate> mandatory = new ArrayList<>(fixed);
++        mandatory.addAll(coreHouses);
++        List<LotPlan> lots = materializeLots(
++                mandatory,
++                optionalHouses,
++                streets,
++                settings,
++                targetHouseCount,
++                random
++        );
+ 
+-        List<LotPlan> lots = materializeLots(selected, random);
+         for (LotPlan lot : lots) {
+             if (!hasRoadAccess(lot, streets)) {
+-                throw new IllegalStateException("Lot sans accès réel à une rue : " + lot.role()
+-                        + " @ " + lot.centerX() + "," + lot.centerZ());
++                throw new IllegalStateException(
++                        "Lot sans accès réel à une rue : "
++                                + lot.role()
++                                + " @ "
++                                + lot.centerX()
++                                + ","
++                                + lot.centerZ()
++                );
+             }
+         }
+ 
++        List<PassagePlan> passages = planCoveredPassages(
++                streets,
++                lots,
++                settings,
++                random
++        );
++
+         List<LandmarkType> landmarkPool = new ArrayList<>(
+-                List.of(LandmarkType.STATUE, LandmarkType.GARDEN, LandmarkType.CHERRY));
++                List.of(
++                        LandmarkType.STATUE,
++                        LandmarkType.GARDEN,
++                        LandmarkType.CHERRY
++                )
++        );
+         Collections.shuffle(landmarkPool, random);
+         List<LandmarkType> landmarks = List.copyOf(landmarkPool);
+ 
+         Map<String, Location> anchors = createAnchors(
+-                center.getWorld(), center.getBlockY(), center, streets, lots);
++                center.getWorld(),
++                center.getBlockY(),
++                center,
++                streets,
++                lots
++        );
+         Bounds bounds = computeBounds(
+-                lots, streets, cx, cz, settings.effectivePlazaSize());
++                lots,
++                streets,
++                passages,
++                cx,
++                cz,
++                settings.effectivePlazaSize()
++        );
+ 
+         return new VillageLayoutPlan(
+                 List.copyOf(lots),
+                 List.copyOf(streets),
++                List.copyOf(passages),
+                 bounds,
+                 Map.copyOf(anchors),
+                 houseCount(lots),
+@@ -231,53 +519,356 @@ public final class VillageLayoutPlanner {
+     /**
+      * Vérifie en plus que la façade touche réellement une chaussée planifiée.
+      */
+-    public static boolean hasRoadAccess(LotPlan lot, List<StreetPlan> streets) {
++    public static boolean hasRoadAccess(LotPlan lot,
++                                        List<StreetPlan> streets) {
+         return hasRoadAccess(lot)
+                 && streets != null
+                 && streets.stream().anyMatch(street ->
+-                street.contains(lot.frontageX(), lot.frontageZ(), 0));
++                street.contains(
++                        lot.frontageX(),
++                        lot.frontageZ(),
++                        0
++                ));
+     }
+ 
+-    private static List<LotPlan> materializeLots(List<LotCandidate> candidates, Random random) {
+-        List<LotPlan> lots = new ArrayList<>();
+-        int index = 0;
++    private static void addMedievalAlleys(List<StreetPlan> streets,
++                                           int cx,
++                                           int cz,
++                                           int outerStreetX,
++                                           int plazaHalf) {
++        int innerEdge = plazaHalf + 12;
++        int westX = cx - outerStreetX;
++        int eastX = cx + outerStreetX;
++
++        /*
++         * Les ruelles sont volontairement séparées autour de la place : elles
++         * débouchent dans le centre sans traverser le puits ou les étals.
++         */
++        streets.add(new StreetPlan(
++                westX,
++                cz - 10,
++                cx - innerEdge,
++                cz - 10,
++                StreetType.ALLEY,
++                0
++        ));
++        streets.add(new StreetPlan(
++                cx + innerEdge,
++                cz - 10,
++                eastX,
++                cz - 10,
++                StreetType.ALLEY,
++                0
++        ));
++        streets.add(new StreetPlan(
++                westX,
++                cz + 12,
++                cx - innerEdge,
++                cz + 12,
++                StreetType.ALLEY,
++                0
++        ));
++        streets.add(new StreetPlan(
++                cx + innerEdge,
++                cz + 12,
++                eastX,
++                cz + 12,
++                StreetType.ALLEY,
++                0
++        ));
++
++        // Deux venelles verticales raccourcissent les trajets entre quartiers.
++        int alleyX = Math.max(plazaHalf + 13, outerStreetX / 2);
++        streets.add(new StreetPlan(
++                cx - alleyX,
++                cz - 10,
++                cx - alleyX,
++                cz + 12,
++                StreetType.FOOTPATH,
++                0
++        ));
++        streets.add(new StreetPlan(
++                cx + alleyX,
++                cz - 10,
++                cx + alleyX,
++                cz + 12,
++                StreetType.FOOTPATH,
++                0
++        ));
++    }
++
++    private static List<LotCandidate> createResidentialCandidates(
++            VillageLayoutSettings settings,
++            int cx,
++            int cz,
++            int unit,
++            int southLaneZ,
++            int northLaneZ,
++            int outerStreetX,
++            int farHouseX) {
++        List<LotCandidate> candidates = new ArrayList<>();
++        List<Integer> columnOffsets = symmetricOffsets(
++                settings.cols(),
++                unit
++        );
++
++        int sequence = 0;
++        for (int offset : columnOffsets) {
++            if (Math.abs(offset) < unit - 2) {
++                continue;
++            }
++
++            candidates.add(houseCandidate(
++                    cx + offset,
++                    southLaneZ - 1,
++                    BlockFace.SOUTH,
++                    sequence++,
++                    0,
++                    2
++            ));
++            candidates.add(houseCandidate(
++                    cx + offset,
++                    southLaneZ + 1,
++                    BlockFace.NORTH,
++                    sequence++,
++                    0,
++                    2
++            ));
++            candidates.add(houseCandidate(
++                    cx + offset,
++                    northLaneZ - 1,
++                    BlockFace.SOUTH,
++                    sequence++,
++                    1,
++                    2
++            ));
++            candidates.add(houseCandidate(
++                    cx + offset,
++                    northLaneZ + 1,
++                    BlockFace.NORTH,
++                    sequence++,
++                    0,
++                    2
++            ));
++        }
++
++        /*
++         * Les deux extrémités des fronts sont légèrement décalées pour casser
++         * la symétrie et occuper la largeur ajoutée par cols.
++         */
++        candidates.add(houseCandidate(
++                cx - farHouseX,
++                southLaneZ - 1,
++                BlockFace.SOUTH,
++                sequence++,
++                0,
++                2
++        ));
++        candidates.add(houseCandidate(
++                cx + farHouseX,
++                southLaneZ - 1,
++                BlockFace.SOUTH,
++                sequence++,
++                0,
++                2
++        ));
++        candidates.add(houseCandidate(
++                cx - farHouseX + 4,
++                northLaneZ - 1,
++                BlockFace.SOUTH,
++                sequence++,
++                1,
++                2
++        ));
++        candidates.add(houseCandidate(
++                cx + farHouseX - 4,
++                northLaneZ - 1,
++                BlockFace.SOUTH,
++                sequence++,
++                1,
++                2
++        ));
+ 
+-        for (LotCandidate candidate : candidates) {
+-            HouseSpec spec = createSpecForCandidate(candidate, random);
+-            LotPlan resolved = resolveCandidate(index, candidate, spec, lots);
+-            if (resolved == null && candidate.optional()) {
++        List<Integer> rowOffsets = symmetricOffsets(
++                settings.rows(),
++                Math.max(10, unit / 2)
++        );
++        for (int offset : rowOffsets) {
++            if (Math.abs(offset) > unit + 4) {
+                 continue;
+             }
++            int roadZ = cz + offset;
++
++            // Façades extérieures et intérieures de la rue occidentale.
++            candidates.add(houseCandidate(
++                    cx - outerStreetX,
++                    roadZ,
++                    BlockFace.EAST,
++                    sequence++,
++                    Math.floorMod(sequence, 2),
++                    2
++            ));
++            candidates.add(houseCandidate(
++                    cx - outerStreetX,
++                    roadZ,
++                    BlockFace.WEST,
++                    sequence++,
++                    0,
++                    1
++            ));
++
++            // Façades extérieures et intérieures de la rue orientale.
++            candidates.add(houseCandidate(
++                    cx + outerStreetX,
++                    roadZ,
++                    BlockFace.WEST,
++                    sequence++,
++                    Math.floorMod(sequence, 2),
++                    2
++            ));
++            candidates.add(houseCandidate(
++                    cx + outerStreetX,
++                    roadZ,
++                    BlockFace.EAST,
++                    sequence++,
++                    0,
++                    1
++            ));
++        }
++
++        return candidates;
++    }
++
++    private static LotCandidate houseCandidate(int roadX,
++                                                int roadZ,
++                                                BlockFace facing,
++                                                int sequence,
++                                                int terraceY,
++                                                int yardDepth) {
++        HouseArchetype[] archetypes = HouseArchetype.values();
++        HouseArchetype archetype = archetypes[
++                Math.floorMod(sequence, archetypes.length)
++                ];
++        LotRole role = sequence % 3 == 0
++                ? LotRole.HOUSE_TWO_STORY
++                : LotRole.HOUSE_SINGLE;
++        return new LotCandidate(
++                role,
++                roadX,
++                roadZ,
++                facing,
++                archetype,
++                true,
++                terraceY,
++                yardDepth,
++                sequence % 4 == 0
++        );
++    }
++
++    private static List<Integer> symmetricOffsets(int count,
++                                                   int step) {
++        List<Integer> offsets = new ArrayList<>();
++        double center = (count - 1) / 2.0D;
++        for (int index = 0; index < count; index++) {
++            offsets.add((int) Math.round((index - center) * step));
++        }
++        return offsets;
++    }
++
++    private static List<LotPlan> materializeLots(
++            List<LotCandidate> mandatory,
++            List<LotCandidate> optional,
++            List<StreetPlan> streets,
++            VillageLayoutSettings settings,
++            int targetHouseCount,
++            Random random) {
++        List<LotPlan> lots = new ArrayList<>();
++
++        for (LotCandidate candidate : mandatory) {
++            HouseSpec spec = createSpecForCandidate(
++                    candidate,
++                    settings,
++                    random
++            );
++            LotPlan resolved = resolveCandidate(
++                    lots.size(),
++                    settings.cols(),
++                    candidate,
++                    spec,
++                    lots,
++                    streets
++            );
+             if (resolved == null) {
+-                throw new IllegalStateException("Impossible d'implanter le lot obligatoire " + candidate.role());
++                throw new IllegalStateException(
++                        "Impossible d'implanter le lot obligatoire "
++                                + candidate.role()
++                );
+             }
+             lots.add(resolved);
+-            index++;
+         }
++
++        List<LotCandidate> shuffled = new ArrayList<>(optional);
++        Collections.shuffle(shuffled, random);
++        for (LotCandidate candidate : shuffled) {
++            if (houseCount(lots) >= targetHouseCount) {
++                break;
++            }
++
++            HouseSpec spec = createSpecForCandidate(
++                    candidate,
++                    settings,
++                    random
++            );
++            LotPlan resolved = resolveCandidate(
++                    lots.size(),
++                    settings.cols(),
++                    candidate,
++                    spec,
++                    lots,
++                    streets
++            );
++            if (resolved != null) {
++                lots.add(resolved);
++            }
++        }
++
++        /*
++         * houseCountMin reste une cible, pas une raison d'annuler toute la
++         * commande. Avec une combinaison extrême (petite grille, maisons très
++         * larges), les contrôles de collision peuvent légitimement éliminer
++         * certains candidats. Le plan maximal sûr est alors préférable à une
++         * ville partiellement construite suivie d'une exception.
++         */
+         return lots;
+     }
+ 
+     private static LotPlan resolveCandidate(int index,
++                                            int columns,
+                                             LotCandidate candidate,
+                                             HouseSpec originalSpec,
+-                                            List<LotPlan> existing) {
++                                            List<LotPlan> existing,
++                                            List<StreetPlan> streets) {
+         List<HouseSpec> specs = originalSpec == null
+                 ? Collections.singletonList(null)
+-                : List.of(originalSpec, stabilizeSpec(originalSpec));
++                : List.of(
++                        originalSpec,
++                        stabilizeSpec(originalSpec)
++                );
+ 
+         for (HouseSpec spec : specs) {
+             for (int offset : NUDGE_OFFSETS) {
+                 int roadX = candidate.roadX();
+                 int roadZ = candidate.roadZ();
+-                if (candidate.facing() == BlockFace.NORTH || candidate.facing() == BlockFace.SOUTH) {
++                if (candidate.facing() == BlockFace.NORTH
++                        || candidate.facing() == BlockFace.SOUTH) {
+                     roadX += offset;
+                 } else {
+                     roadZ += offset;
+                 }
+ 
+                 LotPlan probe = createLotPlan(
+-                        index / 4,
+-                        index % 4,
++                        index / Math.max(1, columns),
++                        index % Math.max(1, columns),
+                         roadX,
+                         roadZ,
+                         candidate.role(),
+@@ -287,7 +878,8 @@ public final class VillageLayoutPlanner {
+                         candidate.yardDepth(),
+                         candidate.cornerLot()
+                 );
+-                if (!overlapsExisting(existing, probe)) {
++                if (!overlapsExisting(existing, probe)
++                        && hasRoadAccess(probe, streets)) {
+                     return probe;
+                 }
+             }
+@@ -295,8 +887,11 @@ public final class VillageLayoutPlanner {
+         return null;
+     }
+ 
+-    private static boolean overlapsExisting(List<LotPlan> lots, LotPlan probe) {
+-        return lots.stream().anyMatch(existing -> existing.overlapsWithGap(probe, MIN_GAP));
++    private static boolean overlapsExisting(List<LotPlan> lots,
++                                            LotPlan probe) {
++        return lots.stream().anyMatch(existing ->
++                existing.overlapsWithGap(probe, MIN_GAP)
++        );
+     }
+ 
+     private static HouseSpec stabilizeSpec(HouseSpec spec) {
+@@ -319,13 +914,28 @@ public final class VillageLayoutPlanner {
+         );
+     }
+ 
+-    private static HouseSpec createSpecForCandidate(LotCandidate candidate, Random random) {
++    private static HouseSpec createSpecForCandidate(
++            LotCandidate candidate,
++            VillageLayoutSettings settings,
++            Random random) {
+         return switch (candidate.role()) {
+-            case HOUSE_SINGLE -> createHouseSpec(candidate.archetype(), false, candidate.terraceY(), random);
+-            case HOUSE_TWO_STORY -> createHouseSpec(candidate.archetype(), true, candidate.terraceY(), random);
++            case HOUSE_SINGLE -> createHouseSpec(
++                    candidate.archetype(),
++                    false,
++                    candidate.terraceY(),
++                    settings,
++                    random
++            );
++            case HOUSE_TWO_STORY -> createHouseSpec(
++                    candidate.archetype(),
++                    true,
++                    candidate.terraceY(),
++                    settings,
++                    random
++            );
+             case INN -> new HouseSpec(
+                     HouseArchetype.TOWNHOUSE,
+-                    11,
++                    Math.max(11, settings.houseBig()),
+                     11,
+                     7,
+                     true,
+@@ -342,7 +952,7 @@ public final class VillageLayoutPlanner {
+             );
+             case BAKERY -> new HouseSpec(
+                     HouseArchetype.COTTAGE,
+-                    9,
++                    Math.max(9, settings.houseSmall()),
+                     9,
+                     5,
+                     false,
+@@ -357,15 +967,133 @@ public final class VillageLayoutPlanner {
+                     candidate.terraceY(),
+                     YardStyle.KITCHEN_GARDEN
+             );
++            case TOWN_HALL -> new HouseSpec(
++                    HouseArchetype.TOWNHOUSE,
++                    Math.max(13, settings.houseBig()),
++                    11,
++                    7,
++                    true,
++                    RoofStyle.GABLE,
++                    2,
++                    0,
++                    Material.DARK_OAK_PLANKS,
++                    2,
++                    3,
++                    true,
++                    true,
++                    candidate.terraceY(),
++                    YardStyle.FENCED
++            );
++            case CARPENTER -> new HouseSpec(
++                    HouseArchetype.WORKSHOP_HOUSE,
++                    Math.max(10, settings.houseSmall()),
++                    9,
++                    5,
++                    false,
++                    RoofStyle.SHED,
++                    2,
++                    0,
++                    Material.SPRUCE_PLANKS,
++                    1,
++                    1,
++                    true,
++                    false,
++                    candidate.terraceY(),
++                    YardStyle.WOODPILE
++            );
+             default -> null;
+         };
+     }
+ 
+-    private static Map<String, Location> createAnchors(World world,
+-                                                        int y,
+-                                                        Location center,
+-                                                        List<StreetPlan> streets,
+-                                                        List<LotPlan> lots) {
++    private static List<PassagePlan> planCoveredPassages(
++            List<StreetPlan> streets,
++            List<LotPlan> lots,
++            VillageLayoutSettings settings,
++            Random random) {
++        List<PassagePlan> result = new ArrayList<>();
++        int target = settings.passageBudget();
++
++        for (StreetPlan street : streets) {
++            if (street.type() != StreetType.ALLEY
++                    || result.size() >= target) {
++                continue;
++            }
++
++            int length = street.horizontal()
++                    ? street.maxX() - street.minX()
++                    : street.maxZ() - street.minZ();
++            if (length < 12) {
++                continue;
++            }
++
++            int[] fractions = {1, 2, 3};
++            for (int fraction : fractions) {
++                if (result.size() >= target) {
++                    break;
++                }
++
++                int x = street.horizontal()
++                        ? street.minX() + (length * fraction) / 4
++                        : street.startX();
++                int z = street.horizontal()
++                        ? street.startZ()
++                        : street.minZ() + (length * fraction) / 4;
++
++                PassagePlan passage = new PassagePlan(
++                        x,
++                        z,
++                        street.horizontal()
++                                ? BlockFace.EAST
++                                : BlockFace.SOUTH,
++                        street.halfWidth(),
++                        random.nextBoolean()
++                                ? PassageStyle.TIMBER
++                                : PassageStyle.STONE
++                );
++                if (passageFits(passage, lots, result)) {
++                    result.add(passage);
++                }
++            }
++        }
++        return result;
++    }
++
++    private static boolean passageFits(PassagePlan passage,
++                                       List<LotPlan> lots,
++                                       List<PassagePlan> existing) {
++        for (LotPlan lot : lots) {
++            for (int x = passage.structureMinX();
++                 x <= passage.structureMaxX();
++                 x++) {
++                for (int z = passage.structureMinZ();
++                     z <= passage.structureMaxZ();
++                     z++) {
++                    if (x >= lot.reservedMinX()
++                            && x <= lot.reservedMaxX()
++                            && z >= lot.reservedMinZ()
++                            && z <= lot.reservedMaxZ()) {
++                        return false;
++                    }
++                }
++            }
++        }
++
++        for (PassagePlan other : existing) {
++            int dx = passage.centerX() - other.centerX();
++            int dz = passage.centerZ() - other.centerZ();
++            if (dx * dx + dz * dz < 100) {
++                return false;
++            }
++        }
++        return true;
++    }
++
++    private static Map<String, Location> createAnchors(
++            World world,
++            int y,
++            Location center,
++            List<StreetPlan> streets,
++            List<LotPlan> lots) {
+         Map<String, Location> anchors = new HashMap<>();
+         anchors.put("center", center.clone());
+         anchors.put("plaza", center.clone());
+@@ -375,19 +1103,123 @@ public final class VillageLayoutPlanner {
+                 .findFirst()
+                 .ifPresent(main -> anchors.put(
+                         "gate",
+-                        new Location(world, main.startX(), y, main.startZ())
++                        new Location(
++                                world,
++                                main.startX(),
++                                y,
++                                main.startZ()
++                        )
+                 ));
+ 
+-        putLotAnchor(anchors, "church", world, y, lots, LotRole.CHURCH);
+-        putLotAnchor(anchors, "forge", world, y, lots, LotRole.FORGE);
+-        putLotAnchor(anchors, "inn", world, y, lots, LotRole.INN);
+-        putLotAnchor(anchors, "bakery", world, y, lots, LotRole.BAKERY);
+-        putLotAnchor(anchors, "market", world, y, lots, LotRole.MARKET);
+-        putLotAnchor(anchors, "farm", world, y, lots, LotRole.FARM);
+-        putLotAnchor(anchors, "pen", world, y, lots, LotRole.PEN);
+-        putLotAnchor(anchors, "service_yard", world, y, lots, LotRole.SERVICE_YARD);
++        putLotAnchor(
++                anchors,
++                "church",
++                world,
++                y,
++                lots,
++                LotRole.CHURCH
++        );
++        putLotAnchor(
++                anchors,
++                "forge",
++                world,
++                y,
++                lots,
++                LotRole.FORGE
++        );
++        putLotAnchor(
++                anchors,
++                "inn",
++                world,
++                y,
++                lots,
++                LotRole.INN
++        );
++        putLotAnchor(
++                anchors,
++                "bakery",
++                world,
++                y,
++                lots,
++                LotRole.BAKERY
++        );
++        putLotAnchor(
++                anchors,
++                "town_hall",
++                world,
++                y,
++                lots,
++                LotRole.TOWN_HALL
++        );
++        putLotAnchor(
++                anchors,
++                "carpenter",
++                world,
++                y,
++                lots,
++                LotRole.CARPENTER
++        );
++        putLotAnchor(
++                anchors,
++                "stable",
++                world,
++                y,
++                lots,
++                LotRole.STABLE
++        );
++        putLotAnchor(
++                anchors,
++                "market",
++                world,
++                y,
++                lots,
++                LotRole.MARKET
++        );
++        putLotAnchor(
++                anchors,
++                "farm",
++                world,
++                y,
++                lots,
++                LotRole.FARM
++        );
++        putLotAnchor(
++                anchors,
++                "pen",
++                world,
++                y,
++                lots,
++                LotRole.PEN
++        );
++        putLotAnchor(
++                anchors,
++                "service_yard",
++                world,
++                y,
++                lots,
++                LotRole.SERVICE_YARD
++        );
+ 
+-        Location mayor = anchors.getOrDefault("inn", center).clone();
++        int residenceIndex = 0;
++        for (LotPlan lot : lots) {
++            if (!lot.isHouse()) {
++                continue;
++            }
++            anchors.put(
++                    "residence_" + residenceIndex++,
++                    new Location(
++                            world,
++                            lot.centerX() + 0.5D,
++                            y + lot.terraceY() + 1.0D,
++                            lot.centerZ() + 0.5D
++                    )
++            );
++        }
++
++        Location mayor = anchors.getOrDefault(
++                "town_hall",
++                anchors.getOrDefault("inn", center)
++        ).clone();
+         anchors.put("mayor", mayor);
+         return anchors;
+     }
+@@ -415,10 +1247,12 @@ public final class VillageLayoutPlanner {
+         for (Object item : lotsOrCandidates) {
+             if (item instanceof LotCandidate candidate) {
+                 if (candidate.role() == LotRole.HOUSE_SINGLE
+-                        || candidate.role() == LotRole.HOUSE_TWO_STORY) {
++                        || candidate.role()
++                        == LotRole.HOUSE_TWO_STORY) {
+                     count++;
+                 }
+-            } else if (item instanceof LotPlan lot && lot.isHouse()) {
++            } else if (item instanceof LotPlan lot
++                    && lot.isHouse()) {
+                 count++;
+             }
+         }
+@@ -427,6 +1261,7 @@ public final class VillageLayoutPlanner {
+ 
+     private static Bounds computeBounds(List<LotPlan> lots,
+                                         List<StreetPlan> streets,
++                                        List<PassagePlan> passages,
+                                         int centerX,
+                                         int centerZ,
+                                         int plazaSize) {
+@@ -443,28 +1278,54 @@ public final class VillageLayoutPlanner {
+             maxZ = Math.max(maxZ, lot.siteMaxZ());
+         }
+         for (StreetPlan street : streets) {
+-            minX = Math.min(minX, street.minX() - street.halfWidth() - 1);
+-            maxX = Math.max(maxX, street.maxX() + street.halfWidth() + 1);
+-            minZ = Math.min(minZ, street.minZ() - street.halfWidth() - 1);
+-            maxZ = Math.max(maxZ, street.maxZ() + street.halfWidth() + 1);
++            minX = Math.min(
++                    minX,
++                    street.minX() - street.halfWidth() - 1
++            );
++            maxX = Math.max(
++                    maxX,
++                    street.maxX() + street.halfWidth() + 1
++            );
++            minZ = Math.min(
++                    minZ,
++                    street.minZ() - street.halfWidth() - 1
++            );
++            maxZ = Math.max(
++                    maxZ,
++                    street.maxZ() + street.halfWidth() + 1
++            );
++        }
++        for (PassagePlan passage : passages) {
++            minX = Math.min(minX, passage.structureMinX());
++            maxX = Math.max(maxX, passage.structureMaxX());
++            minZ = Math.min(minZ, passage.structureMinZ());
++            maxZ = Math.max(maxZ, passage.structureMaxZ());
+         }
+         return new Bounds(minX, maxX, minZ, maxZ);
+     }
+ 
+-    private static HouseSpec createHouseSpec(HouseArchetype archetype,
+-                                             boolean forceTwoStory,
+-                                             int terraceY,
+-                                             Random random) {
++    private static HouseSpec createHouseSpec(
++            HouseArchetype archetype,
++            boolean forceTwoStory,
++            int terraceY,
++            VillageLayoutSettings settings,
++            Random random) {
+         Material accent = VillageStyle.pickAccentPlanks(random);
++        int small = settings.houseSmall();
++        int big = settings.houseBig();
++
+         return switch (archetype) {
+             case COTTAGE -> new HouseSpec(
+                     archetype,
+-                    8,
+-                    8 + random.nextInt(2),
++                    Math.max(8, small - 1),
++                    Math.max(8, small - 1)
++                            + random.nextInt(2),
+                     4,
+                     false,
+-                    random.nextBoolean() ? RoofStyle.GABLE : RoofStyle.HIP,
+-                    2 + random.nextInt(2),
++                    random.nextBoolean()
++                            ? RoofStyle.GABLE
++                            : RoofStyle.HIP,
++                    2,
+                     random.nextInt(3) - 1,
+                     accent,
+                     random.nextInt(3),
+@@ -472,15 +1333,19 @@ public final class VillageLayoutPlanner {
+                     true,
+                     random.nextBoolean(),
+                     terraceY,
+-                    random.nextBoolean() ? YardStyle.FLOWERS : YardStyle.KITCHEN_GARDEN
++                    random.nextBoolean()
++                            ? YardStyle.FLOWERS
++                            : YardStyle.KITCHEN_GARDEN
+             );
+             case TOWNHOUSE -> new HouseSpec(
+                     archetype,
+-                    7,
+-                    9,
++                    Math.max(7, small - 2),
++                    Math.max(9, small),
+                     6,
+                     true,
+-                    random.nextBoolean() ? RoofStyle.GABLE : RoofStyle.SHED,
++                    random.nextBoolean()
++                            ? RoofStyle.GABLE
++                            : RoofStyle.SHED,
+                     1 + random.nextInt(2),
+                     random.nextBoolean() ? 0 : 1,
+                     accent,
+@@ -493,11 +1358,14 @@ public final class VillageLayoutPlanner {
+             );
+             case FAMILY_HOUSE -> new HouseSpec(
+                     archetype,
+-                    10,
+-                    9 + random.nextInt(2),
++                    Math.max(10, big - 1),
++                    Math.max(9, small)
++                            + random.nextInt(2),
+                     5,
+                     forceTwoStory || random.nextBoolean(),
+-                    random.nextBoolean() ? RoofStyle.OFFSET_GABLE : RoofStyle.HIP,
++                    random.nextBoolean()
++                            ? RoofStyle.OFFSET_GABLE
++                            : RoofStyle.HIP,
+                     2,
+                     random.nextInt(3) - 1,
+                     accent,
+@@ -506,15 +1374,20 @@ public final class VillageLayoutPlanner {
+                     true,
+                     random.nextBoolean(),
+                     terraceY,
+-                    random.nextBoolean() ? YardStyle.FENCED : YardStyle.KITCHEN_GARDEN
++                    random.nextBoolean()
++                            ? YardStyle.FENCED
++                            : YardStyle.KITCHEN_GARDEN
+             );
+             case WORKSHOP_HOUSE -> new HouseSpec(
+                     archetype,
+-                    9,
+-                    8 + random.nextInt(2),
++                    Math.max(9, small),
++                    Math.max(8, small - 1)
++                            + random.nextInt(2),
+                     5,
+                     forceTwoStory && random.nextBoolean(),
+-                    random.nextBoolean() ? RoofStyle.SHED : RoofStyle.GABLE,
++                    random.nextBoolean()
++                            ? RoofStyle.SHED
++                            : RoofStyle.GABLE,
+                     2,
+                     random.nextInt(3) - 1,
+                     accent,
+@@ -523,7 +1396,9 @@ public final class VillageLayoutPlanner {
+                     random.nextBoolean(),
+                     random.nextBoolean(),
+                     terraceY,
+-                    random.nextBoolean() ? YardStyle.WOODPILE : YardStyle.FENCED
++                    random.nextBoolean()
++                            ? YardStyle.WOODPILE
++                            : YardStyle.FENCED
+             );
+         };
+     }
+@@ -549,16 +1424,48 @@ public final class VillageLayoutPlanner {
+             frontSetback = spec.frontSetback();
+             lateralOffset = spec.lateralOffset();
+         } else {
+-            Map<LotRole, int[]> sizes = new EnumMap<>(LotRole.class);
+-            sizes.put(LotRole.CHURCH, new int[]{15, 19, 4});
+-            sizes.put(LotRole.FORGE, new int[]{13, 11, 3});
+-            sizes.put(LotRole.FARM, new int[]{11, 11, 3});
+-            sizes.put(LotRole.PEN, new int[]{10, 10, 3});
+-            sizes.put(LotRole.MARKET, new int[]{7, 7, 2});
+-            sizes.put(LotRole.GREEN, new int[]{8, 8, 3});
+-            sizes.put(LotRole.SERVICE_YARD, new int[]{10, 9, 3});
+-            sizes.put(LotRole.DECOR, new int[]{7, 7, 3});
+-            int[] dimensions = sizes.getOrDefault(role, new int[]{8, 8, 3});
++            Map<LotRole, int[]> sizes =
++                    new EnumMap<>(LotRole.class);
++            sizes.put(
++                    LotRole.CHURCH,
++                    new int[]{15, 19, 4}
++            );
++            sizes.put(
++                    LotRole.FORGE,
++                    new int[]{13, 11, 3}
++            );
++            sizes.put(
++                    LotRole.STABLE,
++                    new int[]{15, 11, 3}
++            );
++            sizes.put(
++                    LotRole.FARM,
++                    new int[]{11, 11, 3}
++            );
++            sizes.put(
++                    LotRole.PEN,
++                    new int[]{10, 10, 3}
++            );
++            sizes.put(
++                    LotRole.MARKET,
++                    new int[]{7, 7, 2}
++            );
++            sizes.put(
++                    LotRole.GREEN,
++                    new int[]{8, 8, 3}
++            );
++            sizes.put(
++                    LotRole.SERVICE_YARD,
++                    new int[]{10, 9, 3}
++            );
++            sizes.put(
++                    LotRole.DECOR,
++                    new int[]{7, 7, 3}
++            );
++            int[] dimensions = sizes.getOrDefault(
++                    role,
++                    new int[]{8, 8, 3}
++            );
+             width = dimensions[0];
+             depth = dimensions[1];
+             frontSetback = dimensions[2];
+@@ -572,30 +1479,37 @@ public final class VillageLayoutPlanner {
+ 
+         switch (facing) {
+             case NORTH -> {
+-                buildX = roadX - (width / 2) + lateralOffset;
++                buildX = roadX - (width / 2)
++                        + lateralOffset;
+                 buildZ = roadZ + frontSetback;
+                 frontageZ = roadZ - 1;
+                 frontageX = roadX + lateralOffset;
+             }
+             case SOUTH -> {
+-                buildX = roadX - (width / 2) + lateralOffset;
++                buildX = roadX - (width / 2)
++                        + lateralOffset;
+                 buildZ = roadZ - frontSetback - depth;
+                 frontageZ = roadZ + 1;
+                 frontageX = roadX + lateralOffset;
+             }
+             case EAST -> {
+                 buildX = roadX - frontSetback - width;
+-                buildZ = roadZ - (depth / 2) + lateralOffset;
++                buildZ = roadZ - (depth / 2)
++                        + lateralOffset;
+                 frontageX = roadX + 1;
+                 frontageZ = roadZ + lateralOffset;
+             }
+             case WEST -> {
+                 buildX = roadX + frontSetback;
+-                buildZ = roadZ - (depth / 2) + lateralOffset;
++                buildZ = roadZ - (depth / 2)
++                        + lateralOffset;
+                 frontageX = roadX - 1;
+                 frontageZ = roadZ + lateralOffset;
+             }
+-            default -> throw new IllegalArgumentException("Orientation de lot non horizontale : " + facing);
++            default -> throw new IllegalArgumentException(
++                    "Orientation de lot non horizontale : "
++                            + facing
++            );
+         }
+ 
+         int actualCenterX = buildX + (width - 1) / 2;
+@@ -621,8 +1535,12 @@ public final class VillageLayoutPlanner {
+         );
+     }
+ 
+-    private static int terrace(VillageLayoutSettings settings, int desired) {
+-        return Math.min(Math.max(0, desired), settings.terrainMaxStep());
++    private static int terrace(VillageLayoutSettings settings,
++                                int desired) {
++        return Math.min(
++                Math.max(0, desired),
++                settings.terrainMaxStep()
++        );
+     }
+ 
+     private record LotCandidate(
+diff --git a/src/main/java/org/example/village/VillageLayoutSettings.java b/src/main/java/org/example/village/VillageLayoutSettings.java
+index d09062f503952456cd75cfc41ee274c91aa7803d..06456ab0c0e83dc3f50025bea475f8b364164dd6 100644
+--- a/src/main/java/org/example/village/VillageLayoutSettings.java
++++ b/src/main/java/org/example/village/VillageLayoutSettings.java
+@@ -29,17 +29,22 @@ public record VillageLayoutSettings(
+         layoutStyle = layoutStyle == null || layoutStyle.isBlank()
+                 ? "semi_organic"
+                 : layoutStyle.trim().toLowerCase(Locale.ROOT);
+-        rows = Math.max(3, rows);
+-        cols = Math.max(3, cols);
+-        houseSmall = Math.max(7, houseSmall);
+-        houseBig = Math.max(houseSmall, houseBig);
+-        spacing = Math.max(16, spacing);
+-        roadHalf = Math.max(1, roadHalf);
+-        plazaSize = makeOdd(Math.max(13, plazaSize));
+-        houseCountMin = Math.max(8, houseCountMin);
+-        houseCountMax = Math.max(houseCountMin, houseCountMax);
+-        mainStreetHalf = Math.max(2, mainStreetHalf);
+-        sideStreetHalf = Math.max(1, sideStreetHalf);
++        /*
++         * Les plafonds protègent le thread serveur contre une configuration
++         * accidentelle qui demanderait plusieurs centaines de lots ou une
++         * terrasse de plusieurs millions de blocs.
++         */
++        rows = clamp(rows, 3, 9);
++        cols = clamp(cols, 3, 11);
++        houseSmall = clamp(houseSmall, 7, 13);
++        houseBig = clamp(Math.max(houseSmall, houseBig), houseSmall, 15);
++        spacing = clamp(spacing, 16, 32);
++        roadHalf = clamp(roadHalf, 1, 4);
++        plazaSize = makeOdd(clamp(plazaSize, 13, 21));
++        houseCountMin = clamp(houseCountMin, 8, 64);
++        houseCountMax = clamp(Math.max(houseCountMin, houseCountMax), houseCountMin, 64);
++        mainStreetHalf = clamp(mainStreetHalf, 2, 4);
++        sideStreetHalf = clamp(sideStreetHalf, 1, 2);
+         terrainMaxStep = Math.max(0, Math.min(3, terrainMaxStep));
+         decorDensity = decorDensity == null || decorDensity.isBlank()
+                 ? "medium"
+@@ -73,29 +78,42 @@ public record VillageLayoutSettings(
+      * une parcelle bâtie.</p>
+      */
+     public int decorationBudget() {
++        int districtCells = rows * cols;
+         return switch (decorDensity) {
+             case "none", "off" -> 0;
+-            case "low", "light" -> 16;
+-            case "high", "dense" -> 42;
+-            default -> 28;
++            case "low", "light" -> Math.min(48, 12 + districtCells / 2);
++            case "high", "dense" -> Math.min(112, 36 + districtCells * 2);
++            default -> Math.min(80, 22 + districtCells);
+         };
+     }
+ 
+     /**
+      * Réserve une part du budget aux arbres avant le tirage des petits décors.
+-     * Sans cette passe, un village pouvait ne recevoir presque aucun arbre
+-     * malgré une densité élevée à cause du hasard du sélecteur décoratif.
++     * La valeur grandit avec la surface du plan afin que les quartiers ajoutés
++     * ne deviennent pas une étendue minérale.
+      */
+     public int treeBudget() {
+         return switch (decorDensity) {
+             case "none", "off" -> 0;
+-            case "low", "light" -> 4;
+-            case "high", "dense" -> 10;
+-            default -> 7;
++            case "low", "light" -> Math.min(8, 2 + (rows + cols) / 3);
++            case "high", "dense" -> Math.min(18, 6 + (rows + cols));
++            default -> Math.min(13, 4 + (rows + cols) / 2);
+         };
+     }
+ 
++    /**
++     * Nombre cible de passages couverts. Le planificateur peut en retenir
++     * moins si aucune implantation sûre n'est disponible.
++     */
++    public int passageBudget() {
++        return Math.min(8, Math.max(3, (rows + cols) / 2));
++    }
++
+     private static int makeOdd(int value) {
+         return value % 2 == 0 ? value + 1 : value;
+     }
++
++    private static int clamp(int value, int min, int max) {
++        return Math.max(min, Math.min(max, value));
++    }
+ }
+diff --git a/src/main/java/org/example/village/VillagePopulationSettings.java b/src/main/java/org/example/village/VillagePopulationSettings.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..7fdc9c9bfde216158036fdace7ccb4eaf758b920
+--- /dev/null
++++ b/src/main/java/org/example/village/VillagePopulationSettings.java
+@@ -0,0 +1,105 @@
++package org.example.village;
++
++import org.bukkit.configuration.file.FileConfiguration;
++
++import java.util.Objects;
++
++/**
++ * Configuration validée de la population générée par {@code /village}.
++ *
++ * <p>Les bornes empêchent une configuration erronée de créer des centaines
++ * d'entités par minute ou, à l'inverse, des spawners actifs à chaque tick.
++ * Toutes les valeurs sont exprimées en ticks serveur lorsque leur nom se
++ * termine par {@code Ticks}.</p>
++ */
++public record VillagePopulationSettings(
++        int initialResidents,
++        int villagerSpawnerCount,
++        int populationCap,
++        int minDelayTicks,
++        int maxDelayTicks,
++        int maxNearbyEntities,
++        int requiredPlayerRange,
++        int spawnRange,
++        int lifetimeTicks) {
++
++    private static final int MIN_NAMED_AND_GUARDS = 12;
++
++    public VillagePopulationSettings {
++        initialResidents = clamp(initialResidents, 0, 40);
++        villagerSpawnerCount = clamp(villagerSpawnerCount, 0, 16);
++
++        /*
++         * Le quota doit toujours pouvoir contenir les marchands nommés,
++         * le maire, les artisans et les résidents initiaux. Cela évite que la
++         * première passe de limitation supprime aussitôt des PNJ importants.
++         */
++        int minimumCap = Math.min(
++                120,
++                initialResidents + MIN_NAMED_AND_GUARDS
++        );
++        populationCap = clamp(populationCap, minimumCap, 120);
++
++        minDelayTicks = clamp(minDelayTicks, 200, 72_000);
++        maxDelayTicks = clamp(maxDelayTicks, minDelayTicks, 72_000);
++        maxNearbyEntities = clamp(maxNearbyEntities, 1, 12);
++        requiredPlayerRange = clamp(requiredPlayerRange, 8, 64);
++        spawnRange = clamp(spawnRange, 1, 6);
++        lifetimeTicks = clamp(lifetimeTicks, 0, 1_728_000);
++    }
++
++    /**
++     * Charge la configuration avec des valeurs par défaut adaptées à une ville
++     * d'environ trente maisons.
++     */
++    public static VillagePopulationSettings from(
++            FileConfiguration configuration) {
++        Objects.requireNonNull(configuration, "configuration");
++        return new VillagePopulationSettings(
++                configuration.getInt(
++                        "village.population.initial-residents",
++                        14
++                ),
++                configuration.getInt(
++                        "village.population.villager-spawners",
++                        8
++                ),
++                configuration.getInt(
++                        "village.population.cap",
++                        56
++                ),
++                configuration.getInt(
++                        "village.population.spawner.min-delay-ticks",
++                        1_200
++                ),
++                configuration.getInt(
++                        "village.population.spawner.max-delay-ticks",
++                        2_400
++                ),
++                configuration.getInt(
++                        "village.population.spawner.max-nearby-entities",
++                        4
++                ),
++                configuration.getInt(
++                        "village.population.spawner.required-player-range",
++                        24
++                ),
++                configuration.getInt(
++                        "village.population.spawner.spawn-range",
++                        3
++                ),
++                clamp(
++                        configuration.getInt(
++                                "village.population.lifetime-minutes",
++                                0
++                        ),
++                        0,
++                        1_440
++                ) * 20 * 60
++        );
++    }
++
++    private static int clamp(int value, int minimum, int maximum) {
++        return Math.max(minimum, Math.min(maximum, value));
++    }
++}
+diff --git a/src/main/resources/config.yml b/src/main/resources/config.yml
+index 0761196cfb886ef766e109e3c7d2244dc12346db..5e91fbb991783773f0b71f690695c6d2be81ea50 100644
+--- a/src/main/resources/config.yml
++++ b/src/main/resources/config.yml
+@@ -196,19 +196,36 @@ village:
+   roadHalf: 2
+   # Pas centre-à-centre des îlots (et non une marge ajoutée à la maison).
+   spacing: 20
+-  # Taille impaire ; 13 laisse respirer le puits, les bancs et les étals.
+-  plazaSize: 13
+-  rows: 4
+-  cols: 5
+-  houseCountMin: 12
+-  houseCountMax: 16
++  # Taille impaire ; 15 forme une vraie place de marché sans casser la densité.
++  plazaSize: 15
++  # 5 x 7 produit une ville d'environ 181 x 146 blocs avec 28 à 32 logements.
++  rows: 5
++  cols: 7
++  houseCountMin: 26
++  houseCountMax: 32
+   mainStreetHalf: 2
+   sideStreetHalf: 1
+   terrainMaxStep: 2
+   # none | low | medium | high
+   decorDensity: high
+   # Respiration minimale entre les derniers jardins et la face intérieure.
+-  wallGap: 7
++  wallGap: 8
++
++  # Population de la ville. Les spawners sont répartis entre les quartiers et
++  # partagent un quota persistant pour protéger les performances du serveur.
++  population:
++    initial-residents: 14
++    villager-spawners: 8
++    cap: 56
++    # 0 = habitants persistants jusqu'à /village undo ou suppression manuelle.
++    lifetime-minutes: 0
++    spawner:
++      # 60 à 120 secondes entre deux tentatives (20 ticks = 1 seconde).
++      min-delay-ticks: 1200
++      max-delay-ticks: 2400
++      max-nearby-entities: 4
++      required-player-range: 24
++      spawn-range: 3
+ 
+   # Passe lumineuse finale du village (les lampadaires de rue restent liés au décor).
+   lighting:
+@@ -228,7 +245,7 @@ village:
+     # Espacement des bornes lumineuses placées le long de la muraille.
+     perimeter-lantern-spacing: 14
+     # Garde-fou pour une configuration de village anormalement grande.
+-    max-hidden-lights: 2048
++    max-hidden-lights: 4096
+ 
+ # Paramètres des métiers
+ jobs:
+diff --git a/src/test/java/org/example/village/VillageLayoutPlannerTest.java b/src/test/java/org/example/village/VillageLayoutPlannerTest.java
+index c968e7b865fc10f304736a11e7047ad58ff406bc..9c3fc314baed296adc227a7a0fc2a64d36452d55 100644
+--- a/src/test/java/org/example/village/VillageLayoutPlannerTest.java
++++ b/src/test/java/org/example/village/VillageLayoutPlannerTest.java
+@@ -18,15 +18,15 @@ class VillageLayoutPlannerTest {
+     private static VillageLayoutSettings settings() {
+         return new VillageLayoutSettings(
+                 "semi_organic",
+-                4,
+                 5,
++                7,
+                 9,
+                 11,
+                 20,
+                 2,
+-                13,
+-                12,
+-                16,
++                15,
++                26,
++                32,
+                 2,
+                 1,
+                 2,
+@@ -54,6 +54,9 @@ class VillageLayoutPlannerTest {
+                 VillageLayoutPlan.LotRole.FORGE,
+                 VillageLayoutPlan.LotRole.INN,
+                 VillageLayoutPlan.LotRole.BAKERY,
++                VillageLayoutPlan.LotRole.TOWN_HALL,
++                VillageLayoutPlan.LotRole.CARPENTER,
++                VillageLayoutPlan.LotRole.STABLE,
+                 VillageLayoutPlan.LotRole.FARM,
+                 VillageLayoutPlan.LotRole.PEN,
+                 VillageLayoutPlan.LotRole.MARKET,
+@@ -69,12 +72,21 @@ class VillageLayoutPlannerTest {
+                 "forge",
+                 "inn",
+                 "bakery",
++                "town_hall",
++                "carpenter",
++                "stable",
+                 "market",
+                 "farm",
+                 "pen",
+                 "service_yard",
+                 "mayor"
+         )));
++        assertEquals(
++                plan.houseCount(),
++                plan.anchors().keySet().stream()
++                        .filter(key -> key.startsWith("residence_"))
++                        .count()
++        );
+ 
+         // Une ancre désigne toujours le bloc de sol ; les gestionnaires
+         // d'entités appliquent eux-mêmes le décalage vertical de spawn.
+@@ -85,6 +97,9 @@ class VillageLayoutPlannerTest {
+                 case FORGE -> "forge";
+                 case INN -> "inn";
+                 case BAKERY -> "bakery";
++                case TOWN_HALL -> "town_hall";
++                case CARPENTER -> "carpenter";
++                case STABLE -> "stable";
+                 case FARM -> "farm";
+                 case PEN -> "pen";
+                 case SERVICE_YARD -> "service_yard";
+@@ -131,9 +146,14 @@ class VillageLayoutPlannerTest {
+                     new Random(seed)
+             );
+ 
+-            assertTrue(plan.houseCount() >= 12 && plan.houseCount() <= 16);
++            assertTrue(plan.houseCount() >= 26 && plan.houseCount() <= 32);
+             assertEquals(3, plan.landmarks().size());
+-            assertTrue(plan.streets().size() >= 9);
++            assertTrue(plan.streets().size() >= 13);
++            assertTrue(plan.streets().stream().anyMatch(
++                    street -> street.type()
++                            == VillageLayoutPlan.StreetType.ALLEY
++            ));
++            assertTrue(plan.passages().size() >= 3);
+             assertTrue(plan.lots().stream().allMatch(
+                     lot -> VillageLayoutPlanner.hasRoadAccess(lot, plan.streets())
+             ));
+@@ -180,7 +200,53 @@ class VillageLayoutPlannerTest {
+         assertEquals(10, legacy.houseCountMax());
+         assertEquals(3, legacy.terrainMaxStep());
+         assertEquals("high", legacy.decorDensity());
+-        assertEquals(42, legacy.decorationBudget());
+-        assertEquals(10, legacy.treeBudget());
++        assertEquals(54, legacy.decorationBudget());
++        assertEquals(12, legacy.treeBudget());
++        assertEquals(3, legacy.passageBudget());
++    }
++
++    @Test
++    void impossibleHouseTargetFallsBackToTheLargestSafeLayout() {
++        World world = mock(World.class);
++        VillageLayoutSettings oversizedTarget = new VillageLayoutSettings(
++                "semi_organic",
++                9,
++                11,
++                13,
++                15,
++                32,
++                4,
++                21,
++                60,
++                64,
++                4,
++                2,
++                3,
++                "high"
++        );
++
++        /*
++         * Le minimum demandé est volontairement impossible avec ces grandes
++         * empreintes. La commande doit néanmoins produire la ville maximale
++         * sûre plutôt que lever une exception après le terrassement.
++         */
++        VillageLayoutPlan plan = VillageLayoutPlanner.plan(
++                new Location(world, 0, 64, 0),
++                oversizedTarget,
++                new Random(7)
++        );
++
++        assertTrue(plan.houseCount() >= 8);
++        assertTrue(plan.houseCount() < oversizedTarget.houseCountMin());
++        for (int i = 0; i < plan.lots().size(); i++) {
++            for (int j = i + 1; j < plan.lots().size(); j++) {
++                assertFalse(
++                        plan.lots().get(i).overlapsWithGap(
++                                plan.lots().get(j),
++                                4
++                        )
++                );
++            }
++        }
+     }
+ }
+diff --git a/src/test/java/org/example/village/VillagePopulationSettingsTest.java b/src/test/java/org/example/village/VillagePopulationSettingsTest.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..85f6c177b80f0afa851a6ea5a576d0155c76084e
+--- /dev/null
++++ b/src/test/java/org/example/village/VillagePopulationSettingsTest.java
+@@ -0,0 +1,52 @@
++package org.example.village;
++
++import org.junit.jupiter.api.Test;
++
++import static org.junit.jupiter.api.Assertions.assertEquals;
++
++class VillagePopulationSettingsTest {
++
++    @Test
++    void unsafeValuesAreClampedForServerSafety() {
++        VillagePopulationSettings settings =
++                new VillagePopulationSettings(
++                        -5,
++                        99,
++                        1,
++                        1,
++                        0,
++                        99,
++                        1,
++                        99,
++                        9_999_999
++                );
++
++        assertEquals(0, settings.initialResidents());
++        assertEquals(16, settings.villagerSpawnerCount());
++        assertEquals(12, settings.populationCap());
++        assertEquals(200, settings.minDelayTicks());
++        assertEquals(200, settings.maxDelayTicks());
++        assertEquals(12, settings.maxNearbyEntities());
++        assertEquals(8, settings.requiredPlayerRange());
++        assertEquals(6, settings.spawnRange());
++        assertEquals(1_728_000, settings.lifetimeTicks());
++    }
++
++    @Test
++    void capAlwaysLeavesRoomForResidentsAndNamedNpcs() {
++        VillagePopulationSettings settings =
++                new VillagePopulationSettings(
++                        40,
++                        8,
++                        20,
++                        1_200,
++                        2_400,
++                        4,
++                        24,
++                        3,
++                        0
++                );
++
++        assertEquals(52, settings.populationCap());
++    }
++}
+diff --git a/src/test/java/org/example/village/VillageStructureTest.java b/src/test/java/org/example/village/VillageStructureTest.java
+index ad5c6373472c4bc1c28dcd508ecaa3651409d0f1..7e77f2994a45a8052a72adb6b0edf5a7b97d984a 100644
+--- a/src/test/java/org/example/village/VillageStructureTest.java
++++ b/src/test/java/org/example/village/VillageStructureTest.java
+@@ -45,8 +45,8 @@ class VillageStructureTest {
+         );
+         assertEquals(-16, bounds[0]);
+         assertEquals(16, bounds[1]);
+-        // L'emprise nord inclut désormais le donjon relié à la courtine.
+-        assertEquals(-28, bounds[2]);
++        // L'emprise nord inclut désormais le donjon relié à la courtine.
++        assertEquals(-28, bounds[2]);
+         assertEquals(16, bounds[3]);
+         assertEquals(Material.DARK_OAK_STAIRS,
+                 blocks.get(key(-16, 78, -16)));
+@@ -489,6 +489,98 @@ class VillageStructureTest {
+         assertTrue(values.contains(Material.CHAIN));
+     }
+ 
++    @Test
++    void coveredPassageKeepsAThreeBlockHighWalkway() {
++        Map<String, Material> blocks = new HashMap<>();
++        TerrainManager.SetBlock setBlock =
++                (x, y, z, material) -> blocks.put(
++                        key(x, y, z),
++                        material
++                );
++        VillageLayoutPlan.PassagePlan passage =
++                new VillageLayoutPlan.PassagePlan(
++                        0,
++                        0,
++                        BlockFace.EAST,
++                        1,
++                        VillageLayoutPlan.PassageStyle.TIMBER
++                );
++
++        MedievalPassageBuilder.build(
++                null,
++                passage,
++                64,
++                setBlock
++        ).forEach(Runnable::run);
++
++        for (int x = -1; x <= 1; x++) {
++            for (int y = 65; y <= 67; y++) {
++                assertEquals(
++                        Material.AIR,
++                        blocks.get(key(x, y, 0))
++                );
++            }
++        }
++        assertTrue(blocks.values().contains(Material.LANTERN));
++        assertTrue(blocks.values().contains(Material.YELLOW_STAINED_GLASS));
++        assertTrue(blocks.values().contains(Material.STRIPPED_SPRUCE_LOG));
++    }
++
++    @Test
++    void stableContainsFourStallsAndKeepsItsCentralAisleOpen() {
++        Map<String, Material> blocks = new HashMap<>();
++        TerrainManager.SetBlock setBlock =
++                (x, y, z, material) -> blocks.put(
++                        key(x, y, z),
++                        material
++                );
++        VillageLayoutPlan.LotPlan stable =
++                new VillageLayoutPlan.LotPlan(
++                        0,
++                        0,
++                        0,
++                        0,
++                        VillageLayoutPlan.LotRole.STABLE,
++                        BlockFace.WEST,
++                        -7,
++                        -5,
++                        15,
++                        11,
++                        -8,
++                        0,
++                        null,
++                        0,
++                        3,
++                        false
++                );
++
++        SpecialBuildings.buildStable(
++                null,
++                stable,
++                65,
++                setBlock
++        ).forEach(Runnable::run);
++
++        assertTrue(blocks.values().contains(Material.HAY_BLOCK));
++        assertTrue(blocks.values().contains(Material.WATER_CAULDRON));
++        assertTrue(blocks.values().contains(Material.DARK_OAK_FENCE_GATE));
++        assertTrue(blocks.values().contains(Material.WHITE_TERRACOTTA));
++
++        // Pour une façade OUEST, l'axe longitudinal suit X.
++        for (int x = -5; x <= 5; x++) {
++            for (int y = 66; y <= 68; y++) {
++                Material material = blocks.get(key(x, y, 0));
++                assertTrue(
++                        material == null || material == Material.AIR,
++                        "Allée centrale bloquée en "
++                                + key(x, y, 0)
++                                + " par "
++                                + material
++                );
++            }
++        }
++    }
++
+     private static String key(int x, int y, int z) {
+         return x + ":" + y + ":" + z;
+     }
