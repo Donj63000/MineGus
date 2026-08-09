@@ -2520,7 +2520,7 @@ public class Mineur implements CommandExecutor, Listener {
             Chunk chunk = current.next();
             if (!chunk.getWorld().getUID().equals(world.getUID())
                     || !desired.contains(chunkKey(chunk.getX(), chunk.getZ()))) {
-                chunk.removePluginChunkTicket(plugin);
+                org.example.forestry2.SharedChunkTickets.release(plugin, chunk);
                 current.remove();
             }
         }
@@ -2537,7 +2537,7 @@ public class Mineur implements CommandExecutor, Listener {
             int chunkX = (int) (key >> 32);
             int chunkZ = (int) key;
             Chunk chunk = world.getChunkAt(chunkX, chunkZ);
-            chunk.addPluginChunkTicket(plugin);
+            org.example.forestry2.SharedChunkTickets.acquire(plugin, chunk);
             runtime.ticketChunks.add(chunk);
         }
     }
@@ -5215,7 +5215,7 @@ public class Mineur implements CommandExecutor, Listener {
 
         void releaseChunkTickets() {
             for (Chunk chunk : new HashSet<>(ticketChunks)) {
-                chunk.removePluginChunkTicket(plugin);
+                org.example.forestry2.SharedChunkTickets.release(plugin, chunk);
             }
             ticketChunks.clear();
         }

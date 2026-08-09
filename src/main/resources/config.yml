@@ -550,3 +550,26 @@ jobs:
 
       NETHER_QUARTZ_ORE: 4
       NETHER_GOLD_ORE: 6
+
+# Exploitation forestière automatisée (/foret et /bucheron).
+forester-v2:
+  enabled: true
+  # Nombre de parcelles par joueur ; les administrateurs ne sont pas limités.
+  max-areas-per-player: 2
+  # Écart vertical maximal accepté avant de refuser une création.
+  maximum-terrain-variation: 3
+  # Délai de pousse assistée. La pousse vanilla reste également acceptée.
+  growth-min-seconds: 120
+  growth-max-seconds: 240
+  # Limite le nombre de blocs coupés par cycle pour lisser la charge serveur.
+  harvest-blocks-per-cycle: 3
+  storage-retry-seconds: 30
+  # Sauvegarde la poche et l'état même pendant une coupe en cours.
+  autosave-seconds: 10
+  task-period-ticks: 2
+  # Maintient tous les chunks de la parcelle chargés via des tickets partagés.
+  keep-chunks-loaded: true
+  # Garantit la continuité si aucun jeune arbre ne tombe.
+  emergency-saplings: true
+  # Empêche les joueurs, explosions, pistons et feu d'endommager la zone.
+  protect-area: true

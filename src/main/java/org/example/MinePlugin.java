@@ -183,10 +183,15 @@ public class MinePlugin extends JavaPlugin implements Listener {
         } catch (Throwable throwable) {
             getLogger().warning("VillageEntityManager desactive dans cet environnement: " + throwable.getClass().getSimpleName());
         }
+
+        // Le module forestier est installé en dernier pour remplacer proprement l'ancien exécuteur.
+        org.example.forestry2.ForestryModule.install(this);
     }
 
     @Override
     public void onDisable() {
+        // Sauvegarde les récoltes et libère les tickets avant les autres services.
+        org.example.forestry2.ForestryModule.shutdown();
         // Sauvegarde des sessions (mineur, champ, foret)
         if (mineur != null) {
             mineur.saveAllSessions();

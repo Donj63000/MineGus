@@ -33,6 +33,7 @@ commands:
   foret:
     description: Crée une forêt automatisée (plantation et récolte d’arbres)
     usage: /foret [Largeur]x[Longueur]
+    permission: minegus.forester.use
   village:
     description: Génère un petit village de PNJ
     usage: /village
@@ -66,6 +67,10 @@ commands:
       /niveau setlevel <joueur> <1-100>
       /niveau reset <joueur>
 
+  bucheron:
+    description: Alias complet de la commande forêt
+    usage: /bucheron [creer|statut|liste|reparer|supprimer|aide]
+    permission: minegus.forester.use
 permissions:
   mineplugin.mineur.use:
     description: Utiliser les fonctionnalités du mineur automatisé
@@ -92,6 +97,15 @@ permissions:
     description: Consulter et modifier le niveau global des joueurs
     default: op
 
+  minegus.forester.use:
+    description: Utiliser et gérer ses parcelles forestières
+    default: true
+  minegus.forester.admin:
+    description: Gérer toutes les parcelles forestières
+    default: op
+  minegus.forester.bypass:
+    description: Modifier manuellement une parcelle protégée
+    default: op
 softdepend:
   - WorldGuard
   - GriefPrevention
