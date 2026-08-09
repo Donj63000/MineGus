@@ -17,6 +17,10 @@ commands:
   ping:
     description: Répond « Pong ! »
     usage: /ping
+  tuto:
+    description: Lance ou quitte la visite guidée privée de DonjBot
+    usage: /tuto
+    permission: mineplugin.tuto.use
   mineur:
     description: Gestion du mineur automatisé
     usage: |
@@ -72,6 +76,9 @@ commands:
     usage: /bucheron [creer|statut|liste|reparer|supprimer|aide]
     permission: minegus.forester.use
 permissions:
+  mineplugin.tuto.use:
+    description: Lancer et quitter la visite guidée privée (/tuto)
+    default: true
   mineplugin.mineur.use:
     description: Utiliser les fonctionnalités du mineur automatisé
     default: true

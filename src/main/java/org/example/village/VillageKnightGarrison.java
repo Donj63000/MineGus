@@ -21,15 +21,44 @@ import java.util.UUID;
  */
 public final class VillageKnightGarrison {
 
+    /**
+     * Première version persistée par les anciennes garnisons.
+     */
+    public static final int LEGACY_PLAN_VERSION = 1;
+
+    /**
+     * Version du plan qui sépare sentinelles, patrouilles et remparts.
+     */
+    public static final int CURRENT_PLAN_VERSION = 2;
+
     public enum UnitKind {
         SWORDSMAN,
         ARCHER
     }
 
     public enum RouteKind {
+        /**
+         * Valeur conservée uniquement pour relire les sauvegardes historiques.
+         */
         STRATEGIC,
+        GATE_SENTRY,
+        PLAZA_SENTRY,
+        KEEP_ENTRANCE_SENTRY,
+        KEEP_INTERIOR_SENTRY,
         URBAN,
-        RAMPART
+        RAMPART;
+
+        public boolean isSentry() {
+            return this == STRATEGIC
+                    || this == GATE_SENTRY
+                    || this == PLAZA_SENTRY
+                    || this == KEEP_ENTRANCE_SENTRY
+                    || this == KEEP_INTERIOR_SENTRY;
+        }
+
+        public boolean isPatrol() {
+            return this == URBAN || this == RAMPART;
+        }
     }
 
     /**
@@ -187,6 +216,9 @@ public final class VillageKnightGarrison {
         private BlockPoint movementSample;
         private long movementSampleAtMillis;
         private long lastPositionPersistAtMillis;
+        private BlockPoint navigationTarget;
+        private long lastPathCommandAtMillis;
+        private long lastRecoveryAttemptAtMillis;
 
         public KnightSlot(UUID slotId,
                           int routeId,
@@ -230,6 +262,9 @@ public final class VillageKnightGarrison {
         public void setEntityId(UUID entityId) {
             this.entityId = entityId;
             missingLoadedChecks = 0;
+            if (entityId == null) {
+                clearNavigationCommand();
+            }
         }
 
         public long respawnAtMillis() {
@@ -308,8 +343,39 @@ public final class VillageKnightGarrison {
         public void markPositionPersisted(long nowMillis) {
             lastPositionPersistAtMillis = Math.max(0L, nowMillis);
         }
+
+        public BlockPoint navigationTarget() {
+            return navigationTarget;
+        }
+
+        public long lastPathCommandAtMillis() {
+            return lastPathCommandAtMillis;
+        }
+
+        /**
+         * Mémorise un ordre de déplacement. Le gestionnaire peut ainsi laisser
+         * le pathfinder vanilla travailler plusieurs ticks sans le réinitialiser.
+         */
+        public void markPathCommand(BlockPoint target, long nowMillis) {
+            navigationTarget = target;
+            lastPathCommandAtMillis = Math.max(0L, nowMillis);
+        }
+
+        public void clearNavigationCommand() {
+            navigationTarget = null;
+            lastPathCommandAtMillis = 0L;
+        }
+
+        public long lastRecoveryAttemptAtMillis() {
+            return lastRecoveryAttemptAtMillis;
+        }
+
+        public void markRecoveryAttempt(long nowMillis) {
+            lastRecoveryAttemptAtMillis = Math.max(0L, nowMillis);
+        }
     }
 
+    private final int planVersion;
     private final int villageId;
     private final UUID worldId;
     private final String worldName;
@@ -317,9 +383,14 @@ public final class VillageKnightGarrison {
     private final int radiusX;
     private final int radiusZ;
     private final long createdAtMillis;
+    private final boolean rampartPlanComplete;
     private final Map<Integer, PatrolRoute> routes;
     private final Map<UUID, KnightSlot> slots;
 
+    /**
+     * Constructeur utilisé par le code courant et les tests. Un plan créé par
+     * cette surcharge est considéré comme entièrement calculé.
+     */
     public VillageKnightGarrison(int villageId,
                                  UUID worldId,
                                  String worldName,
@@ -329,6 +400,40 @@ public final class VillageKnightGarrison {
                                  long createdAtMillis,
                                  Collection<PatrolRoute> routes,
                                  Collection<KnightSlot> slots) {
+        this(
+                CURRENT_PLAN_VERSION,
+                villageId,
+                worldId,
+                worldName,
+                center,
+                radiusX,
+                radiusZ,
+                createdAtMillis,
+                true,
+                routes,
+                slots
+        );
+    }
+
+    public VillageKnightGarrison(int planVersion,
+                                 int villageId,
+                                 UUID worldId,
+                                 String worldName,
+                                 BlockPoint center,
+                                 int radiusX,
+                                 int radiusZ,
+                                 long createdAtMillis,
+                                 boolean rampartPlanComplete,
+                                 Collection<PatrolRoute> routes,
+                                 Collection<KnightSlot> slots) {
+        if (planVersion < LEGACY_PLAN_VERSION
+                || planVersion > CURRENT_PLAN_VERSION) {
+            throw new IllegalArgumentException(
+                    "Version de plan de garnison non prise en charge : "
+                            + planVersion
+            );
+        }
+        this.planVersion = planVersion;
         this.villageId = villageId;
         this.worldId = Objects.requireNonNull(worldId, "worldId");
         this.worldName = worldName == null ? "" : worldName;
@@ -336,6 +441,7 @@ public final class VillageKnightGarrison {
         this.radiusX = Math.max(4, radiusX);
         this.radiusZ = Math.max(4, radiusZ);
         this.createdAtMillis = Math.max(0L, createdAtMillis);
+        this.rampartPlanComplete = rampartPlanComplete;
 
         Map<Integer, PatrolRoute> routesById = new LinkedHashMap<>();
         if (routes != null) {
@@ -389,6 +495,18 @@ public final class VillageKnightGarrison {
 
         this.routes = routesById;
         this.slots = slotsById;
+    }
+
+    public int planVersion() {
+        return planVersion;
+    }
+
+    public boolean requiresPlanMigration() {
+        return planVersion < CURRENT_PLAN_VERSION;
+    }
+
+    public boolean rampartPlanComplete() {
+        return rampartPlanComplete;
     }
 
     public int villageId() {

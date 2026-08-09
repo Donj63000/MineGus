@@ -1,5 +1,7 @@
 package org.example;
 
+import org.example.forestry2.SharedChunkTickets;
+
 import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
 import org.bukkit.Chunk;
@@ -2520,7 +2522,7 @@ public class Mineur implements CommandExecutor, Listener {
             Chunk chunk = current.next();
             if (!chunk.getWorld().getUID().equals(world.getUID())
                     || !desired.contains(chunkKey(chunk.getX(), chunk.getZ()))) {
-                org.example.forestry2.SharedChunkTickets.release(plugin, chunk);
+                SharedChunkTickets.release(plugin, chunk);
                 current.remove();
             }
         }
@@ -2537,7 +2539,7 @@ public class Mineur implements CommandExecutor, Listener {
             int chunkX = (int) (key >> 32);
             int chunkZ = (int) key;
             Chunk chunk = world.getChunkAt(chunkX, chunkZ);
-            org.example.forestry2.SharedChunkTickets.acquire(plugin, chunk);
+            SharedChunkTickets.acquire(plugin, chunk);
             runtime.ticketChunks.add(chunk);
         }
     }
@@ -5215,7 +5217,7 @@ public class Mineur implements CommandExecutor, Listener {
 
         void releaseChunkTickets() {
             for (Chunk chunk : new HashSet<>(ticketChunks)) {
-                org.example.forestry2.SharedChunkTickets.release(plugin, chunk);
+                SharedChunkTickets.release(plugin, chunk);
             }
             ticketChunks.clear();
         }

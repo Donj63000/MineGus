@@ -22,7 +22,6 @@ import org.bukkit.scheduler.BukkitRunnable;
 import org.bukkit.scheduler.BukkitTask;
 import org.example.progression.GlobalProgressionManager;
 import org.example.village.Disposition;
-import org.example.village.GateGuardManager;
 import org.example.village.KeepBuilder;
 import org.example.village.VillageEntityManager;
 import org.example.village.VillageGenerationSession;
@@ -422,14 +421,6 @@ public final class Village implements CommandExecutor {
         );
 
         final int resolvedVillageId = villageId;
-        if (villageEntitiesEnabled) {
-            todo.add(() -> GateGuardManager.ensureGuards(
-                    plugin,
-                    gateAnchor,
-                    resolvedVillageId
-            ));
-        }
-
         if (villageEntitiesEnabled) {
             todo.add(() -> VillageEntityManager.spawnInitial(
                     plugin,

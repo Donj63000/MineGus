@@ -6,8 +6,10 @@ import java.util.List;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class VillageKnightGarrisonTest {
 
@@ -49,6 +51,12 @@ class VillageKnightGarrisonTest {
                 List.of(slot)
         );
 
+        assertEquals(
+                VillageKnightGarrison.CURRENT_PLAN_VERSION,
+                garrison.planVersion()
+        );
+        assertFalse(garrison.requiresPlanMigration());
+        assertTrue(garrison.rampartPlanComplete());
         assertEquals(List.of(first, second), route.waypoints());
         assertEquals(1, route.waypointIndex());
         assertEquals(0L, route.lastAdvanceAtMillis());
@@ -67,6 +75,54 @@ class VillageKnightGarrisonTest {
         assertThrows(
                 UnsupportedOperationException.class,
                 () -> garrison.routes().clear()
+        );
+    }
+
+    @Test
+    void identifiesLegacyPlansAndClassifiesRouteResponsibilities() {
+        VillageKnightGarrison.BlockPoint point =
+                new VillageKnightGarrison.BlockPoint(0, 65, 0);
+        VillageKnightGarrison.PatrolRoute route =
+                new VillageKnightGarrison.PatrolRoute(
+                        0,
+                        VillageKnightGarrison.RouteKind.STRATEGIC,
+                        List.of(point),
+                        0,
+                        0L
+                );
+        VillageKnightGarrison.KnightSlot slot =
+                new VillageKnightGarrison.KnightSlot(
+                        UUID.randomUUID(),
+                        0,
+                        VillageKnightGarrison.UnitKind.SWORDSMAN,
+                        0,
+                        null,
+                        0L,
+                        point
+                );
+        VillageKnightGarrison legacy = new VillageKnightGarrison(
+                VillageKnightGarrison.LEGACY_PLAN_VERSION,
+                1,
+                UUID.randomUUID(),
+                "world",
+                point,
+                16,
+                16,
+                1L,
+                false,
+                List.of(route),
+                List.of(slot)
+        );
+
+        assertTrue(legacy.requiresPlanMigration());
+        assertFalse(legacy.rampartPlanComplete());
+        assertTrue(VillageKnightGarrison.RouteKind.STRATEGIC.isSentry());
+        assertTrue(VillageKnightGarrison.RouteKind.GATE_SENTRY.isSentry());
+        assertTrue(VillageKnightGarrison.RouteKind.URBAN.isPatrol());
+        assertTrue(VillageKnightGarrison.RouteKind.RAMPART.isPatrol());
+        assertFalse(
+                VillageKnightGarrison.RouteKind.KEEP_INTERIOR_SENTRY
+                        .isPatrol()
         );
     }
 

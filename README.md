@@ -61,6 +61,14 @@ Référence par défaut : `src/main/resources/config.yml`. Modifiez seulement la
 - La commande refuse explicitement l’invocation dans un monde en difficulté Paisible et renvoie un duo actif si le monde y passe : Minecraft supprime les Husks dans ce mode et provoquerait sinon des disparitions/réapparitions en boucle.
 - Lorsqu’un garde meurt, il réapparaît après `garde.respawn-delay-seconds` (20 secondes par défaut), seulement si son duo est toujours actif et que le propriétaire est connecté. Un échec temporaire d’apparition est automatiquement reprogrammé. Les gardes sont supprimés à la déconnexion, au renvoi et à l’arrêt du plugin ; ils ne persistent pas après un redémarrage.
 
+### /tuto (permission `mineplugin.tuto.use`)
+- `/tuto` lance une visite guidée privée dans un monde temporaire généré pour le joueur : grande plaine stable, falaises à l'horizon, décors progressifs et DonjBot animé.
+- DonjBot présente puis simule visuellement `/village`, `/mineur`, `/champ`, `/foret`, `/eleveur`, `/garde`, `/armure`, `/army`, `/marchand`, `/job`, `/niveau`, `/minegus` et `/ping`. Les vraies commandes ne sont jamais appelées dans le bac à sable : aucune session métier, structure persistante ou XP n'est créée.
+- DonjBot marche réellement entre les stations. Si le joueur dépasse la distance configurée (15 blocs par défaut), il est rappelé près du guide.
+- Relancer `/tuto` pendant la préparation l'annule ; relancer `/tuto` pendant la visite la quitte et restaure exactement le monde, la position, l'orientation, le mode de jeu, le vol et l'état temporairement modifié.
+- La destination de retour est écrite atomiquement dans `tutorial-returns.yml` avant la première téléportation. Une reconnexion ou un redémarrage après incident effectue automatiquement le retour ; si le monde d'origine est encore déchargé, l'entrée est conservée et reprise dès son chargement. Les mondes marqués comme temporaires sont ensuite déchargés et supprimés sans suivre de lien symbolique.
+- Réglages : `tutorial.enabled`, limite de sessions, distance de rappel, vitesse de DonjBot, budgets de construction, délai de chargement, retour automatique, préfixe/borne/heure/graine du monde.
+
 ### /mineur (permission `mineplugin.mineur.use`)
 - `/mineur` : donne le bâton « Sélecteur de mine ». Clique deux blocs au même Y pour créer automatiquement la mine (cadre, coffres, PNJ mineur, golems). Par défaut, le pattern `QUARRY` creuse jusqu’à `stop-at-y` puis enchaîne sur un tunnel infini 10×10.
 - `/mineur vitesse <lent|normal|rapide>` : change la cadence du mineur en cours.
@@ -108,7 +116,7 @@ Référence par défaut : `src/main/resources/config.yml`. Modifiez seulement la
 - `/minegus fix forestier|golems` (permission `mineplugin.admin`) : commande de maintenance qui supprime les doublons de forestiers de /foret ou de golems gardes taggés dans tous les mondes.
 
 ## Persistance des données
-Les fonctionnalités persistantes sauvegardent leurs informations (YAML) dans `plugins/MinePlugin/` (`sessions.yml`, `farms.yml`, etc.) pour restaurer PNJ et structures au redémarrage. La progression globale est stockée séparément dans `progression.yml` (UUID, dernier nom connu, XP totale et état transitoire de santé nécessaire à une restauration propre) et les métiers restent dans `jobs.yml`. Son écriture est atomique et différée ; un YAML invalide est mis en quarantaine avec un suffixe `.corrupt-<horodatage>.bak` au lieu d’être écrasé. Les deux gardes de `/garde` ne sont jamais sauvegardés et tout garde résiduel est retiré au chargement d’un chunk après un redémarrage.
+Les fonctionnalités persistantes sauvegardent leurs informations (YAML) dans `plugins/MinePlugin/` (`sessions.yml`, `farms.yml`, etc.). Le tutoriel conserve uniquement une destination de secours dans `tutorial-returns.yml`, supprimée après le retour réussi ; ses mondes ne sont jamais sauvegardés. Les autres modules restaurent leurs PNJ et structures au redémarrage. La progression globale est stockée séparément dans `progression.yml` (UUID, dernier nom connu, XP totale et état transitoire de santé nécessaire à une restauration propre) et les métiers restent dans `jobs.yml`. Son écriture est atomique et différée ; un YAML invalide est mis en quarantaine avec un suffixe `.corrupt-<horodatage>.bak` au lieu d’être écrasé. Les deux gardes de `/garde` ne sont jamais sauvegardés et tout garde résiduel est retiré au chargement d’un chunk après un redémarrage.
 
 ## Structure du projet
 - `src/main/java/` : code source du plugin.
@@ -117,7 +125,8 @@ Les fonctionnalités persistantes sauvegardent leurs informations (YAML) dans `p
 - `target/` : artefacts de build (ne pas modifier/committer).
 
 ## Architecture du projet (qui fait quoi)
-- `org.example.MinePlugin` : point d’entrée. Enregistre `/army` et `/ping`, instancie les modules (`Mineur`, `Agriculture`, `Foret`, `Village`, `Eleveur`, `Armure`) ainsi que les gestionnaires de métier et de progression globale, puis ferme proprement leurs sauvegardes dans `onDisable`.
+- `org.example.MinePlugin` : point d’entrée. Enregistre `/army` et `/ping`, instancie les modules (`Mineur`, `Agriculture`, `Foret`, `Village`, `Eleveur`, `Armure`) ainsi que les gestionnaires de métier et de progression globale, puis initialise `TutorialManager` et ferme proprement l’ensemble dans `onDisable`.
+- `org.example.tutorial` : monde privé généré, scènes par lots, DonjBot animé, scénario, protections, rappel à 15 blocs, retour transactionnel et suppression sécurisée des mondes.
 - `org.example.progression` : courbe 1–100, collecte multi-actions, bonus attributaires/dégâts, HUD sidebar temporaire, anti-farming des blocs et persistance atomique dans `progression.yml`.
 - `org.example.Mineur` : gère `/mineur`. Bâton de sélection (2 blocs même Y), cadre + coffres + PNJ mineur + golems, minage vertical, persistance `sessions.yml`, arrêt si tous les coffres cassés.
 - `org.example.Agriculture` : gère `/champ`. Crée terres labourées + irrigation, PNJ fermier + golems, récolte/stockage auto, persistance `farms.yml`.
@@ -208,6 +217,7 @@ categories:
 ```
 
 ## Scénarios de test recommandés
+- Tutoriel : lancer `/tuto`, vérifier chaque décor et le déplacement de DonjBot ; s'éloigner de plus de 15 blocs ; tenter une autre commande et une interaction ; quitter avec `/tuto` à plusieurs étapes ; tester une déconnexion puis un redémarrage pendant la visite et confirmer le retour exact ainsi que la suppression du dossier `minegus_tuto_*`.
 - Sanity de base : `/ping`, `/army` (spawn + disparition programmée).
 - Gardes royaux : exécuter `/garde`, vérifier les deux positions latérales arrière et tourner rapidement pour confirmer que les gardes dégagent la caméra ; frapper successivement plusieurs mobs puis vérifier qu’ils sont traités dans l’ordre jusqu’à leur mort ; laisser un zombie ou un raider prendre le joueur pour cible sans recevoir de coup et confirmer l’interception proactive ; tester une flèche tirée par le propriétaire, un animal apprivoisé, une attaque PvP, une cible qui sort de la laisse de combat, le rappel hors combat au-delà de 20 blocs et le changement de monde ; approcher ensuite un golem de fer naturel de village, confirmer la neutralité puis provoquer une tentative de frappe ; enfin bloquer un chemin, tuer un garde, vérifier son retour après 20 secondes, renvoyer le duo et confirmer l’annulation des respawns.
 - Mineur : `/mineur`, sélection de deux blocs au même Y, vérifier cadre + coffres + PNJ; changer `/mineur vitesse rapide`.

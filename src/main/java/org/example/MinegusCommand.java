@@ -89,6 +89,8 @@ public final class MinegusCommand implements CommandExecutor {
         lines.add(ChatColor.GRAY + "Marquage: " + ChatColor.AQUA + "[permission]" + ChatColor.GRAY
                 + " = acces restreint, " + ChatColor.RED + "[admin]" + ChatColor.GRAY + " = maintenance.");
         lines.add(ChatColor.GOLD + "/ping" + ChatColor.GRAY + " : verifie que le plugin repond.");
+        lines.add(ChatColor.GOLD + "/tuto" + ChatColor.GRAY
+                + " : lance ou quitte la visite guidee privee de DonjBot.");
         lines.add(ChatColor.GOLD + "/army" + ChatColor.GRAY + " : invoque des loups et golems temporaires.");
         lines.add(ChatColor.GOLD + "/garde [invoquer|renvoyer|statut|aide]" + ChatColor.GRAY
                 + " : invoque, renvoie ou inspecte tes deux gardes royaux.");

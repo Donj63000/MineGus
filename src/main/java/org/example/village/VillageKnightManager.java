@@ -29,6 +29,7 @@ import org.bukkit.event.HandlerList;
 import org.bukkit.event.Listener;
 import org.bukkit.event.entity.EntityChangeBlockEvent;
 import org.bukkit.event.entity.EntityDamageByEntityEvent;
+import org.bukkit.event.entity.EntityDamageEvent;
 import org.bukkit.event.entity.EntityDeathEvent;
 import org.bukkit.event.entity.EntityInteractEvent;
 import org.bukkit.event.entity.EntityPortalEvent;
@@ -75,23 +76,18 @@ public final class VillageKnightManager implements Listener {
     private static final String ROYAL_GUARD_TYPE = "royal";
     private static final String ROYAL_GUARD_NAME = "Garde Royale";
 
+    private static final String LEGACY_GATE_GUARD_TAG =
+            "MG_VILLAGE_GUARD";
     private static final long AUTOSAVE_PERIOD_TICKS = 20L * 30L;
     private static final long TARGET_MEMORY_MILLIS = 20_000L;
     private static final long POSITION_SAVE_INTERVAL_MILLIS = 5_000L;
     private static final long EQUIPMENT_REPAIR_INTERVAL_MILLIS = 10_000L;
+    private static final long RAMPART_REFRESH_INTERVAL_MILLIS = 30_000L;
+    private static final long MIN_RECOVERY_RETRY_MILLIS = 2_000L;
     private static final int MAX_PATH_FAILURES = 3;
     private static final double TELEPORT_VISIBILITY_RADIUS = 14.0D;
     private static final double MIN_MOVEMENT_SAMPLE_DISTANCE_SQ = 1.0D;
-    private static final int[] SAFE_VERTICAL_OFFSETS =
-            {0, 1, -1, 2, -2, 3, -3};
-    private static final int[][] SAFE_HORIZONTAL_OFFSETS = {
-            {0, 0},
-            {1, 0}, {-1, 0}, {0, 1}, {0, -1},
-            {1, 1}, {1, -1}, {-1, 1}, {-1, -1},
-            {2, 0}, {-2, 0}, {0, 2}, {0, -2},
-            {2, 1}, {2, -1}, {-2, 1}, {-2, -1},
-            {1, 2}, {-1, 2}, {1, -2}, {-1, -2}
-    };
+    private static final double RAMPART_VERTICAL_TOLERANCE = 1.75D;
 
     private static final Set<Material> DANGEROUS_GROUND = Set.of(
             Material.LAVA,
@@ -115,6 +111,8 @@ public final class VillageKnightManager implements Listener {
     private final List<SlotReference> scanOrder =
             new ArrayList<>();
     private final Map<UUID, Long> lastEquipmentRepairAt =
+            new HashMap<>();
+    private final Map<Integer, Long> lastRampartRefreshAt =
             new HashMap<>();
 
     private boolean writable;
@@ -150,6 +148,8 @@ public final class VillageKnightManager implements Listener {
             }
         }
 
+        migrateLoadedPlansAtStartup();
+
         Bukkit.getPluginManager().registerEvents(this, plugin);
         reconcileInitiallyLoadedEntities();
         rebuildScanOrder();
@@ -183,6 +183,9 @@ public final class VillageKnightManager implements Listener {
                     "[Chevaliers] " + garrisons.size()
                             + " garnison(s) persistante(s) restaurée(s)."
             );
+        }
+        if (dirty) {
+            requestUrgentSave();
         }
     }
 
@@ -286,6 +289,7 @@ public final class VillageKnightManager implements Listener {
             boolean removeLoadedEntities) {
         VillageKnightGarrison garrison =
                 garrisons.remove(villageId);
+        lastRampartRefreshAt.remove(villageId);
         if (garrison == null) {
             /*
              * Une entité orpheline peut encore exister après une restauration
@@ -352,6 +356,50 @@ public final class VillageKnightManager implements Listener {
         slotsByEntity.clear();
         scanOrder.clear();
         lastEquipmentRepairAt.clear();
+        lastRampartRefreshAt.clear();
+    }
+
+    /**
+     * Met à niveau les sauvegardes historiques avant l'adoption des entités
+     * déjà chargées. Cette étape ne force aucun chunk : si le monde n'est pas
+     * encore disponible, la migration sera retentée par la maintenance.
+     */
+    private void migrateLoadedPlansAtStartup() {
+        if (!writable) {
+            return;
+        }
+        for (VillageKnightGarrison current
+                : new ArrayList<>(garrisons.values())) {
+            if (!current.requiresPlanMigration()) {
+                continue;
+            }
+            World world = Bukkit.getWorld(current.worldId());
+            if (world == null) {
+                continue;
+            }
+            try {
+                VillageKnightGarrison replacement =
+                        VillageKnightPlanner.upgradeLegacy(
+                                current,
+                                world,
+                                settings
+                        );
+                if (replacement != null) {
+                    installReplacementPlan(
+                            current,
+                            replacement,
+                            "migration du plan historique"
+                    );
+                }
+            } catch (RuntimeException exception) {
+                plugin.getLogger().log(
+                        Level.WARNING,
+                        "[Chevaliers] Migration différée pour la garnison "
+                                + current.villageId() + ".",
+                        exception
+                );
+            }
+        }
     }
 
     private void runMaintenance() {
@@ -361,11 +409,17 @@ public final class VillageKnightManager implements Listener {
         ensurePrimaryThread();
 
         long now = System.currentTimeMillis();
-        for (VillageKnightGarrison garrison
+        for (VillageKnightGarrison loaded
                 : new ArrayList<>(garrisons.values())) {
-            World world = Bukkit.getWorld(garrison.worldId());
+            World world = Bukkit.getWorld(loaded.worldId());
             if (world == null
                     || world.getDifficulty() == Difficulty.PEACEFUL) {
+                continue;
+            }
+
+            VillageKnightGarrison garrison =
+                    prepareGarrisonPlan(loaded, world, now);
+            if (garrison == null) {
                 continue;
             }
 
@@ -383,11 +437,150 @@ public final class VillageKnightManager implements Listener {
         scanForThreats(now);
     }
 
+    /**
+     * Termine progressivement la migration et le calcul des remparts lorsque
+     * les chunks nécessaires deviennent disponibles.
+     */
+    private VillageKnightGarrison prepareGarrisonPlan(
+            VillageKnightGarrison current,
+            World world,
+            long now) {
+        if (!writable || current == null || world == null) {
+            return current;
+        }
+
+        VillageKnightGarrison prepared = current;
+        try {
+            if (prepared.requiresPlanMigration()) {
+                VillageKnightGarrison migrated =
+                        VillageKnightPlanner.upgradeLegacy(
+                                prepared,
+                                world,
+                                settings
+                        );
+                if (migrated != null) {
+                    prepared = installReplacementPlan(
+                            prepared,
+                            migrated,
+                            "migration du plan historique"
+                    );
+                }
+            }
+
+            if (!prepared.rampartPlanComplete()) {
+                long lastAttempt = lastRampartRefreshAt.getOrDefault(
+                        prepared.villageId(),
+                        0L
+                );
+                if (now - lastAttempt >= RAMPART_REFRESH_INTERVAL_MILLIS) {
+                    lastRampartRefreshAt.put(prepared.villageId(), now);
+                    VillageKnightGarrison refreshed =
+                            VillageKnightPlanner.refreshRampartsIfLoaded(
+                                    prepared,
+                                    world,
+                                    settings
+                            );
+                    if (refreshed != null && refreshed != prepared) {
+                        prepared = installReplacementPlan(
+                                prepared,
+                                refreshed,
+                                "actualisation des chemins de ronde"
+                        );
+                    }
+                }
+            }
+        } catch (RuntimeException exception) {
+            plugin.getLogger().log(
+                    Level.WARNING,
+                    "[Chevaliers] Plan inchangé pour la garnison "
+                            + current.villageId()
+                            + " après une erreur de mise à niveau.",
+                    exception
+            );
+        }
+        return prepared;
+    }
+
+    /**
+     * Installe atomiquement un nouveau plan en conservant les entités dont le
+     * créneau stable existe encore. Les gardes devenus orphelins sont retirés
+     * immédiatement s'ils sont chargés ; sinon ils seront écartés à leur
+     * prochain chargement par {@link #adoptEntity(Entity)}.
+     */
+    private VillageKnightGarrison installReplacementPlan(
+            VillageKnightGarrison current,
+            VillageKnightGarrison replacement,
+            String reason) {
+        if (current == null || replacement == null
+                || current.villageId() != replacement.villageId()) {
+            throw new IllegalArgumentException(
+                    "Remplacement de garnison incohérent."
+            );
+        }
+
+        Set<UUID> retainedSlotIds = new java.util.HashSet<>();
+        for (VillageKnightGarrison.KnightSlot replacementSlot
+                : replacement.slots()) {
+            VillageKnightGarrison.KnightSlot previousSlot =
+                    current.slot(replacementSlot.slotId());
+            if (previousSlot == null
+                    || previousSlot.unitKind()
+                    != replacementSlot.unitKind()) {
+                continue;
+            }
+
+            /*
+             * Les UUID de créneau sont déterministes. Préserver leur entité
+             * évite une vague de despawn/respawn lors d'une migration.
+             */
+            replacementSlot.setEntityId(previousSlot.entityId());
+            replacementSlot.setRespawnAtMillis(
+                    previousSlot.respawnAtMillis()
+            );
+            replacementSlot.setLastKnownPosition(
+                    previousSlot.lastKnownPosition()
+            );
+            replacementSlot.clearTarget();
+            replacementSlot.clearNavigationCommand();
+            retainedSlotIds.add(replacementSlot.slotId());
+        }
+
+        for (VillageKnightGarrison.KnightSlot previousSlot
+                : current.slots()) {
+            if (retainedSlotIds.contains(previousSlot.slotId())) {
+                continue;
+            }
+            UUID entityId = previousSlot.entityId();
+            if (entityId == null) {
+                continue;
+            }
+            slotsByEntity.remove(entityId);
+            lastEquipmentRepairAt.remove(entityId);
+            Entity entity = Bukkit.getEntity(entityId);
+            if (entity != null && isVillageKnight(entity)) {
+                entity.remove();
+            }
+        }
+
+        garrisons.put(replacement.villageId(), replacement);
+        lastRampartRefreshAt.remove(replacement.villageId());
+        rebuildScanOrder();
+        dirty = true;
+        requestUrgentSave();
+        plugin.getLogger().info(
+                "[Chevaliers] Garnison " + replacement.villageId()
+                        + " réorganisée (" + reason + ") : "
+                        + replacement.unitCount() + " unité(s)."
+        );
+        return replacement;
+    }
+
     private void advanceRoutes(VillageKnightGarrison garrison,
                                long now) {
         for (VillageKnightGarrison.PatrolRoute route
                 : garrison.routes()) {
-            if (route.waypoints().size() <= 1) {
+            if (!route.kind().isPatrol()
+                    || route.waypoints().size() <= 1) {
                 continue;
             }
 
@@ -409,7 +602,7 @@ public final class VillageKnightManager implements Listener {
                         route,
                         slot
                 );
-                double radius = settings.waypointArrivalRadius();
+                double radius = arrivalRadius(route);
                 if (knight.getLocation().distanceSquared(target)
                         <= radius * radius) {
                     arrived++;
@@ -423,6 +616,12 @@ public final class VillageKnightManager implements Listener {
                     >= settings.routeAdvanceTimeoutMillis();
             if (majorityArrived || timedOut) {
                 route.advance(now);
+                for (VillageKnightGarrison.KnightSlot slot
+                        : garrison.slots()) {
+                    if (slot.routeId() == route.routeId()) {
+                        slot.clearNavigationCommand();
+                    }
+                }
                 dirty = true;
             }
         }
@@ -437,6 +636,25 @@ public final class VillageKnightManager implements Listener {
             return;
         }
 
+        VillageKnightGarrison.PatrolRoute route =
+                garrison.route(slot.routeId());
+        if (route == null) {
+            knight.getPathfinder().stopPathfinding();
+            slot.clearNavigationCommand();
+            return;
+        }
+
+        /*
+         * Un archer tombé du chemin de ronde doit y remonter immédiatement.
+         * Cette correction est volontairement prioritaire sur le combat : elle
+         * empêche l'IA Skeleton de poursuivre une cible jusque dans les talus.
+         */
+        if (route.kind() == VillageKnightGarrison.RouteKind.RAMPART
+                && !isWithinRampartCorridor(route, knight.getLocation())) {
+            recoverRampartPosition(garrison, slot, knight, route, now);
+            return;
+        }
+
         updateLastKnownPosition(slot, knight, now);
         repairKnightPeriodically(garrison, slot, knight, now);
 
@@ -447,6 +665,7 @@ public final class VillageKnightManager implements Listener {
                 now
         );
         if (target != null) {
+            slot.clearNavigationCommand();
             if (knight.getTarget() == null
                     || !knight.getTarget().getUniqueId()
                     .equals(target.getUniqueId())) {
@@ -459,9 +678,45 @@ public final class VillageKnightManager implements Listener {
 
         if (knight.getTarget() != null) {
             knight.setTarget(null);
+            slot.clearNavigationCommand();
         }
         knight.setAggressive(false);
-        patrol(garrison, slot, knight, now);
+        patrol(garrison, slot, knight, route, now);
+    }
+
+    /**
+     * Replace sans délai un archer qui a quitté le corridor vertical ou
+     * horizontal de son rempart. Contrairement à la récupération ordinaire,
+     * la présence d'un joueur ne retarde pas cette opération de sécurité.
+     */
+    private void recoverRampartPosition(
+            VillageKnightGarrison garrison,
+            VillageKnightGarrison.KnightSlot slot,
+            Mob knight,
+            VillageKnightGarrison.PatrolRoute route,
+            long now) {
+        knight.setTarget(null);
+        knight.setAggressive(false);
+        knight.getPathfinder().stopPathfinding();
+        slot.clearTarget();
+        slot.clearNavigationCommand();
+
+        Location safe = nearestSafeRouteLocation(
+                knight.getWorld(),
+                route,
+                knight.getLocation()
+        );
+        if (safe == null || !knight.teleport(safe)) {
+            return;
+        }
+
+        VillageKnightGarrison.BlockPoint point =
+                VillageKnightGarrison.BlockPoint.from(safe);
+        slot.setLastKnownPosition(point);
+        slot.resetPathFailures();
+        slot.updateMovementSample(point, now);
+        slot.markRecoveryAttempt(now);
+        dirty = true;
     }
 
     private LivingEntity resolveAssignedTarget(
@@ -473,7 +728,7 @@ public final class VillageKnightManager implements Listener {
         if (targetId == null) {
             LivingEntity autonomous = knight.getTarget();
             if (isHostile(autonomous)
-                    && isWithinCombatLeash(garrison, autonomous)
+                    && isWithinCombatLeash(garrison, slot, autonomous)
                     && assignedResponderCount(
                     garrison,
                     autonomous.getUniqueId()
@@ -494,17 +749,21 @@ public final class VillageKnightManager implements Listener {
         if (!(entity instanceof LivingEntity target)
                 || !isHostile(target)
                 || !knight.getWorld().equals(target.getWorld())
-                || !isWithinCombatLeash(garrison, target)) {
+                || !isWithinCombatLeash(garrison, slot, target)) {
             slot.clearTarget();
             knight.setTarget(null);
             return null;
         }
 
-        double detectionSq = settings.detectionRadius()
-                * settings.detectionRadius();
+        VillageKnightGarrison.PatrolRoute route =
+                garrison.route(slot.routeId());
+        double memoryRadius = Math.max(
+                settings.detectionRadius(),
+                engagementRadius(route)
+        );
         boolean stillClose = knight.getLocation().distanceSquared(
                 target.getLocation()
-        ) <= detectionSq;
+        ) <= memoryRadius * memoryRadius;
         boolean activelyEngaged = knight.getTarget() != null
                 && knight.getTarget().getUniqueId()
                 .equals(target.getUniqueId());
@@ -526,37 +785,48 @@ public final class VillageKnightManager implements Listener {
         return target;
     }
 
-    private void patrol(VillageKnightGarrison garrison,
-                        VillageKnightGarrison.KnightSlot slot,
-                        Mob knight,
-                        long now) {
-        VillageKnightGarrison.PatrolRoute route =
-                garrison.route(slot.routeId());
-        if (route == null) {
-            return;
-        }
-
-        Location target = formationTarget(
+    private void patrol(
+            VillageKnightGarrison garrison,
+            VillageKnightGarrison.KnightSlot slot,
+            Mob knight,
+            VillageKnightGarrison.PatrolRoute route,
+            long now) {
+        Location desired = formationTarget(
                 knight.getWorld(),
                 route,
                 slot
         );
-        if (!isPointChunkLoaded(
-                knight.getWorld(),
-                VillageKnightGarrison.BlockPoint.from(target)
-        )) {
+        VillageKnightGarrison.BlockPoint desiredPoint =
+                VillageKnightGarrison.BlockPoint.from(desired);
+        if (!isPointChunkLoaded(knight.getWorld(), desiredPoint)) {
             /*
              * Le pathfinder ne reçoit jamais une destination située dans un
              * chunk déchargé ; le gestionnaire n'entraîne donc aucun chargement.
              */
             knight.getPathfinder().stopPathfinding();
+            slot.clearNavigationCommand();
             return;
         }
-        double arrival = settings.waypointArrivalRadius();
+
+        VillageKnightGarrison.BlockPoint commanded =
+                slot.navigationTarget();
+        boolean compatible = isNavigationDestinationCompatible(
+                commanded,
+                desiredPoint,
+                route
+        );
+        Location effectiveTarget = compatible && commanded != null
+                ? commanded.toLocation(knight.getWorld())
+                : desired;
+
+        double arrival = arrivalRadius(route);
         double distanceSq = knight.getLocation()
-                .distanceSquared(target);
+                .distanceSquared(effectiveTarget);
         if (distanceSq <= arrival * arrival) {
-            knight.getPathfinder().stopPathfinding();
+            if (slot.navigationTarget() != null) {
+                knight.getPathfinder().stopPathfinding();
+                slot.clearNavigationCommand();
+            }
             slot.resetPathFailures();
             slot.updateMovementSample(
                     VillageKnightGarrison.BlockPoint.from(
@@ -567,10 +837,50 @@ public final class VillageKnightManager implements Listener {
             return;
         }
 
+        boolean refreshElapsed = now - slot.lastPathCommandAtMillis()
+                >= settings.pathRefreshMillis();
+        if (compatible && !refreshElapsed) {
+            recoverStuckKnight(
+                    garrison,
+                    slot,
+                    knight,
+                    route,
+                    effectiveTarget,
+                    now,
+                    false
+            );
+            return;
+        }
+
+        Location safeTarget = findSafeLocation(
+                knight.getWorld(),
+                desiredPoint,
+                route
+        );
+        if (safeTarget == null) {
+            /*
+             * On mémorise aussi un ordre impossible afin de ne pas interroger
+             * les mêmes blocs à chaque cycle de maintenance.
+             */
+            slot.markPathCommand(desiredPoint, now);
+            boolean failedOften = slot.incrementPathFailures()
+                    >= MAX_PATH_FAILURES;
+            recoverStuckKnight(
+                    garrison,
+                    slot,
+                    knight,
+                    route,
+                    desired,
+                    now,
+                    failedOften
+            );
+            return;
+        }
+
         boolean pathFound;
         try {
             pathFound = knight.getPathfinder().moveTo(
-                    target,
+                    safeTarget,
                     settings.patrolSpeed()
             );
         } catch (RuntimeException exception) {
@@ -583,34 +893,49 @@ public final class VillageKnightManager implements Listener {
             );
         }
 
+        VillageKnightGarrison.BlockPoint safePoint =
+                VillageKnightGarrison.BlockPoint.from(safeTarget);
+        slot.markPathCommand(safePoint, now);
+        boolean failedOften = false;
         if (pathFound) {
             slot.resetPathFailures();
-        } else if (slot.incrementPathFailures()
-                >= MAX_PATH_FAILURES) {
-            recoverStuckKnight(
-                    garrison,
-                    slot,
-                    knight,
-                    target,
-                    now,
-                    true
-            );
+        } else {
+            failedOften = slot.incrementPathFailures()
+                    >= MAX_PATH_FAILURES;
         }
 
         recoverStuckKnight(
                 garrison,
                 slot,
                 knight,
-                target,
+                route,
+                safeTarget,
                 now,
-                false
+                failedOften
         );
+    }
+
+    private boolean isNavigationDestinationCompatible(
+            VillageKnightGarrison.BlockPoint commanded,
+            VillageKnightGarrison.BlockPoint desired,
+            VillageKnightGarrison.PatrolRoute route) {
+        if (commanded == null || desired == null || route == null
+                || commanded.y() != desired.y()) {
+            return false;
+        }
+        int tolerance = route.kind()
+                == VillageKnightGarrison.RouteKind.RAMPART
+                ? 1
+                : settings.localTargetSearchRadius() + 1;
+        return commanded.horizontalDistanceSquared(desired)
+                <= (long) tolerance * tolerance;
     }
 
     private void recoverStuckKnight(
             VillageKnightGarrison garrison,
             VillageKnightGarrison.KnightSlot slot,
             Mob knight,
+            VillageKnightGarrison.PatrolRoute route,
             Location target,
             long now,
             boolean pathFailed) {
@@ -634,45 +959,141 @@ public final class VillageKnightManager implements Listener {
         }
 
         boolean stuckLongEnough = elapsed >= settings.stuckMillis();
+        boolean hardRecovery = elapsed >= settings.hardRecoveryMillis();
         if (!pathFailed && !stuckLongEnough) {
             return;
         }
-        if (hasVisiblePlayerNear(knight.getLocation())) {
+
+        long retryDelay = Math.max(
+                MIN_RECOVERY_RETRY_MILLIS,
+                Math.min(5_000L, settings.stuckMillis() / 2L)
+        );
+        if (now - slot.lastRecoveryAttemptAtMillis() < retryDelay) {
+            return;
+        }
+        slot.markRecoveryAttempt(now);
+
+        if (!hardRecovery && hasVisiblePlayerNear(knight.getLocation())) {
             /*
-             * Une téléportation devant un joueur serait visuellement brutale.
-             * La route avancera d'elle-même sur délai si le point est bloqué.
+             * On évite d'abord une téléportation visible, mais on ne remet pas
+             * à zéro l'échantillon de mouvement. Le délai dur garantit donc
+             * qu'un garde observé ne restera jamais bloqué indéfiniment.
              */
-            if (stuckLongEnough) {
-                VillageKnightGarrison.PatrolRoute route =
-                        garrison.route(slot.routeId());
-                if (route != null) {
-                    route.advance(now);
-                    dirty = true;
-                }
-                slot.updateMovementSample(current, now);
+            if (stuckLongEnough
+                    && route.kind().isPatrol()
+                    && route.waypoints().size() > 1
+                    && now - route.lastAdvanceAtMillis()
+                    >= Math.max(2_000L, settings.stuckMillis() / 2L)) {
+                route.advance(now);
+                slot.clearNavigationCommand();
+                dirty = true;
             }
             return;
         }
 
-        Location safe = findSafeLocation(
+        Location safe = findRecoveryLocation(
                 knight.getWorld(),
-                VillageKnightGarrison.BlockPoint.from(target),
-                garrison.route(slot.routeId()) != null
-                        && garrison.route(slot.routeId()).kind()
-                        == VillageKnightGarrison.RouteKind.RAMPART
+                route,
+                target,
+                knight.getLocation()
         );
-        if (safe != null && knight.teleport(safe)) {
-            knight.getPathfinder().stopPathfinding();
-            slot.setLastKnownPosition(
-                    VillageKnightGarrison.BlockPoint.from(safe)
-            );
-            slot.resetPathFailures();
-            slot.updateMovementSample(
-                    VillageKnightGarrison.BlockPoint.from(safe),
-                    now
-            );
-            dirty = true;
+        if (safe == null || !knight.teleport(safe)) {
+            slot.clearNavigationCommand();
+            return;
         }
+
+        knight.getPathfinder().stopPathfinding();
+        VillageKnightGarrison.BlockPoint safePoint =
+                VillageKnightGarrison.BlockPoint.from(safe);
+        slot.setLastKnownPosition(safePoint);
+        slot.clearNavigationCommand();
+        slot.resetPathFailures();
+        slot.updateMovementSample(safePoint, now);
+        dirty = true;
+    }
+
+    private Location findRecoveryLocation(
+            World world,
+            VillageKnightGarrison.PatrolRoute route,
+            Location requested,
+            Location current) {
+        if (world == null || route == null) {
+            return null;
+        }
+
+        if (route.kind().isSentry()
+                || route.kind()
+                == VillageKnightGarrison.RouteKind.RAMPART) {
+            return nearestSafeRouteLocation(world, route, current);
+        }
+
+        VillageKnightGarrison.BlockPoint requestedPoint =
+                VillageKnightGarrison.BlockPoint.from(requested);
+        Location safe = findSafeLocation(world, requestedPoint, route);
+        return safe != null
+                ? safe
+                : nearestSafeRouteLocation(world, route, current);
+    }
+
+    /**
+     * Cherche le point praticable de la route le plus proche sans jamais
+     * charger de chunk. Cette méthode est rare (chute ou blocage avéré), donc
+     * privilégier la sûreté à une heuristique approximative reste peu coûteux.
+     */
+    private Location nearestSafeRouteLocation(
+            World world,
+            VillageKnightGarrison.PatrolRoute route,
+            Location origin) {
+        if (world == null || route == null) {
+            return null;
+        }
+
+        Location best = null;
+        double bestDistanceSq = Double.MAX_VALUE;
+        for (VillageKnightGarrison.BlockPoint waypoint
+                : route.waypoints()) {
+            if (!isPointChunkLoaded(world, waypoint)) {
+                continue;
+            }
+            Location candidate = findSafeLocation(
+                    world,
+                    waypoint,
+                    route
+            );
+            if (candidate == null) {
+                continue;
+            }
+            double distanceSq = origin != null
+                    && origin.getWorld() == world
+                    ? origin.distanceSquared(candidate)
+                    : 0.0D;
+            if (best == null || distanceSq < bestDistanceSq) {
+                best = candidate;
+                bestDistanceSq = distanceSq;
+            }
+        }
+        return best;
+    }
+
+    private double arrivalRadius(
+            VillageKnightGarrison.PatrolRoute route) {
+        if (route == null) {
+            return settings.waypointArrivalRadius();
+        }
+        if (route.kind().isSentry()) {
+            return settings.sentryReturnRadius();
+        }
+        if (route.kind()
+                == VillageKnightGarrison.RouteKind.RAMPART) {
+            return Math.max(
+                    1.0D,
+                    Math.min(
+                            settings.waypointArrivalRadius(),
+                            settings.rampartCorridorRadius()
+                    )
+            );
+        }
+        return settings.waypointArrivalRadius();
     }
 
     private Location formationTarget(
@@ -752,6 +1173,7 @@ public final class VillageKnightManager implements Listener {
             }
             LivingEntity threat = findNearestThreat(
                     reference.garrison(),
+                    slot,
                     knight
             );
             if (threat != null) {
@@ -768,8 +1190,14 @@ public final class VillageKnightManager implements Listener {
 
     private LivingEntity findNearestThreat(
             VillageKnightGarrison garrison,
+            VillageKnightGarrison.KnightSlot slot,
             Mob knight) {
-        double radius = settings.detectionRadius();
+        VillageKnightGarrison.PatrolRoute route =
+                garrison.route(slot.routeId());
+        double radius = Math.min(
+                settings.detectionRadius(),
+                engagementRadius(route)
+        );
         LivingEntity nearest = null;
         double nearestDistanceSq = Double.MAX_VALUE;
 
@@ -777,13 +1205,13 @@ public final class VillageKnightManager implements Listener {
                 .getNearbyEntities(
                         knight.getLocation(),
                         radius,
-                        Math.min(24.0D, radius),
+                        Math.min(24.0D, Math.max(12.0D, radius)),
                         radius
                 );
         for (Entity entity : nearby) {
             if (!(entity instanceof LivingEntity living)
                     || !isHostile(living)
-                    || !isWithinCombatLeash(garrison, living)
+                    || !isWithinCombatLeash(garrison, slot, living)
                     || assignedResponderCount(
                     garrison,
                     living.getUniqueId()
@@ -800,23 +1228,25 @@ public final class VillageKnightManager implements Listener {
         return nearest;
     }
 
-    private void assignTarget(
+    private boolean assignTarget(
             VillageKnightGarrison garrison,
             VillageKnightGarrison.KnightSlot slot,
             Mob knight,
             LivingEntity target,
             long now) {
         if (!isHostile(target)
-                || !isWithinCombatLeash(garrison, target)) {
-            return;
+                || !isWithinCombatLeash(garrison, slot, target)) {
+            return false;
         }
         slot.assignTarget(
                 target.getUniqueId(),
                 now + TARGET_MEMORY_MILLIS
         );
+        slot.clearNavigationCommand();
         knight.getPathfinder().stopPathfinding();
         knight.setTarget(target);
         knight.setAggressive(true);
+        return true;
     }
 
     private void dispatchDefenders(
@@ -831,8 +1261,7 @@ public final class VillageKnightManager implements Listener {
 
         VillageKnightGarrison garrison =
                 findProtectingGarrison(protectedEntity.getLocation());
-        if (garrison == null
-                || !isWithinCombatLeash(garrison, threat)) {
+        if (garrison == null) {
             return;
         }
 
@@ -852,7 +1281,8 @@ public final class VillageKnightManager implements Listener {
         List<AvailableKnight> candidates = new ArrayList<>();
         for (VillageKnightGarrison.KnightSlot slot
                 : garrison.slots()) {
-            if (threatId.equals(slot.targetEntityId())) {
+            if (threatId.equals(slot.targetEntityId())
+                    || !isWithinCombatLeash(garrison, slot, threat)) {
                 continue;
             }
             Mob knight = resolveLiveKnight(garrison, slot);
@@ -867,15 +1297,22 @@ public final class VillageKnightManager implements Listener {
                 candidates.add(new AvailableKnight(
                         slot,
                         knight,
+                        responsePriority(garrison, slot),
                         distanceSq
                 ));
             }
         }
 
+        /*
+         * Les patrouilles mobiles sont engagées avant les postes fixes. Une
+         * sentinelle locale reste toutefois libre d'acquérir elle-même toute
+         * menace entrant dans son rayon, tandis qu'un archer garde son rempart.
+         */
         candidates.sort(Comparator
                 .comparingInt((AvailableKnight candidate) ->
                         candidate.slot().targetEntityId() == null
                                 ? 0 : 1)
+                .thenComparingInt(AvailableKnight::responsePriority)
                 .thenComparingDouble(
                         AvailableKnight::distanceSquared
                 ));
@@ -886,15 +1323,33 @@ public final class VillageKnightManager implements Listener {
             if (assigned >= remaining) {
                 break;
             }
-            assignTarget(
+            if (assignTarget(
                     garrison,
                     candidate.slot(),
                     candidate.knight(),
                     threat,
                     now
-            );
-            assigned++;
+            )) {
+                assigned++;
+            }
         }
+    }
+
+    private int responsePriority(
+            VillageKnightGarrison garrison,
+            VillageKnightGarrison.KnightSlot slot) {
+        VillageKnightGarrison.PatrolRoute route =
+                garrison.route(slot.routeId());
+        if (route == null) {
+            return 3;
+        }
+        if (route.kind() == VillageKnightGarrison.RouteKind.URBAN) {
+            return 0;
+        }
+        if (route.kind().isSentry()) {
+            return 1;
+        }
+        return 2;
     }
 
     /**
@@ -943,15 +1398,172 @@ public final class VillageKnightManager implements Listener {
         return nearest;
     }
 
+    /**
+     * Applique une laisse adaptée au rôle au lieu d'un unique grand rectangle
+     * autour du village. Un poste fixe protège sa zone, un archer protège le
+     * corridor du rempart et seules les patrouilles couvrent toute la cité.
+     */
     private boolean isWithinCombatLeash(
             VillageKnightGarrison garrison,
+            VillageKnightGarrison.KnightSlot slot,
             LivingEntity entity) {
-        return garrison != null
-                && entity != null
-                && garrison.containsHorizontally(
-                entity.getLocation(),
-                settings.combatLeashRadius()
+        if (garrison == null || slot == null || entity == null
+                || !garrison.worldId().equals(
+                entity.getWorld().getUID()
+        )) {
+            return false;
+        }
+        VillageKnightGarrison.PatrolRoute route =
+                garrison.route(slot.routeId());
+        if (route == null) {
+            return false;
+        }
+
+        Location location = entity.getLocation();
+        if (route.kind().isSentry()) {
+            VillageKnightGarrison.BlockPoint post =
+                    route.currentWaypoint();
+            double radius = settings.sentryEngagementRadius();
+            return horizontalDistanceSquared(post, location)
+                    <= radius * radius
+                    && Math.abs(location.getY() - post.y())
+                    <= Math.max(12.0D, radius);
+        }
+        if (route.kind()
+                == VillageKnightGarrison.RouteKind.RAMPART) {
+            double radius = settings.rampartEngagementRadius();
+            return distanceSquaredToRouteHorizontal(route, location)
+                    <= radius * radius
+                    && verticalDistanceToRoute(route, location)
+                    <= 24.0D;
+        }
+
+        double margin = Math.min(
+                settings.combatLeashRadius(),
+                settings.urbanCombatMargin()
         );
+        return garrison.containsHorizontally(location, margin);
+    }
+
+    private double engagementRadius(
+            VillageKnightGarrison.PatrolRoute route) {
+        if (route == null) {
+            return settings.detectionRadius();
+        }
+        if (route.kind().isSentry()) {
+            return settings.sentryEngagementRadius();
+        }
+        if (route.kind()
+                == VillageKnightGarrison.RouteKind.RAMPART) {
+            return settings.rampartEngagementRadius();
+        }
+        return settings.detectionRadius();
+    }
+
+    private boolean isWithinRampartCorridor(
+            VillageKnightGarrison.PatrolRoute route,
+            Location location) {
+        if (route == null || location == null
+                || route.kind()
+                != VillageKnightGarrison.RouteKind.RAMPART) {
+            return false;
+        }
+        double radius = settings.rampartCorridorRadius();
+        return distanceSquaredToRouteHorizontal(route, location)
+                <= radius * radius
+                && verticalDistanceToRoute(route, location)
+                <= RAMPART_VERTICAL_TOLERANCE;
+    }
+
+    private double verticalDistanceToRoute(
+            VillageKnightGarrison.PatrolRoute route,
+            Location location) {
+        if (route == null || location == null
+                || route.waypoints().isEmpty()) {
+            return Double.MAX_VALUE;
+        }
+        double nearest = Double.MAX_VALUE;
+        for (VillageKnightGarrison.BlockPoint point
+                : route.waypoints()) {
+            nearest = Math.min(
+                    nearest,
+                    Math.abs(location.getY() - point.y())
+            );
+        }
+        return nearest;
+    }
+
+    private double distanceSquaredToRouteHorizontal(
+            VillageKnightGarrison.PatrolRoute route,
+            Location location) {
+        if (route == null || location == null
+                || route.waypoints().isEmpty()) {
+            return Double.MAX_VALUE;
+        }
+        List<VillageKnightGarrison.BlockPoint> points =
+                route.waypoints();
+        if (points.size() == 1) {
+            return horizontalDistanceSquared(points.get(0), location);
+        }
+
+        double nearest = Double.MAX_VALUE;
+        for (int index = 0; index < points.size(); index++) {
+            VillageKnightGarrison.BlockPoint from =
+                    points.get(index);
+            VillageKnightGarrison.BlockPoint to =
+                    points.get((index + 1) % points.size());
+            nearest = Math.min(
+                    nearest,
+                    pointToSegmentDistanceSquared(
+                            location.getX(),
+                            location.getZ(),
+                            from.x() + 0.5D,
+                            from.z() + 0.5D,
+                            to.x() + 0.5D,
+                            to.z() + 0.5D
+                    )
+            );
+        }
+        return nearest;
+    }
+
+    private double pointToSegmentDistanceSquared(
+            double pointX,
+            double pointZ,
+            double fromX,
+            double fromZ,
+            double toX,
+            double toZ) {
+        double segmentX = toX - fromX;
+        double segmentZ = toZ - fromZ;
+        double lengthSq = segmentX * segmentX + segmentZ * segmentZ;
+        if (lengthSq < 0.000_001D) {
+            double dx = pointX - fromX;
+            double dz = pointZ - fromZ;
+            return dx * dx + dz * dz;
+        }
+
+        double projection = (
+                (pointX - fromX) * segmentX
+                        + (pointZ - fromZ) * segmentZ
+        ) / lengthSq;
+        double clamped = Math.max(0.0D, Math.min(1.0D, projection));
+        double nearestX = fromX + clamped * segmentX;
+        double nearestZ = fromZ + clamped * segmentZ;
+        double dx = pointX - nearestX;
+        double dz = pointZ - nearestZ;
+        return dx * dx + dz * dz;
+    }
+
+    private double horizontalDistanceSquared(
+            VillageKnightGarrison.BlockPoint point,
+            Location location) {
+        if (point == null || location == null) {
+            return Double.MAX_VALUE;
+        }
+        double dx = point.x() + 0.5D - location.getX();
+        double dz = point.z() + 0.5D - location.getZ();
+        return dx * dx + dz * dz;
     }
 
     private void reconcileOrRespawn(
@@ -1073,8 +1685,7 @@ public final class VillageKnightManager implements Listener {
         Location spawnLocation = findSafeLocation(
                 world,
                 preferred,
-                route.kind()
-                        == VillageKnightGarrison.RouteKind.RAMPART
+                route
         );
         if (spawnLocation == null) {
             return false;
@@ -1095,6 +1706,7 @@ public final class VillageKnightManager implements Listener {
                     )
             );
             slot.clearTarget();
+            slot.clearNavigationCommand();
             slot.updateMovementSample(
                     slot.lastKnownPosition(),
                     now
@@ -1390,6 +2002,9 @@ public final class VillageKnightManager implements Listener {
     private void reconcileInitiallyLoadedEntities() {
         for (World world : Bukkit.getWorlds()) {
             for (Entity entity : world.getEntities()) {
+                if (removeLegacyGateGuard(entity)) {
+                    continue;
+                }
                 if (isVillageKnight(entity)) {
                     adoptEntity(entity);
                 }
@@ -1543,35 +2158,59 @@ public final class VillageKnightManager implements Listener {
         }
     }
 
+    /**
+     * Cherche une destination praticable en privilégiant tous les voisins du
+     * même étage avant d'envisager un dénivelé. Les sentinelles et les archers
+     * ne changent jamais d'étage : cela évite précisément les gardes déplacés
+     * au pied d'un mur ou sur le toit d'un élément de décor.
+     */
     private Location findSafeLocation(
             World world,
             VillageKnightGarrison.BlockPoint preferred,
-            boolean rampart) {
-        if (world == null || preferred == null) {
+            VillageKnightGarrison.PatrolRoute route) {
+        if (world == null || preferred == null || route == null) {
             return null;
         }
 
-        int horizontalLimit = rampart
-                ? 9
-                : SAFE_HORIZONTAL_OFFSETS.length;
-        int verticalLimit = rampart ? 5 : SAFE_VERTICAL_OFFSETS.length;
-        for (int horizontalIndex = 0;
-             horizontalIndex < horizontalLimit;
-             horizontalIndex++) {
-            int[] horizontal =
-                    SAFE_HORIZONTAL_OFFSETS[horizontalIndex];
-            int x = preferred.x() + horizontal[0];
-            int z = preferred.z() + horizontal[1];
-            if (!world.isChunkLoaded(x >> 4, z >> 4)) {
+        boolean rampart = route.kind()
+                == VillageKnightGarrison.RouteKind.RAMPART;
+        boolean fixedFloor = rampart || route.kind().isSentry();
+        int searchRadius = rampart
+                ? Math.min(1, settings.localTargetSearchRadius())
+                : settings.localTargetSearchRadius();
+        int[] verticalOffsets = fixedFloor
+                ? new int[]{0}
+                : new int[]{0, 1, -1};
+        List<int[]> horizontalOffsets =
+                safeHorizontalOffsets(searchRadius);
+
+        /*
+         * La boucle verticale est volontairement extérieure : on teste d'abord
+         * toute la surface au niveau demandé, puis seulement les niveaux +1/-1.
+         */
+        for (int verticalOffset : verticalOffsets) {
+            int feetY = preferred.y() + verticalOffset;
+            if (feetY <= world.getMinHeight()
+                    || feetY + 1 >= world.getMaxHeight()) {
                 continue;
             }
-            for (int verticalIndex = 0;
-                 verticalIndex < verticalLimit;
-                 verticalIndex++) {
-                int feetY = preferred.y()
-                        + SAFE_VERTICAL_OFFSETS[verticalIndex];
-                if (feetY <= world.getMinHeight()
-                        || feetY + 1 >= world.getMaxHeight()) {
+
+            for (int[] horizontal : horizontalOffsets) {
+                int x = preferred.x() + horizontal[0];
+                int z = preferred.z() + horizontal[1];
+                if (!world.isChunkLoaded(x >> 4, z >> 4)) {
+                    continue;
+                }
+
+                Location candidate = new Location(
+                        world,
+                        x + 0.5D,
+                        feetY,
+                        z + 0.5D
+                );
+                if (rampart
+                        && (!isWithinRampartCorridor(route, candidate)
+                        || feetY != preferred.y())) {
                     continue;
                 }
 
@@ -1579,16 +2218,34 @@ public final class VillageKnightManager implements Listener {
                 Block feet = world.getBlockAt(x, feetY, z);
                 Block head = world.getBlockAt(x, feetY + 1, z);
                 if (isSafeBody(ground, feet, head)) {
-                    return new Location(
-                            world,
-                            x + 0.5D,
-                            feetY,
-                            z + 0.5D
-                    );
+                    return candidate;
                 }
             }
         }
         return null;
+    }
+
+    /**
+     * Produit des décalages ordonnés par distance, puis de façon stable. Le
+     * rayon est petit et borné par la configuration, l'allocation reste donc
+     * négligeable et n'est effectuée que lors d'un nouvel ordre de navigation.
+     */
+    private List<int[]> safeHorizontalOffsets(int radius) {
+        int safeRadius = Math.max(0, Math.min(4, radius));
+        List<int[]> offsets = new ArrayList<>();
+        for (int dx = -safeRadius; dx <= safeRadius; dx++) {
+            for (int dz = -safeRadius; dz <= safeRadius; dz++) {
+                offsets.add(new int[]{dx, dz});
+            }
+        }
+        offsets.sort(Comparator
+                .comparingInt((int[] offset) ->
+                        offset[0] * offset[0] + offset[1] * offset[1])
+                .thenComparingInt(offset -> Math.abs(offset[0])
+                        + Math.abs(offset[1]))
+                .thenComparingInt(offset -> offset[0])
+                .thenComparingInt(offset -> offset[1]));
+        return offsets;
     }
 
     private boolean isSafeBody(Block ground,
@@ -1718,10 +2375,27 @@ public final class VillageKnightManager implements Listener {
         Entity source = event.getEntity();
 
         if (isVillageKnight(source)) {
-            if (target == null || !isHostile(target)) {
+            SlotReference reference = slotsByEntity.get(
+                    source.getUniqueId()
+            );
+            if (reference == null) {
+                reference = referenceFromMarker(source);
+            }
+            boolean allowed = reference != null
+                    && target != null
+                    && isHostile(target)
+                    && isWithinCombatLeash(
+                    reference.garrison(),
+                    reference.slot(),
+                    target
+            );
+            if (!allowed) {
                 event.setCancelled(true);
                 if (source instanceof Mob mob) {
                     mob.setTarget(null);
+                }
+                if (reference != null) {
+                    reference.slot().clearTarget();
                 }
             }
             return;
@@ -1731,8 +2405,7 @@ public final class VillageKnightManager implements Listener {
                 && isVillageKnight(target)
                 && (source instanceof IronGolem
                 || source instanceof Snowman
-                || isRoyalGuard(source)
-                || isVillageKnight(source))) {
+                || isRoyalGuard(source))) {
             event.setCancelled(true);
             if (source instanceof Mob mob) {
                 mob.setTarget(null);
@@ -1810,6 +2483,37 @@ public final class VillageKnightManager implements Listener {
         if (event.getEntity() instanceof LivingEntity victim
                 && isProtectedEntity(victim)) {
             dispatchDefenders(victim, attacker);
+        }
+    }
+
+    /**
+     * Une chute du chemin de ronde ne doit pas tuer un archer juste avant sa
+     * remise en place par la maintenance. Les autres gardes conservent les
+     * dégâts vanilla normaux.
+     */
+    @EventHandler(priority = EventPriority.HIGHEST,
+            ignoreCancelled = false)
+    public void onKnightFallDamage(EntityDamageEvent event) {
+        if (event.getCause() != EntityDamageEvent.DamageCause.FALL
+                || !isVillageKnight(event.getEntity())) {
+            return;
+        }
+        SlotReference reference = slotsByEntity.get(
+                event.getEntity().getUniqueId()
+        );
+        if (reference == null) {
+            reference = referenceFromMarker(event.getEntity());
+        }
+        VillageKnightGarrison.PatrolRoute route =
+                reference != null
+                        ? reference.garrison().route(
+                        reference.slot().routeId()
+                )
+                        : null;
+        if (route != null
+                && route.kind()
+                == VillageKnightGarrison.RouteKind.RAMPART) {
+            event.setCancelled(true);
         }
     }
 
@@ -1892,6 +2596,9 @@ public final class VillageKnightManager implements Listener {
     @EventHandler(priority = EventPriority.MONITOR)
     public void onEntitiesLoad(EntitiesLoadEvent event) {
         for (Entity entity : event.getEntities()) {
+            if (removeLegacyGateGuard(entity)) {
+                continue;
+            }
             if (isVillageKnight(entity)) {
                 adoptEntity(entity);
             }
@@ -1992,6 +2699,31 @@ public final class VillageKnightManager implements Listener {
                 && !isRoyalGuard(entity);
     }
 
+    /**
+     * Retire les anciens golems créés par GateGuardManager. Cette ancienne
+     * garnison parallèle n'était ni persistante ni coordonnée avec les
+     * chevaliers et provoquait des doublons aux portes.
+     */
+    private boolean removeLegacyGateGuard(Entity entity) {
+        if (entity == null) {
+            return false;
+        }
+        try {
+            Set<String> tags = entity.getScoreboardTags();
+            if (tags != null && tags.contains(LEGACY_GATE_GUARD_TAG)) {
+                entity.remove();
+                return true;
+            }
+        } catch (RuntimeException exception) {
+            plugin.getLogger().log(
+                    Level.FINE,
+                    "[Chevaliers] Impossible d'inspecter un ancien garde.",
+                    exception
+            );
+        }
+        return false;
+    }
+
     private boolean isRoyalGuard(Entity entity) {
         if (entity == null) {
             return false;
@@ -2085,6 +2817,7 @@ public final class VillageKnightManager implements Listener {
     private record AvailableKnight(
             VillageKnightGarrison.KnightSlot slot,
             Mob knight,
+            int responsePriority,
             double distanceSquared
     ) {
     }

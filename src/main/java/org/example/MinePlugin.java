@@ -19,9 +19,12 @@ import java.util.List;
 import java.util.UUID;
 
 import org.example.merchant.MerchantManager;
+import org.example.forestry2.ForestryModule;
+import org.example.forestry2.SharedChunkTickets;
 import org.example.progression.GlobalProgressionManager;
 import org.example.village.VillageEntityManager;
 import org.example.village.VillageKnightManager;
+import org.example.tutorial.TutorialManager;
 
 /**
  * Plugin principal.
@@ -92,6 +95,11 @@ public class MinePlugin extends JavaPlugin implements Listener {
      */
     private VillageKnightManager villageKnightManager;
 
+    /**
+     * Gère la visite privée /tuto et ses mondes temporaires.
+     */
+    private TutorialManager tutorialManager;
+
     public Mineur getMineur() { return mineur; }
     public Agriculture getAgriculture() { return agriculture; }
     public Foret getForet() { return foret; }
@@ -101,6 +109,7 @@ public class MinePlugin extends JavaPlugin implements Listener {
     public MerchantManager getMerchantManager() { return merchantManager; }
     public RoyalGuardManager getRoyalGuardManager() { return royalGuardManager; }
     public VillageKnightManager getVillageKnightManager() { return villageKnightManager; }
+    public TutorialManager getTutorialManager() { return tutorialManager; }
 
 
     @Override
@@ -155,9 +164,9 @@ public class MinePlugin extends JavaPlugin implements Listener {
         agriculture = new Agriculture(this);
         agriculture.loadSavedSessions(); // Restaure les champs
 
-        // Instancie /foret
+        // Je conserve un seul moteur forestier et le module v2 lui ajoute son alias sûr.
         foret = new Foret(this);
-        foret.loadSavedSessions(); // Restaure les forêts (le cas échéant)
+        foret.loadSavedSessions();
 
         // Instancie /village
         village = new Village(this);
@@ -184,14 +193,29 @@ public class MinePlugin extends JavaPlugin implements Listener {
             getLogger().warning("VillageEntityManager desactive dans cet environnement: " + throwable.getClass().getSimpleName());
         }
 
-        // Le module forestier est installé en dernier pour remplacer proprement l'ancien exécuteur.
-        org.example.forestry2.ForestryModule.install(this);
+        // J'installe le module après tous les services dont il partage les tickets de chunks.
+        ForestryModule.install(this);
+
+        /*
+         * Le tutoriel est initialisé en dernier : toutes les commandes qu'il
+         * présente sont alors déjà prêtes. Ses démonstrations restent toutefois
+         * isolées et n'appellent jamais directement ces gestionnaires.
+         */
+        tutorialManager = new TutorialManager(this);
     }
 
     @Override
     public void onDisable() {
-        // Sauvegarde les récoltes et libère les tickets avant les autres services.
-        org.example.forestry2.ForestryModule.shutdown();
+        /*
+         * Les joueurs du tutoriel sont ramenés avant l'arrêt des autres
+         * modules et avant que Bukkit ne commence à décharger les mondes.
+         */
+        if (tutorialManager != null) {
+            tutorialManager.shutdown();
+        }
+
+        // Je fige et sauvegarde d'abord le moteur forestier actif.
+        ForestryModule.shutdown();
         // Sauvegarde des sessions (mineur, champ, foret)
         if (mineur != null) {
             mineur.saveAllSessions();
@@ -223,6 +247,18 @@ public class MinePlugin extends JavaPlugin implements Listener {
         }
         if (royalGuardManager != null) {
             royalGuardManager.shutdown();
+        }
+
+        /*
+         * Je purge uniquement après l'arrêt normal de tous les détenteurs. Cette
+         * dernière passe couvre une exception de nettoyage sans retirer trop tôt
+         * un ticket encore utilisé par le mineur.
+         */
+        try {
+            SharedChunkTickets.releaseAll(this);
+        } catch (RuntimeException failure) {
+            getLogger().severe("Je n'ai pas pu libérer tous les tickets de chunks: "
+                    + failure.getMessage());
         }
 
         // Nettoyage /army

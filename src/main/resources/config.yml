@@ -1,5 +1,38 @@
 # Configuration par défaut pour MinePlugin
 
+# Visite guidée privée /tuto
+tutorial:
+  enabled: true
+
+  # Chaque joueur reçoit son propre monde jetable. Cette limite protège le
+  # serveur contre trop de générations simultanées.
+  max-concurrent-sessions: 4
+
+  # Au-delà de cette distance, le joueur est rappelé près de DonjBot.
+  recall-distance: 15.0
+
+  # Vitesse visuelle de DonjBot. 0.17 correspond à une marche lisible.
+  npc-walk-speed-blocks-per-tick: 0.17
+
+  # Les décors sont posés par lots avec un double budget (nombre + temps)
+  # pour préserver le TPS, même sur une machine modeste.
+  blocks-per-tick: 1000
+  build-time-budget-ms: 6.0
+  chunk-load-timeout-seconds: 20
+
+  # Après la dernière explication, retour automatique à la position d'origine.
+  # Mettre 0 pour laisser le joueur quitter lui-même avec /tuto.
+  auto-exit-delay-seconds: 15
+
+  world:
+    # ASCII uniquement ; la valeur est nettoyée et bornée par le plugin.
+    name-prefix: "minegus_tuto_"
+    border-size: 800.0
+    time: 6000
+
+    # 0 = paysage différent à chaque visite ; autre valeur = paysage fixe.
+    seed: 0
+
 # Paramètres du mineur
 mineur:
   allowed-worlds: [world]
@@ -227,8 +260,13 @@ village:
     urban-patrols: 3
     soldiers-per-patrol: 4
 
-    # Postes fixes : châtelet, donjon et lieux civiques importants.
-    strategic-guards: 4
+    # Postes fixes organisés par fonction. Chaque valeur est bornée entre
+    # 0 et 4 ; deux gardes permettent d'encadrer une entrée sans la bloquer.
+    posts:
+      gate: 2
+      plaza: 2
+      keep-entrance: 2
+      keep-interior: 2
 
     # Les archers ne sont créés que si le chemin de ronde construit est
     # réellement praticable. Sinon le village conserve seulement les fantassins.
@@ -255,6 +293,24 @@ village:
     route-advance-timeout-seconds: 25
     missing-entity-loaded-checks: 3
     stuck-seconds: 20
+
+    navigation:
+      # L'ordre de déplacement n'est pas réémis chaque cycle : l'IA vanilla
+      # dispose ainsi de 1,5 seconde pour calculer et suivre son chemin.
+      path-refresh-ticks: 30
+      # Recherche locale d'un sol libre lorsque du mobilier masque un point.
+      local-target-search-radius: 2
+      # Après ce délai, un garde bloqué est replacé même s'il est observé.
+      hard-recovery-seconds: 40
+
+    leashes:
+      # Les sentinelles restent attachées à leur poste, les archers à la
+      # courtine ; seules les patrouilles urbaines couvrent toute la ville.
+      sentry-engagement-radius: 10.0
+      sentry-return-radius: 2.0
+      rampart-engagement-radius: 16.0
+      rampart-corridor-radius: 2.5
+      urban-combat-margin: 8.0
 
     attributes:
       # L'armure en netherite est volontairement non enchantée. Le multiplicateur

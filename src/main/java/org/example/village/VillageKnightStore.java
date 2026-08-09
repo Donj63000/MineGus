@@ -215,6 +215,21 @@ public final class VillageKnightStore {
                 0L,
                 section.getLong("created-at", 0L)
         );
+        int planVersion = section.getInt(
+                "plan-version",
+                VillageKnightGarrison.LEGACY_PLAN_VERSION
+        );
+        if (planVersion < VillageKnightGarrison.LEGACY_PLAN_VERSION
+                || planVersion > VillageKnightGarrison.CURRENT_PLAN_VERSION) {
+            throw new IllegalArgumentException(
+                    "Version de plan de garnison non prise en charge : "
+                            + planVersion
+            );
+        }
+        boolean rampartPlanComplete = section.getBoolean(
+                "rampart-plan-complete",
+                planVersion >= VillageKnightGarrison.CURRENT_PLAN_VERSION
+        );
 
         ConfigurationSection routesSection =
                 requiredSection(section, "routes");
@@ -312,6 +327,7 @@ public final class VillageKnightStore {
         }
 
         return new VillageKnightGarrison(
+                planVersion,
                 villageId,
                 worldId,
                 worldName,
@@ -319,6 +335,7 @@ public final class VillageKnightStore {
                 radiusX,
                 radiusZ,
                 createdAt,
+                rampartPlanComplete,
                 routes,
                 slots
         );
@@ -424,6 +441,11 @@ public final class VillageKnightStore {
 
     private void writeGarrison(ConfigurationSection section,
                                VillageKnightGarrison garrison) {
+        section.set("plan-version", garrison.planVersion());
+        section.set(
+                "rampart-plan-complete",
+                garrison.rampartPlanComplete()
+        );
         section.set("village-id", garrison.villageId());
         section.set("world-id", garrison.worldId().toString());
         section.set("world-name", garrison.worldName());

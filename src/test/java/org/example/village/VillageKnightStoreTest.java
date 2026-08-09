@@ -40,6 +40,11 @@ class VillageKnightStoreTest {
         assertEquals(expected.radiusX(), actual.radiusX());
         assertEquals(expected.radiusZ(), actual.radiusZ());
         assertEquals(expected.createdAtMillis(), actual.createdAtMillis());
+        assertEquals(expected.planVersion(), actual.planVersion());
+        assertEquals(
+                expected.rampartPlanComplete(),
+                actual.rampartPlanComplete()
+        );
 
         VillageKnightGarrison.PatrolRoute route = actual.route(3);
         assertNotNull(route);
@@ -57,6 +62,42 @@ class VillageKnightStoreTest {
         assertEquals(expectedSlot.formationIndex(), slot.formationIndex());
         assertEquals(expectedSlot.respawnAtMillis(), slot.respawnAtMillis());
         assertEquals(expectedSlot.lastKnownPosition(), slot.lastKnownPosition());
+    }
+
+    @Test
+    void readsFilesWithoutPlanMetadataAsLegacyGarrisons()
+            throws IOException {
+        File folder = Files.createTempDirectory(
+                "village-knights-legacy"
+        ).toFile();
+        folder.deleteOnExit();
+        VillageKnightStore store = new VillageKnightStore(
+                folder,
+                quietLogger()
+        );
+        assertTrue(store.save(List.of(garrison(4))));
+
+        File primary = new File(folder, "village-knights.yml");
+        String legacyYaml = Files.readString(primary.toPath())
+                .replaceAll("(?m)^\\s*plan-version:.*\\R", "")
+                .replaceAll(
+                        "(?m)^\\s*rampart-plan-complete:.*\\R",
+                        ""
+                );
+        Files.writeString(primary.toPath(), legacyYaml);
+
+        VillageKnightStore.LoadResult result =
+                new VillageKnightStore(folder, quietLogger()).load();
+
+        assertTrue(result.writable());
+        assertEquals(1, result.garrisons().size());
+        VillageKnightGarrison loaded = result.garrisons().get(0);
+        assertEquals(
+                VillageKnightGarrison.LEGACY_PLAN_VERSION,
+                loaded.planVersion()
+        );
+        assertTrue(loaded.requiresPlanMigration());
+        assertFalse(loaded.rampartPlanComplete());
     }
 
     @Test
@@ -116,6 +157,7 @@ class VillageKnightStoreTest {
                         second
                 );
         return new VillageKnightGarrison(
+                VillageKnightGarrison.CURRENT_PLAN_VERSION,
                 villageId,
                 UUID.randomUUID(),
                 "world_" + villageId,
@@ -123,6 +165,7 @@ class VillageKnightStoreTest {
                 32,
                 28,
                 1_234L,
+                false,
                 List.of(route),
                 List.of(slot)
         );

@@ -933,7 +933,6 @@ public final class VillageEntityManager {
                     .unregisterVillage(villageId);
         }
 
-        GateGuardManager.stopGuardTask(villageId);
         VILLAGE_CENTERS.remove(villageId);
         VILLAGE_ANCHORS.remove(villageId);
         MERCHANTS.entrySet().removeIf(

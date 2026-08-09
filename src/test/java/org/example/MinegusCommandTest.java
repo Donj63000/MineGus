@@ -37,6 +37,7 @@ class MinegusCommandTest {
         String help = plainText(MinegusCommand.buildHelpLines());
 
         assertTrue(help.contains("/ping"));
+        assertTrue(help.contains("/tuto"));
         assertTrue(help.contains("/army"));
         assertTrue(help.contains("/garde"));
         assertTrue(help.contains("/mineur"));
@@ -65,6 +66,7 @@ class MinegusCommandTest {
         String help = plainText(messages);
         assertTrue(help.contains("Commandes disponibles"));
         assertTrue(help.contains("/ping"));
+        assertTrue(help.contains("/tuto"));
         assertTrue(help.contains("/garde"));
         assertTrue(help.contains("/marchand"));
         assertTrue(help.contains("/minegus fix <forestier|golems>"));
@@ -94,6 +96,8 @@ class MinegusCommandTest {
         assertNull(plugin.getCommand("minegus").getPermission());
         assertNotNull(plugin.getCommand("garde"));
         assertEquals("mineplugin.garde.use", plugin.getCommand("garde").getPermission());
+        assertNotNull(plugin.getCommand("tuto"));
+        assertEquals("mineplugin.tuto.use", plugin.getCommand("tuto").getPermission());
         assertNotNull(plugin.getCommand("niveau"));
         assertNotNull(plugin.getGlobalProgressionManager());
         Permission progressionAdmin =
@@ -104,6 +108,9 @@ class MinegusCommandTest {
         Permission guardPermission = server.getPluginManager().getPermission("mineplugin.garde.use");
         assertNotNull(guardPermission);
         assertEquals(PermissionDefault.TRUE, guardPermission.getDefault());
+        Permission tutorialPermission = server.getPluginManager().getPermission("mineplugin.tuto.use");
+        assertNotNull(tutorialPermission);
+        assertEquals(PermissionDefault.TRUE, tutorialPermission.getDefault());
     }
 
     private static List<String> captureMessages(CommandSender sender) {

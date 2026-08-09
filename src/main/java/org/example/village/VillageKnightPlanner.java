@@ -1,6 +1,7 @@
 package org.example.village;
 
 import org.bukkit.Location;
+import org.bukkit.Material;
 import org.bukkit.World;
 import org.bukkit.block.Block;
 
@@ -24,22 +25,38 @@ import java.util.UUID;
 /**
  * Transforme le plan architectural du village en itinéraires de garnison.
  *
- * <p>Les patrouilles urbaines suivent le graphe réel des rues. Elles ne sont
- * donc pas calculées comme de simples rectangles susceptibles de traverser une
- * maison. Les archers ne sont ajoutés que si le chemin de ronde construit est
- * effectivement praticable.</p>
+ * <p>Les postes fixes sont dérivés de la géométrie réellement construite. Les
+ * patrouilles urbaines suivent le graphe des rues et chaque section praticable
+ * du chemin de ronde peut recevoir ses propres archers, même lorsqu'une porte
+ * ou le donjon coupe la boucle complète.</p>
  */
 public final class VillageKnightPlanner {
 
     private static final int MAX_SEGMENT_LENGTH = 10;
     private static final int URBAN_WALK_STEPS = 9;
     private static final int RAMPART_SAMPLE_STEP = 8;
+    private static final int MIN_RAMPART_RUN_BLOCKS = 8;
     private static final int MAX_RAMPART_ROUTE_POINTS = 480;
-    private static final double MIN_RAMPART_VALID_RATIO = 0.65D;
+    private static final int POST_SEARCH_RADIUS = 2;
+
+    private static final Set<Material> DANGEROUS_GROUND = Set.of(
+            Material.LAVA,
+            Material.FIRE,
+            Material.SOUL_FIRE,
+            Material.MAGMA_BLOCK,
+            Material.CACTUS,
+            Material.CAMPFIRE,
+            Material.SOUL_CAMPFIRE,
+            Material.SWEET_BERRY_BUSH,
+            Material.POWDER_SNOW
+    );
 
     private VillageKnightPlanner() {
     }
 
+    /**
+     * Calcule le plan complet d'un village venant d'être généré.
+     */
     public static VillageKnightGarrison plan(
             int villageId,
             Location villageCenter,
@@ -57,133 +74,83 @@ public final class VillageKnightPlanner {
                 villageCenter.getWorld(),
                 "Le monde du village est obligatoire."
         );
-
+        long now = System.currentTimeMillis();
         List<VillageKnightGarrison.PatrolRoute> routes =
                 new ArrayList<>();
         List<VillageKnightGarrison.KnightSlot> slots =
                 new ArrayList<>();
         int nextRouteId = 0;
 
+        nextRouteId = appendSentryRoutes(
+                world,
+                villageId,
+                villageCenter,
+                layout,
+                anchors,
+                radiusX,
+                radiusZ,
+                baseY,
+                settings,
+                true,
+                nextRouteId,
+                routes,
+                slots,
+                now
+        );
+
         StreetGraph graph = StreetGraph.from(layout.streets());
         List<Node> mainComponent = graph.largestComponent();
-
-        /*
-         * Les postes fixes utilisent d'abord les lieux les plus importants,
-         * puis sont rabattus sur le nœud de rue le plus proche pour ne jamais
-         * placer un chevalier au milieu d'un bâtiment.
-         */
-        List<VillageKnightGarrison.BlockPoint> strategicPoints =
-                buildStrategicPoints(
-                        layout,
-                        anchors,
-                        villageCenter,
-                        mainComponent,
-                        baseY,
-                        settings.strategicGuardCount()
-                );
-        for (VillageKnightGarrison.BlockPoint point : strategicPoints) {
-            int routeId = nextRouteId++;
-            routes.add(new VillageKnightGarrison.PatrolRoute(
-                    routeId,
-                    VillageKnightGarrison.RouteKind.STRATEGIC,
-                    List.of(point),
-                    0,
-                    System.currentTimeMillis()
-            ));
-            slots.add(newSlot(
-                    world.getUID(),
-                    villageId,
-                    routeId,
-                    VillageKnightGarrison.UnitKind.SWORDSMAN,
-                    0,
-                    point
-            ));
-        }
-
         List<List<VillageKnightGarrison.BlockPoint>> urbanRoutes =
                 buildUrbanRoutes(
+                        world,
                         graph,
                         mainComponent,
                         villageCenter,
                         baseY,
                         settings.urbanPatrolCount(),
-                        villageId
-                );
-        for (List<VillageKnightGarrison.BlockPoint> points : urbanRoutes) {
-            int routeId = nextRouteId++;
-            routes.add(new VillageKnightGarrison.PatrolRoute(
-                    routeId,
-                    VillageKnightGarrison.RouteKind.URBAN,
-                    points,
-                    0,
-                    System.currentTimeMillis()
-            ));
-            for (int formationIndex = 0;
-                 formationIndex < settings.soldiersPerPatrol();
-                 formationIndex++) {
-                slots.add(newSlot(
-                        world.getUID(),
                         villageId,
-                        routeId,
-                        VillageKnightGarrison.UnitKind.SWORDSMAN,
-                        formationIndex,
-                        points.get(0)
-                ));
-            }
-        }
+                        settings.localTargetSearchRadius()
+                );
+        nextRouteId = appendUrbanRoutes(
+                world.getUID(),
+                villageId,
+                urbanRoutes,
+                settings.soldiersPerPatrol(),
+                nextRouteId,
+                routes,
+                slots,
+                now
+        );
 
-        /*
-         * Un archer reçoit sa propre progression sur la même boucle. Des
-         * départs espacés évitent que tous les tireurs se regroupent au même
-         * angle de la muraille.
-         */
-        if (settings.wallArchersEnabled()
-                && settings.wallArcherCount() > 0) {
-            List<VillageKnightGarrison.BlockPoint> rampart =
-                    buildRampartRoute(
-                            world,
-                            villageCenter,
-                            radiusX,
-                            radiusZ,
-                            baseY
-                    );
-            if (isRampartUsable(world, rampart)) {
-                int archerCount = settings.wallArcherCount();
-                for (int archerIndex = 0;
-                     archerIndex < archerCount;
-                     archerIndex++) {
-                    int routeId = nextRouteId++;
-                    int startIndex = Math.floorMod(
-                            archerIndex * rampart.size()
-                                    / Math.max(1, archerCount),
-                            rampart.size()
-                    );
-                    routes.add(new VillageKnightGarrison.PatrolRoute(
-                            routeId,
-                            VillageKnightGarrison.RouteKind.RAMPART,
-                            rampart,
-                            startIndex,
-                            System.currentTimeMillis()
-                    ));
-                    slots.add(newSlot(
-                            world.getUID(),
-                            villageId,
-                            routeId,
-                            VillageKnightGarrison.UnitKind.ARCHER,
-                            0,
-                            rampart.get(startIndex)
-                    ));
-                }
-            }
-        }
+        List<List<VillageKnightGarrison.BlockPoint>> rampartRoutes =
+                settings.wallArchersEnabled()
+                        ? buildRampartRoutes(
+                        world,
+                        villageCenter,
+                        radiusX,
+                        radiusZ,
+                        baseY
+                )
+                        : List.of();
+        appendRampartRoutes(
+                world.getUID(),
+                villageId,
+                rampartRoutes,
+                settings.wallArchersEnabled()
+                        ? settings.wallArcherCount()
+                        : 0,
+                nextRouteId,
+                routes,
+                slots,
+                now
+        );
 
         if (slots.isEmpty()) {
             return null;
         }
 
-        int protectedRadiusX = Math.max(4, radiusX);
-        int protectedRadiusZ = Math.max(4, radiusZ);
         return new VillageKnightGarrison(
+                VillageKnightGarrison.CURRENT_PLAN_VERSION,
                 villageId,
                 world.getUID(),
                 world.getName(),
@@ -192,12 +159,569 @@ public final class VillageKnightPlanner {
                         baseY + 1,
                         villageCenter.getBlockZ()
                 ),
-                protectedRadiusX,
-                protectedRadiusZ,
-                System.currentTimeMillis(),
+                Math.max(4, radiusX),
+                Math.max(4, radiusZ),
+                now,
+                isRampartPlanningAreaLoaded(
+                        world,
+                        villageCenter,
+                        radiusX,
+                        radiusZ,
+                        baseY
+                ),
                 routes,
                 slots
         );
+    }
+
+    /**
+     * Convertit une sauvegarde historique sans charger le moindre chunk.
+     *
+     * <p>Les anciennes routes urbaines et de rempart sont conservées afin de ne
+     * pas perdre les informations architecturales déjà calculées. Les postes
+     * fixes, eux, sont remplacés par les quatre catégories explicites du plan
+     * version 2.</p>
+     */
+    static VillageKnightGarrison upgradeLegacy(
+            VillageKnightGarrison legacy,
+            World world,
+            VillageKnightSettings settings) {
+        Objects.requireNonNull(legacy, "legacy");
+        Objects.requireNonNull(world, "world");
+        Objects.requireNonNull(settings, "settings");
+        if (!legacy.requiresPlanMigration()) {
+            return legacy;
+        }
+
+        int baseY = legacy.center().y() - 1;
+        Location center = new Location(
+                world,
+                legacy.center().x() + 0.5D,
+                baseY,
+                legacy.center().z() + 0.5D
+        );
+        VillageLayoutPlan syntheticLayout = new VillageLayoutPlan(
+                List.of(),
+                List.of(),
+                List.of(),
+                new VillageLayoutPlan.Bounds(
+                        legacy.center().x() - legacy.radiusX(),
+                        legacy.center().x() + legacy.radiusX(),
+                        legacy.center().z() - legacy.radiusZ(),
+                        legacy.center().z() + legacy.radiusZ()
+                ),
+                Map.of(),
+                0,
+                List.of()
+        );
+        Map<String, Location> anchors = new LinkedHashMap<>();
+        anchors.put("plaza", center.clone().add(0.0D, 1.0D, 0.0D));
+        Location gate = WallBuilder.gateAnchor(
+                center,
+                legacy.radiusX(),
+                legacy.radiusZ(),
+                baseY
+        );
+        Location keep = KeepBuilder.keepAnchor(
+                center,
+                legacy.radiusZ(),
+                baseY
+        );
+        if (gate != null) {
+            anchors.put("gate", gate);
+        }
+        if (keep != null) {
+            anchors.put("keep", keep);
+        }
+
+        long now = System.currentTimeMillis();
+        List<VillageKnightGarrison.PatrolRoute> routes =
+                new ArrayList<>();
+        List<VillageKnightGarrison.KnightSlot> slots =
+                new ArrayList<>();
+        int nextRouteId = appendSentryRoutes(
+                world,
+                legacy.villageId(),
+                center,
+                syntheticLayout,
+                anchors,
+                legacy.radiusX(),
+                legacy.radiusZ(),
+                baseY,
+                settings,
+                false,
+                0,
+                routes,
+                slots,
+                now
+        );
+
+        List<List<VillageKnightGarrison.BlockPoint>> urban =
+                legacy.routes().stream()
+                        .filter(route -> route.kind()
+                                == VillageKnightGarrison.RouteKind.URBAN)
+                        .map(VillageKnightGarrison.PatrolRoute::waypoints)
+                        .toList();
+        if (urban.isEmpty() && settings.urbanPatrolCount() > 0) {
+            urban = List.of(List.of(legacy.center()));
+        }
+        List<List<VillageKnightGarrison.BlockPoint>> selectedUrban =
+                repeatRoutes(urban, settings.urbanPatrolCount());
+        nextRouteId = appendUrbanRoutes(
+                world.getUID(),
+                legacy.villageId(),
+                selectedUrban,
+                settings.soldiersPerPatrol(),
+                nextRouteId,
+                routes,
+                slots,
+                now
+        );
+
+        List<List<VillageKnightGarrison.BlockPoint>> ramparts =
+                distinctLegacyRoutes(
+                        legacy,
+                        VillageKnightGarrison.RouteKind.RAMPART
+                );
+        appendRampartRoutes(
+                world.getUID(),
+                legacy.villageId(),
+                ramparts,
+                settings.wallArchersEnabled()
+                        ? settings.wallArcherCount()
+                        : 0,
+                nextRouteId,
+                routes,
+                slots,
+                now
+        );
+
+        if (slots.isEmpty()) {
+            return null;
+        }
+        return new VillageKnightGarrison(
+                VillageKnightGarrison.CURRENT_PLAN_VERSION,
+                legacy.villageId(),
+                legacy.worldId(),
+                legacy.worldName(),
+                legacy.center(),
+                legacy.radiusX(),
+                legacy.radiusZ(),
+                legacy.createdAtMillis(),
+                false,
+                routes,
+                slots
+        );
+    }
+
+    /**
+     * Recalcule uniquement les remparts lorsque leur couronne de chunks est
+     * enfin chargée. Les entités des sentinelles et des patrouilles sont
+     * conservées grâce à la réutilisation de leurs créneaux.
+     *
+     * @return un nouveau plan, ou {@code null} si les chunks requis manquent.
+     */
+    static VillageKnightGarrison refreshRampartsIfLoaded(
+            VillageKnightGarrison garrison,
+            World world,
+            VillageKnightSettings settings) {
+        Objects.requireNonNull(garrison, "garrison");
+        Objects.requireNonNull(world, "world");
+        Objects.requireNonNull(settings, "settings");
+        if (garrison.rampartPlanComplete()) {
+            return garrison;
+        }
+
+        int baseY = garrison.center().y() - 1;
+        Location center = new Location(
+                world,
+                garrison.center().x() + 0.5D,
+                baseY,
+                garrison.center().z() + 0.5D
+        );
+        if (!isRampartPlanningAreaLoaded(
+                world,
+                center,
+                garrison.radiusX(),
+                garrison.radiusZ(),
+                baseY
+        )) {
+            return null;
+        }
+
+        List<VillageKnightGarrison.PatrolRoute> routes =
+                garrison.routes().stream()
+                        .filter(route -> route.kind()
+                                != VillageKnightGarrison.RouteKind.RAMPART)
+                        .collect(java.util.stream.Collectors.toCollection(
+                                ArrayList::new
+                        ));
+        List<VillageKnightGarrison.KnightSlot> slots =
+                garrison.slots().stream()
+                        .filter(slot -> {
+                            VillageKnightGarrison.PatrolRoute route =
+                                    garrison.route(slot.routeId());
+                            return route != null
+                                    && route.kind()
+                                    != VillageKnightGarrison.RouteKind.RAMPART;
+                        })
+                        .collect(java.util.stream.Collectors.toCollection(
+                                ArrayList::new
+                        ));
+
+        int nextRouteId = routes.stream()
+                .mapToInt(VillageKnightGarrison.PatrolRoute::routeId)
+                .max()
+                .orElse(-1) + 1;
+        List<List<VillageKnightGarrison.BlockPoint>> ramparts =
+                settings.wallArchersEnabled()
+                        ? buildRampartRoutes(
+                        world,
+                        center,
+                        garrison.radiusX(),
+                        garrison.radiusZ(),
+                        baseY
+                )
+                        : List.of();
+        appendRampartRoutes(
+                world.getUID(),
+                garrison.villageId(),
+                ramparts,
+                settings.wallArchersEnabled()
+                        ? settings.wallArcherCount()
+                        : 0,
+                nextRouteId,
+                routes,
+                slots,
+                System.currentTimeMillis()
+        );
+
+        /*
+         * Une configuration composée uniquement d'archers peut devenir vide si
+         * le rempart a été détruit. Dans ce cas, on conserve l'ancien état au
+         * lieu de fabriquer une garnison invalide.
+         */
+        if (slots.isEmpty()) {
+            return null;
+        }
+        return new VillageKnightGarrison(
+                VillageKnightGarrison.CURRENT_PLAN_VERSION,
+                garrison.villageId(),
+                garrison.worldId(),
+                garrison.worldName(),
+                garrison.center(),
+                garrison.radiusX(),
+                garrison.radiusZ(),
+                garrison.createdAtMillis(),
+                true,
+                routes,
+                slots
+        );
+    }
+
+    private static int appendSentryRoutes(
+            World world,
+            int villageId,
+            Location center,
+            VillageLayoutPlan layout,
+            Map<String, Location> suppliedAnchors,
+            int radiusX,
+            int radiusZ,
+            int baseY,
+            VillageKnightSettings settings,
+            boolean validateWorld,
+            int firstRouteId,
+            List<VillageKnightGarrison.PatrolRoute> routes,
+            List<VillageKnightGarrison.KnightSlot> slots,
+            long now) {
+        Map<String, Location> anchors =
+                suppliedAnchors == null || suppliedAnchors.isEmpty()
+                        ? layout.anchors()
+                        : suppliedAnchors;
+        List<SentryPost> posts = buildSentryPosts(
+                world,
+                center,
+                anchors,
+                radiusX,
+                radiusZ,
+                baseY,
+                settings,
+                validateWorld
+        );
+
+        int routeId = firstRouteId;
+        for (SentryPost post : posts) {
+            routes.add(new VillageKnightGarrison.PatrolRoute(
+                    routeId,
+                    post.kind(),
+                    List.of(post.point()),
+                    0,
+                    now
+            ));
+            slots.add(newSlot(
+                    world.getUID(),
+                    villageId,
+                    routeId,
+                    VillageKnightGarrison.UnitKind.SWORDSMAN,
+                    0,
+                    post.point()
+            ));
+            routeId++;
+        }
+        return routeId;
+    }
+
+    private static List<SentryPost> buildSentryPosts(
+            World world,
+            Location center,
+            Map<String, Location> anchors,
+            int radiusX,
+            int radiusZ,
+            int baseY,
+            VillageKnightSettings settings,
+            boolean validateWorld) {
+        List<SentryPost> result = new ArrayList<>();
+        Set<VillageKnightGarrison.BlockPoint> used =
+                new LinkedHashSet<>();
+
+        Location gateAnchor = anchors.get("gate");
+        if (gateAnchor == null) {
+            gateAnchor = WallBuilder.gateAnchor(
+                    center,
+                    radiusX,
+                    radiusZ,
+                    baseY
+            );
+        }
+        appendPostCategory(
+                world,
+                VillageKnightGarrison.RouteKind.GATE_SENTRY,
+                gateCandidates(gateAnchor, baseY),
+                settings.gateGuardCount(),
+                validateWorld,
+                used,
+                result
+        );
+
+        Location plaza = anchors.getOrDefault("plaza", center);
+        appendPostCategory(
+                world,
+                VillageKnightGarrison.RouteKind.PLAZA_SENTRY,
+                plazaCandidates(plaza, baseY),
+                settings.plazaGuardCount(),
+                validateWorld,
+                used,
+                result
+        );
+
+        appendPostCategory(
+                world,
+                VillageKnightGarrison.RouteKind.KEEP_ENTRANCE_SENTRY,
+                KeepBuilder.entranceGuardAnchors(
+                        center,
+                        radiusZ,
+                        baseY
+                ),
+                settings.keepEntranceGuardCount(),
+                validateWorld,
+                used,
+                result
+        );
+        appendPostCategory(
+                world,
+                VillageKnightGarrison.RouteKind.KEEP_INTERIOR_SENTRY,
+                KeepBuilder.interiorGuardAnchors(
+                        center,
+                        radiusZ,
+                        baseY
+                ),
+                settings.keepInteriorGuardCount(),
+                validateWorld,
+                used,
+                result
+        );
+        return result;
+    }
+
+    private static List<Location> gateCandidates(
+            Location anchor,
+            int baseY) {
+        if (anchor == null) {
+            return List.of();
+        }
+        int x = anchor.getBlockX();
+        int z = anchor.getBlockZ();
+        double y = baseY + 1.0D;
+        return List.of(
+                new Location(anchor.getWorld(), x - 2 + 0.5D, y, z + 0.5D),
+                new Location(anchor.getWorld(), x + 2 + 0.5D, y, z + 0.5D),
+                new Location(anchor.getWorld(), x - 3 + 0.5D, y, z + 1.5D),
+                new Location(anchor.getWorld(), x + 3 + 0.5D, y, z + 1.5D)
+        );
+    }
+
+    private static List<Location> plazaCandidates(
+            Location anchor,
+            int baseY) {
+        if (anchor == null) {
+            return List.of();
+        }
+        int x = anchor.getBlockX();
+        int z = anchor.getBlockZ();
+        double y = baseY + 1.0D;
+        return List.of(
+                new Location(anchor.getWorld(), x - 4 + 0.5D, y, z + 0.5D),
+                new Location(anchor.getWorld(), x + 4 + 0.5D, y, z + 0.5D),
+                new Location(anchor.getWorld(), x + 0.5D, y, z - 4 + 0.5D),
+                new Location(anchor.getWorld(), x + 0.5D, y, z + 4 + 0.5D)
+        );
+    }
+
+    private static void appendPostCategory(
+            World world,
+            VillageKnightGarrison.RouteKind kind,
+            List<Location> candidates,
+            int desiredCount,
+            boolean validateWorld,
+            Set<VillageKnightGarrison.BlockPoint> used,
+            List<SentryPost> result) {
+        if (desiredCount <= 0 || candidates == null) {
+            return;
+        }
+
+        int added = 0;
+        int salt = kind.ordinal() * 31;
+        for (Location candidate : candidates) {
+            if (added >= desiredCount || candidate == null) {
+                break;
+            }
+            VillageKnightGarrison.BlockPoint preferred =
+                    VillageKnightGarrison.BlockPoint.from(candidate);
+            VillageKnightGarrison.BlockPoint selected =
+                    validateWorld
+                            ? findSafeStandingPoint(
+                            world,
+                            preferred,
+                            POST_SEARCH_RADIUS,
+                            salt + added
+                    )
+                            : preferred;
+            if (selected == null
+                    || !isSeparatedFrom(used, selected, 2)) {
+                continue;
+            }
+            used.add(selected);
+            result.add(new SentryPost(kind, selected));
+            added++;
+        }
+    }
+
+    private static boolean isSeparatedFrom(
+            Collection<VillageKnightGarrison.BlockPoint> points,
+            VillageKnightGarrison.BlockPoint candidate,
+            int minimumDistance) {
+        long minimumSq = (long) minimumDistance * minimumDistance;
+        for (VillageKnightGarrison.BlockPoint point : points) {
+            if (point.y() == candidate.y()
+                    && point.horizontalDistanceSquared(candidate)
+                    < minimumSq) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static int appendUrbanRoutes(
+            UUID worldId,
+            int villageId,
+            List<List<VillageKnightGarrison.BlockPoint>> urbanRoutes,
+            int soldiersPerPatrol,
+            int firstRouteId,
+            List<VillageKnightGarrison.PatrolRoute> routes,
+            List<VillageKnightGarrison.KnightSlot> slots,
+            long now) {
+        int routeId = firstRouteId;
+        for (List<VillageKnightGarrison.BlockPoint> points : urbanRoutes) {
+            if (points == null || points.isEmpty()) {
+                continue;
+            }
+            routes.add(new VillageKnightGarrison.PatrolRoute(
+                    routeId,
+                    VillageKnightGarrison.RouteKind.URBAN,
+                    points,
+                    0,
+                    now
+            ));
+            for (int formationIndex = 0;
+                 formationIndex < soldiersPerPatrol;
+                 formationIndex++) {
+                slots.add(newSlot(
+                        worldId,
+                        villageId,
+                        routeId,
+                        VillageKnightGarrison.UnitKind.SWORDSMAN,
+                        formationIndex,
+                        points.get(0)
+                ));
+            }
+            routeId++;
+        }
+        return routeId;
+    }
+
+    private static int appendRampartRoutes(
+            UUID worldId,
+            int villageId,
+            List<List<VillageKnightGarrison.BlockPoint>> rampartRoutes,
+            int archerCount,
+            int firstRouteId,
+            List<VillageKnightGarrison.PatrolRoute> routes,
+            List<VillageKnightGarrison.KnightSlot> slots,
+            long now) {
+        if (archerCount <= 0
+                || rampartRoutes == null
+                || rampartRoutes.isEmpty()) {
+            return firstRouteId;
+        }
+
+        int routeId = firstRouteId;
+        int sectionCount = rampartRoutes.size();
+        for (int archerIndex = 0;
+             archerIndex < archerCount;
+             archerIndex++) {
+            int sectionIndex = archerIndex % sectionCount;
+            List<VillageKnightGarrison.BlockPoint> section =
+                    rampartRoutes.get(sectionIndex);
+            if (section == null || section.size() < 2) {
+                continue;
+            }
+
+            int ordinalOnSection = archerIndex / sectionCount;
+            int archersOnSection = (archerCount - sectionIndex
+                    + sectionCount - 1) / sectionCount;
+            int startIndex = Math.floorMod(
+                    ordinalOnSection * section.size()
+                            / Math.max(1, archersOnSection),
+                    section.size()
+            );
+            routes.add(new VillageKnightGarrison.PatrolRoute(
+                    routeId,
+                    VillageKnightGarrison.RouteKind.RAMPART,
+                    section,
+                    startIndex,
+                    now
+            ));
+            slots.add(newSlot(
+                    worldId,
+                    villageId,
+                    routeId,
+                    VillageKnightGarrison.UnitKind.ARCHER,
+                    0,
+                    section.get(startIndex)
+            ));
+            routeId++;
+        }
+        return routeId;
     }
 
     private static VillageKnightGarrison.KnightSlot newSlot(
@@ -223,132 +747,47 @@ public final class VillageKnightPlanner {
         );
     }
 
-    private static List<VillageKnightGarrison.BlockPoint>
-    buildStrategicPoints(VillageLayoutPlan layout,
-                         Map<String, Location> suppliedAnchors,
-                         Location center,
-                         List<Node> streetNodes,
-                         int baseY,
-                         int desiredCount) {
-        if (desiredCount <= 0) {
+    private static List<List<VillageKnightGarrison.BlockPoint>>
+    repeatRoutes(
+            List<List<VillageKnightGarrison.BlockPoint>> source,
+            int desiredCount) {
+        if (desiredCount <= 0 || source == null || source.isEmpty()) {
             return List.of();
         }
-
-        Map<String, Location> anchors =
-                suppliedAnchors == null || suppliedAnchors.isEmpty()
-                        ? layout.anchors()
-                        : suppliedAnchors;
-
-        List<String> priorities = List.of(
-                "gate",
-                "keep",
-                "plaza",
-                "market",
-                "town_hall",
-                "church",
-                "forge",
-                "inn",
-                "stable"
-        );
-        List<VillageKnightGarrison.BlockPoint> result =
-                new ArrayList<>();
-
-        for (String key : priorities) {
-            if (result.size() >= desiredCount) {
-                break;
-            }
-            Location anchor = anchors.get(key);
-            Node nearest = anchor != null
-                    ? nearestNode(streetNodes,
-                    anchor.getBlockX(),
-                    anchor.getBlockZ())
-                    : null;
-
-            int x;
-            int z;
-            int y = baseY + 1;
-            if ("gate".equals(key) || "keep".equals(key)) {
-                /*
-                 * Ces deux ancres sont explicitement construites comme points
-                 * d'arrivée sûrs par WallBuilder et KeepBuilder.
-                 */
-                if (anchor == null) {
-                    continue;
-                }
-                x = anchor.getBlockX();
-                z = anchor.getBlockZ();
-                y = "gate".equals(key)
-                        ? baseY + 1
-                        : Math.max(baseY + 1, anchor.getBlockY());
-            } else if (nearest != null) {
-                x = nearest.x();
-                z = nearest.z();
-            } else if ("plaza".equals(key)) {
-                x = center.getBlockX();
-                z = center.getBlockZ();
-            } else {
-                continue;
-            }
-
-            VillageKnightGarrison.BlockPoint candidate =
-                    new VillageKnightGarrison.BlockPoint(x, y, z);
-            if (isFarEnough(result, candidate, 4)) {
-                result.add(candidate);
-            }
+        List<List<VillageKnightGarrison.BlockPoint>> result =
+                new ArrayList<>(desiredCount);
+        for (int index = 0; index < desiredCount; index++) {
+            result.add(source.get(index % source.size()));
         }
+        return result;
+    }
 
-        /*
-         * Une configuration demandant davantage de postes que d'ancres
-         * architecturales utilise des extrémités de rue bien espacées.
-         */
-        if (result.size() < desiredCount) {
-            List<Node> spread = new ArrayList<>(streetNodes);
-            spread.sort(Comparator.comparingLong(
-                    node -> -squaredDistance(
-                            node.x(),
-                            node.z(),
-                            center.getBlockX(),
-                            center.getBlockZ()
-                    )
-            ));
-            for (Node node : spread) {
-                if (result.size() >= desiredCount) {
-                    break;
-                }
-                VillageKnightGarrison.BlockPoint candidate =
-                        new VillageKnightGarrison.BlockPoint(
-                                node.x(),
-                                baseY + 1,
-                                node.z()
-                        );
-                if (isFarEnough(result, candidate, 8)) {
-                    result.add(candidate);
-                }
+    private static List<List<VillageKnightGarrison.BlockPoint>>
+    distinctLegacyRoutes(
+            VillageKnightGarrison garrison,
+            VillageKnightGarrison.RouteKind kind) {
+        List<List<VillageKnightGarrison.BlockPoint>> result =
+                new ArrayList<>();
+        for (VillageKnightGarrison.PatrolRoute route
+                : garrison.routes()) {
+            if (route.kind() == kind
+                    && !result.contains(route.waypoints())) {
+                result.add(route.waypoints());
             }
         }
         return result;
     }
 
-    private static boolean isFarEnough(
-            Collection<VillageKnightGarrison.BlockPoint> existing,
-            VillageKnightGarrison.BlockPoint candidate,
-            int minimumDistance) {
-        long minimumSq = (long) minimumDistance * minimumDistance;
-        for (VillageKnightGarrison.BlockPoint point : existing) {
-            if (point.horizontalDistanceSquared(candidate) < minimumSq) {
-                return false;
-            }
-        }
-        return true;
-    }
-
     private static List<List<VillageKnightGarrison.BlockPoint>>
-    buildUrbanRoutes(StreetGraph graph,
-                     List<Node> mainComponent,
-                     Location center,
-                     int baseY,
-                     int desiredRoutes,
-                     int villageId) {
+    buildUrbanRoutes(
+            World world,
+            StreetGraph graph,
+            List<Node> mainComponent,
+            Location center,
+            int baseY,
+            int desiredRoutes,
+            int villageId,
+            int localSearchRadius) {
         if (desiredRoutes <= 0) {
             return List.of();
         }
@@ -360,7 +799,16 @@ public final class VillageKnightPlanner {
                             baseY + 1,
                             center.getBlockZ()
                     );
-            return List.of(List.of(centerPoint));
+            VillageKnightGarrison.BlockPoint safe =
+                    findSafeStandingPoint(
+                            world,
+                            centerPoint,
+                            localSearchRadius,
+                            villageId
+                    );
+            return List.of(List.of(
+                    safe != null ? safe : centerPoint
+            ));
         }
 
         List<Node> starts = chooseSpreadStarts(
@@ -390,15 +838,55 @@ public final class VillageKnightPlanner {
                         baseY + 1
                 );
             }
-            result.add(expanded);
+            List<VillageKnightGarrison.BlockPoint> safe =
+                    sanitizeUrbanRoute(
+                            world,
+                            expanded,
+                            localSearchRadius,
+                            villageId + routeIndex * 17
+                    );
+            if (!safe.isEmpty()) {
+                result.add(safe);
+            }
         }
         return result;
     }
 
-    private static List<Node> chooseSpreadStarts(List<Node> nodes,
-                                                 int desired,
-                                                 int centerX,
-                                                 int centerZ) {
+    private static List<VillageKnightGarrison.BlockPoint>
+    sanitizeUrbanRoute(
+            World world,
+            List<VillageKnightGarrison.BlockPoint> points,
+            int radius,
+            int salt) {
+        List<VillageKnightGarrison.BlockPoint> result =
+                new ArrayList<>();
+        if (points == null) {
+            return result;
+        }
+        for (int index = 0; index < points.size(); index++) {
+            VillageKnightGarrison.BlockPoint safe =
+                    findSafeStandingPoint(
+                            world,
+                            points.get(index),
+                            radius,
+                            salt + index
+                    );
+            if (safe != null) {
+                appendDistinct(result, safe);
+            }
+        }
+        if (result.size() > 1
+                && result.get(0).equals(result.get(result.size() - 1))) {
+            result.remove(result.size() - 1);
+        }
+        return result;
+    }
+
+    private static List<Node> chooseSpreadStarts(
+            List<Node> nodes,
+            int desired,
+            int centerX,
+            int centerZ) {
         List<Node> starts = new ArrayList<>();
         Node first = nodes.stream()
                 .max(Comparator.comparingLong(node ->
@@ -469,9 +957,8 @@ public final class VillageKnightPlanner {
             Node to = nodes.get(i);
             if (from.x() != to.x() && from.z() != to.z()) {
                 /*
-                 * Cette branche ne devrait pas être utilisée par le graphe des
-                 * rues, mais garantit un trajet Manhattan sûr si un futur
-                 * planificateur ajoute une connexion diagonale.
+                 * Cette branche protège aussi un futur graphe contenant une
+                 * connexion diagonale : le trajet reste alors Manhattan.
                  */
                 appendSegment(
                         result,
@@ -501,10 +988,6 @@ public final class VillageKnightPlanner {
             }
         }
 
-        /*
-         * La progression de route est cyclique : conserver une copie du point
-         * initial en fin de liste ferait marquer deux arrivées successives.
-         */
         if (result.size() > 1
                 && result.get(0).equals(result.get(result.size() - 1))) {
             result.remove(result.size() - 1);
@@ -554,18 +1037,94 @@ public final class VillageKnightPlanner {
     private static void appendDistinct(
             List<VillageKnightGarrison.BlockPoint> points,
             VillageKnightGarrison.BlockPoint point) {
-        if (points.isEmpty()
-                || !points.get(points.size() - 1).equals(point)) {
+        if (point != null
+                && (points.isEmpty()
+                || !points.get(points.size() - 1).equals(point))) {
             points.add(point);
         }
     }
 
+    /**
+     * Découpe la couronne du rempart en autant de sections praticables que
+     * nécessaire. Une ouverture de châtelet ne supprime donc plus les trois
+     * autres côtés de la muraille.
+     */
+    private static List<List<VillageKnightGarrison.BlockPoint>>
+    buildRampartRoutes(
+            World world,
+            Location center,
+            int radiusX,
+            int radiusZ,
+            int baseY) {
+        List<VillageKnightGarrison.BlockPoint> ring =
+                buildDenseRampartRing(
+                        center,
+                        radiusX,
+                        radiusZ,
+                        baseY
+                );
+        if (ring.size() < MIN_RAMPART_RUN_BLOCKS) {
+            return List.of();
+        }
+
+        boolean[] walkable = new boolean[ring.size()];
+        int firstBlocked = -1;
+        for (int index = 0; index < ring.size(); index++) {
+            walkable[index] = isWalkableRampartPoint(
+                    world,
+                    ring.get(index)
+            );
+            if (!walkable[index] && firstBlocked < 0) {
+                firstBlocked = index;
+            }
+        }
+
+        List<List<VillageKnightGarrison.BlockPoint>> denseRuns =
+                new ArrayList<>();
+        if (firstBlocked < 0) {
+            denseRuns.add(ring);
+        } else {
+            List<VillageKnightGarrison.BlockPoint> current =
+                    new ArrayList<>();
+            for (int offset = 1; offset <= ring.size(); offset++) {
+                int index = (firstBlocked + offset) % ring.size();
+                if (walkable[index]) {
+                    current.add(ring.get(index));
+                } else {
+                    appendRampartRun(denseRuns, current);
+                    current = new ArrayList<>();
+                }
+            }
+            appendRampartRun(denseRuns, current);
+        }
+
+        List<List<VillageKnightGarrison.BlockPoint>> result =
+                new ArrayList<>();
+        boolean closedLoop = firstBlocked < 0;
+        for (List<VillageKnightGarrison.BlockPoint> dense : denseRuns) {
+            List<VillageKnightGarrison.BlockPoint> sampled =
+                    sampleRampartRun(dense, closedLoop);
+            if (isRampartUsable(world, sampled)) {
+                result.add(sampled);
+            }
+        }
+        return result;
+    }
+
+    private static void appendRampartRun(
+            List<List<VillageKnightGarrison.BlockPoint>> result,
+            List<VillageKnightGarrison.BlockPoint> run) {
+        if (run != null && run.size() >= MIN_RAMPART_RUN_BLOCKS) {
+            result.add(List.copyOf(run));
+        }
+    }
+
     private static List<VillageKnightGarrison.BlockPoint>
-    buildRampartRoute(World world,
-                      Location center,
-                      int radiusX,
-                      int radiusZ,
-                      int baseY) {
+    buildDenseRampartRing(
+            Location center,
+            int radiusX,
+            int radiusZ,
+            int baseY) {
         int cx = center.getBlockX();
         int cz = center.getBlockZ();
         int safeRx = Math.max(4, radiusX);
@@ -575,12 +1134,6 @@ public final class VillageKnightPlanner {
         int maxX = cx + safeRx + WallBuilder.WALL_THICKNESS - 1;
         int minZ = cz - safeRz - WallBuilder.WALL_THICKNESS + 1;
         int maxZ = cz + safeRz + WallBuilder.WALL_THICKNESS - 1;
-
-        /*
-         * La dalle du chemin de ronde est à baseY + WALL_HEIGHT. L'entité doit
-         * avoir ses pieds exactement un bloc au-dessus, au milieu des trois
-         * blocs d'épaisseur afin de rester entre parapet et créneaux.
-         */
         int feetY = baseY + WallBuilder.WALL_HEIGHT + 1;
         int northZ = minZ + 1;
         int eastX = maxX - 1;
@@ -627,35 +1180,7 @@ public final class VillageKnightPlanner {
         )) {
             denseRing.remove(denseRing.size() - 1);
         }
-        if (denseRing.size() < 8) {
-            return List.of();
-        }
-
-        boolean completeLoop = true;
-        for (VillageKnightGarrison.BlockPoint point : denseRing) {
-            if (!isWalkableRampartPoint(world, point)) {
-                completeLoop = false;
-                break;
-            }
-        }
-
-        List<VillageKnightGarrison.BlockPoint> usable =
-                completeLoop
-                        ? denseRing
-                        : longestWalkableRampartRun(world, denseRing);
-        int minimumCoverage = (int) Math.ceil(
-                denseRing.size() * MIN_RAMPART_VALID_RATIO
-        );
-        if (usable.size() < Math.max(8, minimumCoverage)) {
-            return List.of();
-        }
-
-        /*
-         * Une brèche, typiquement celle du châtelet, transforme la boucle en
-         * chemin ouvert. Le trajet est alors mis en aller-retour : sa fermeture
-         * logique ne saute jamais d'une extrémité à l'autre au-dessus du vide.
-         */
-        return sampleRampartRun(usable, completeLoop);
+        return denseRing;
     }
 
     private static void appendDenseRampartSide(
@@ -681,54 +1206,6 @@ public final class VillageKnightPlanner {
                     )
             );
         }
-    }
-
-    private static List<VillageKnightGarrison.BlockPoint>
-    longestWalkableRampartRun(
-            World world,
-            List<VillageKnightGarrison.BlockPoint> ring) {
-        int size = ring.size();
-        boolean[] walkable = new boolean[size];
-        for (int index = 0; index < size; index++) {
-            walkable[index] = isWalkableRampartPoint(
-                    world,
-                    ring.get(index)
-            );
-        }
-
-        int bestStart = -1;
-        int bestLength = 0;
-        int currentStart = 0;
-        int currentLength = 0;
-
-        /*
-         * Deux passages sur le tableau permettent de reconnaître une section
-         * continue qui traverse la jonction fin/début de la représentation.
-         */
-        for (int index = 0; index < size * 2; index++) {
-            if (walkable[index % size] && currentLength < size) {
-                if (currentLength == 0) {
-                    currentStart = index;
-                }
-                currentLength++;
-                if (currentLength > bestLength) {
-                    bestStart = currentStart;
-                    bestLength = currentLength;
-                }
-            } else {
-                currentLength = 0;
-            }
-        }
-
-        if (bestStart < 0 || bestLength <= 0) {
-            return List.of();
-        }
-        List<VillageKnightGarrison.BlockPoint> result =
-                new ArrayList<>(bestLength);
-        for (int offset = 0; offset < bestLength; offset++) {
-            result.add(ring.get((bestStart + offset) % size));
-        }
-        return result;
     }
 
     private static List<VillageKnightGarrison.BlockPoint>
@@ -805,7 +1282,7 @@ public final class VillageKnightPlanner {
     private static boolean isRampartUsable(
             World world,
             List<VillageKnightGarrison.BlockPoint> points) {
-        if (world == null || points == null || points.size() < 4
+        if (world == null || points == null || points.size() < 2
                 || points.size() > MAX_RAMPART_ROUTE_POINTS) {
             return false;
         }
@@ -854,6 +1331,65 @@ public final class VillageKnightPlanner {
     private static boolean isWalkableRampartPoint(
             World world,
             VillageKnightGarrison.BlockPoint point) {
+        return isSafeStandingPoint(world, point);
+    }
+
+    private static VillageKnightGarrison.BlockPoint
+    findSafeStandingPoint(
+            World world,
+            VillageKnightGarrison.BlockPoint preferred,
+            int radius,
+            int salt) {
+        if (world == null || preferred == null) {
+            return null;
+        }
+        List<int[]> offsets = horizontalOffsets(
+                Math.max(0, radius),
+                salt
+        );
+        for (int[] offset : offsets) {
+            VillageKnightGarrison.BlockPoint candidate =
+                    new VillageKnightGarrison.BlockPoint(
+                            preferred.x() + offset[0],
+                            preferred.y(),
+                            preferred.z() + offset[1]
+                    );
+            if (isSafeStandingPoint(world, candidate)) {
+                return candidate;
+            }
+        }
+        return null;
+    }
+
+    private static List<int[]> horizontalOffsets(
+            int radius,
+            int salt) {
+        List<int[]> result = new ArrayList<>();
+        result.add(new int[]{0, 0});
+        for (int ring = 1; ring <= radius; ring++) {
+            List<int[]> current = new ArrayList<>();
+            for (int dx = -ring; dx <= ring; dx++) {
+                for (int dz = -ring; dz <= ring; dz++) {
+                    if (Math.max(Math.abs(dx), Math.abs(dz)) == ring) {
+                        current.add(new int[]{dx, dz});
+                    }
+                }
+            }
+            if (!current.isEmpty()) {
+                int rotation = Math.floorMod(salt, current.size());
+                for (int index = 0; index < current.size(); index++) {
+                    result.add(current.get(
+                            (index + rotation) % current.size()
+                    ));
+                }
+            }
+        }
+        return result;
+    }
+
+    static boolean isSafeStandingPoint(
+            World world,
+            VillageKnightGarrison.BlockPoint point) {
         if (world == null || point == null
                 || !world.isChunkLoaded(point.x() >> 4, point.z() >> 4)
                 || point.y() <= world.getMinHeight()
@@ -876,26 +1412,51 @@ public final class VillageKnightPlanner {
                 point.z()
         );
         return ground.getType().isSolid()
+                && !DANGEROUS_GROUND.contains(ground.getType())
+                && !DANGEROUS_GROUND.contains(feet.getType())
+                && !DANGEROUS_GROUND.contains(head.getType())
                 && feet.isPassable()
                 && head.isPassable()
                 && !feet.isLiquid()
                 && !head.isLiquid();
     }
 
-    private static Node nearestNode(List<Node> nodes, int x, int z) {
-        return nodes.stream()
-                .min(Comparator.comparingLong(node ->
-                        squaredDistance(node.x(), node.z(), x, z)))
-                .orElse(null);
+    private static boolean isRampartPlanningAreaLoaded(
+            World world,
+            Location center,
+            int radiusX,
+            int radiusZ,
+            int baseY) {
+        if (world == null || center == null) {
+            return false;
+        }
+        for (VillageKnightGarrison.BlockPoint point
+                : buildDenseRampartRing(
+                center,
+                radiusX,
+                radiusZ,
+                baseY
+        )) {
+            if (!world.isChunkLoaded(point.x() >> 4, point.z() >> 4)) {
+                return false;
+            }
+        }
+        return true;
     }
 
-    private static long squaredDistance(int firstX,
-                                        int firstZ,
-                                        int secondX,
-                                        int secondZ) {
+    private static long squaredDistance(
+            int firstX,
+            int firstZ,
+            int secondX,
+            int secondZ) {
         long dx = (long) firstX - secondX;
         long dz = (long) firstZ - secondZ;
         return dx * dx + dz * dz;
+    }
+
+    private record SentryPost(
+            VillageKnightGarrison.RouteKind kind,
+            VillageKnightGarrison.BlockPoint point) {
     }
 
     private record Node(int x, int z) {

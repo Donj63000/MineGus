@@ -1,5 +1,6 @@
 package org.example;
 
+import org.example.forestry2.SharedChunkTickets;
 import org.bukkit.*;
 import org.bukkit.block.Block;
 import org.bukkit.block.BlockFace;
@@ -32,6 +33,7 @@ import org.bukkit.util.Vector;
 
 import java.io.File;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -43,6 +45,11 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * API publique conservée : loadSavedSessions(), saveAllSessions(), stopAllForests().
  */
 public final class Foret implements CommandExecutor, Listener {
+
+    private static final String USE_PERMISSION = "minegus.forester.use";
+    private static final String ADMIN_PERMISSION = "minegus.forester.admin";
+    private static final int MAX_SIDE_LENGTH = 64;
+    private static final int MAX_AREA_BLOCKS = 4096;
 
     /* ══════════════════════ CONSTANTES (faciles à ajuster) ══════════════════════ */
     private static final String FORET_SELECTOR_NAME = ChatColor.GOLD + "Sélecteur de forêt";
@@ -110,10 +117,132 @@ public final class Foret implements CommandExecutor, Listener {
             sender.sendMessage(ChatColor.RED + "Commande réservée aux joueurs.");
             return true;
         }
-        giveSelector(p);
-        selections.put(p.getUniqueId(), new Selection());
-        p.sendMessage(ChatColor.GREEN + "Sélectionne deux blocs (même Y) avec le bâton.");
+        if (!p.hasPermission(USE_PERMISSION)) {
+            p.sendMessage(ChatColor.RED + "Tu n'as pas la permission d'utiliser le bûcheron.");
+            return true;
+        }
+
+        String action = args.length == 0 ? "creer" : args[0].toLowerCase(Locale.ROOT);
+        return switch (action) {
+            case "creer", "create" -> beginSelection(p);
+            case "statut", "status", "info" -> showStatus(p, args);
+            case "liste", "list" -> listForests(p);
+            case "reparer", "repair" -> repairForest(p, args);
+            case "supprimer", "delete", "remove" -> deleteForest(p, args);
+            case "aide", "help" -> showHelp(p);
+            default -> {
+                if (action.matches("\\d+[xX]\\d+")) {
+                    yield beginSelection(p);
+                }
+                p.sendMessage(ChatColor.RED + "Sous-commande inconnue. Utilise /" + lbl + " aide.");
+                yield true;
+            }
+        };
+    }
+
+    private boolean beginSelection(Player player) {
+        int limit = Math.max(1, plugin.getConfig().getInt("forester-v2.max-areas-per-player", 2));
+        long owned = sessions.stream()
+                .filter(session -> player.getUniqueId().equals(session.ownerId))
+                .count();
+        if (!player.hasPermission(ADMIN_PERMISSION) && owned >= limit) {
+            player.sendMessage(ChatColor.RED + "Tu as déjà atteint la limite de " + limit + " forêts.");
+            return true;
+        }
+        giveSelector(player);
+        selections.put(player.getUniqueId(), new Selection());
+        player.sendMessage(ChatColor.GREEN + "Sélectionne deux blocs (même Y) avec le bâton.");
         return true;
+    }
+
+    private boolean showHelp(Player player) {
+        player.sendMessage(ChatColor.GOLD + "Commandes du bûcheron :");
+        player.sendMessage(ChatColor.YELLOW + "/bucheron creer" + ChatColor.GRAY + " - créer une forêt");
+        player.sendMessage(ChatColor.YELLOW + "/bucheron liste" + ChatColor.GRAY + " - afficher tes forêts");
+        player.sendMessage(ChatColor.YELLOW + "/bucheron statut [numéro]" + ChatColor.GRAY + " - afficher leur état");
+        player.sendMessage(ChatColor.YELLOW + "/bucheron reparer [numéro]" + ChatColor.GRAY + " - réparer la structure");
+        player.sendMessage(ChatColor.YELLOW + "/bucheron supprimer [numéro]" + ChatColor.GRAY + " - arrêter et supprimer");
+        return true;
+    }
+
+    private boolean listForests(Player player) {
+        List<ForestSession> visible = visibleSessions(player);
+        if (visible.isEmpty()) {
+            player.sendMessage(ChatColor.YELLOW + "Aucune forêt accessible.");
+            return true;
+        }
+        player.sendMessage(ChatColor.GOLD + "Forêts accessibles :");
+        for (int index = 0; index < visible.size(); index++) {
+            ForestSession session = visible.get(index);
+            player.sendMessage(ChatColor.YELLOW + "#" + (index + 1) + ChatColor.GRAY + " - "
+                    + session.w.getName() + " " + session.x0 + ", " + session.y0 + ", " + session.z0
+                    + " (" + session.width + "x" + session.length + ")");
+        }
+        return true;
+    }
+
+    private boolean showStatus(Player player, String[] args) {
+        ForestSession session = resolveSession(player, args);
+        if (session == null) return true;
+        player.sendMessage(ChatColor.GOLD + "Forêt #" + session.id.toString().substring(0, 8));
+        player.sendMessage(ChatColor.GRAY + "Zone : " + session.width + "x" + session.length
+                + " à " + session.x0 + ", " + session.y0 + ", " + session.z0);
+        player.sendMessage(ChatColor.GRAY + "Plantations : " + session.plantSites.size()
+                + " | Récolte en attente : " + session.bfs.size()
+                + " | Poche : " + session.pocket.size());
+        return true;
+    }
+
+    private boolean repairForest(Player player, String[] args) {
+        ForestSession session = resolveSession(player, args);
+        if (session == null) return true;
+        session.repair();
+        saveAllSessions();
+        player.sendMessage(ChatColor.GREEN + "Forêt réparée.");
+        return true;
+    }
+
+    private boolean deleteForest(Player player, String[] args) {
+        ForestSession session = resolveSession(player, args);
+        if (session == null) return true;
+        session.stop(true);
+        sessions.remove(session);
+        sessionsByHut.remove(session.getHutId());
+        discardForesterRecord(session.getHutId());
+        saveAllSessions();
+        player.sendMessage(ChatColor.GREEN + "Forêt arrêtée et supprimée.");
+        return true;
+    }
+
+    private ForestSession resolveSession(Player player, String[] args) {
+        List<ForestSession> visible = visibleSessions(player);
+        if (visible.isEmpty()) {
+            player.sendMessage(ChatColor.YELLOW + "Aucune forêt accessible.");
+            return null;
+        }
+        if (args.length >= 2) {
+            try {
+                int index = Integer.parseInt(args[1]) - 1;
+                if (index >= 0 && index < visible.size()) return visible.get(index);
+            } catch (NumberFormatException ignored) {
+                // Je poursuis avec la recherche par position.
+            }
+            player.sendMessage(ChatColor.RED + "Numéro de forêt invalide. Utilise /bucheron liste.");
+            return null;
+        }
+        for (ForestSession session : visible) {
+            if (session.inBounds(player.getLocation())) return session;
+        }
+        if (visible.size() == 1) return visible.get(0);
+        player.sendMessage(ChatColor.RED + "Précise le numéro obtenu avec /bucheron liste.");
+        return null;
+    }
+
+    private List<ForestSession> visibleSessions(Player player) {
+        boolean admin = player.hasPermission(ADMIN_PERMISSION);
+        return sessions.stream()
+                .filter(session -> admin || player.getUniqueId().equals(session.ownerId))
+                .toList();
     }
 
     private void giveSelector(Player p) {
@@ -197,6 +326,11 @@ public final class Foret implements CommandExecutor, Listener {
 
     /* ═════════════════ VALIDATION / CREATION ═════════════════ */
     private void validateAndCreate(Player p, Selection sel) {
+        if (!sel.corner1.getWorld().getUID().equals(sel.corner2.getWorld().getUID())) {
+            p.sendMessage(ChatColor.RED + "Les deux blocs doivent être dans le même monde.");
+            sel.corner2 = null;
+            return;
+        }
         if (sel.corner1.getY() != sel.corner2.getY()) {
             p.sendMessage(ChatColor.RED + "Les deux blocs doivent avoir la même hauteur (Y).");
             sel.corner2 = null;
@@ -208,10 +342,29 @@ public final class Foret implements CommandExecutor, Listener {
         int z1 = sel.corner1.getZ(), z2 = sel.corner2.getZ();
         int minX = Math.min(x1, x2), maxX = Math.max(x1, x2);
         int minZ = Math.min(z1, z2), maxZ = Math.max(z1, z2);
+        int width = maxX - minX + 1;
+        int length = maxZ - minZ + 1;
+        if (width > MAX_SIDE_LENGTH || length > MAX_SIDE_LENGTH
+                || (long) width * length > MAX_AREA_BLOCKS) {
+            p.sendMessage(ChatColor.RED + "La forêt dépasse la limite de 64 blocs par côté et 4096 blocs.");
+            sel.corner2 = null;
+            return;
+        }
+        boolean overlaps = sessions.stream().anyMatch(session ->
+                session.w.getUID().equals(w.getUID())
+                        && minX < session.x0 + session.width
+                        && maxX >= session.x0
+                        && minZ < session.z0 + session.length
+                        && maxZ >= session.z0);
+        if (overlaps) {
+            p.sendMessage(ChatColor.RED + "Cette zone chevauche une forêt existante.");
+            sel.corner2 = null;
+            return;
+        }
 
         ForestSession fs = new ForestSession(
                 w, new Location(w, minX, y, minZ),
-                maxX - minX + 1, maxZ - minZ + 1
+                width, length, p.getUniqueId()
         );
         registerSession(fs, true);
         saveSessions();
@@ -263,7 +416,14 @@ public final class Foret implements CommandExecutor, Listener {
             int x = sec.getInt("x"), y = sec.getInt("y"), z = sec.getInt("z");
             int width = sec.getInt("width"), length = sec.getInt("length");
 
-            ForestSession fs = new ForestSession(w, new Location(w, x, y, z), width, length);
+            UUID sessionId = parseUuid(sec.getString("id"));
+            if (sessionId == null) {
+                String legacyKey = w.getUID() + ":" + x + ":" + y + ":" + z;
+                sessionId = UUID.nameUUIDFromBytes(legacyKey.getBytes(StandardCharsets.UTF_8));
+            }
+            UUID ownerId = parseUuid(sec.getString("owner"));
+            ForestSession fs = new ForestSession(
+                    sessionId, w, new Location(w, x, y, z), width, length, ownerId);
 
             // file de récolte
             List<String> list = sec.getStringList("harvestQueue");
@@ -341,6 +501,15 @@ public final class Foret implements CommandExecutor, Listener {
         ensureForesterRecord(session);
         session.start(spawnFresh);
         ensureMissingWorkerTask();
+    }
+
+    private static UUID parseUuid(String value) {
+        if (value == null || value.isBlank()) return null;
+        try {
+            return UUID.fromString(value);
+        } catch (IllegalArgumentException ignored) {
+            return null;
+        }
     }
 
     private void ensureMissingWorkerTask() {
@@ -637,7 +806,8 @@ public final class Foret implements CommandExecutor, Listener {
 
     /* ══════════════════ CLASSE SESSION ══════════════════ */
     private final class ForestSession {
-        final UUID id = UUID.randomUUID();
+        final UUID id;
+        UUID ownerId;
         final World w;
         final int x0, y0, z0, width, length;
         final String hutId;
@@ -663,7 +833,13 @@ public final class Foret implements CommandExecutor, Listener {
         int perTickBudget = 0; // budget restant dans le tick
         int missingForesterCooldown = 0;
 
-        ForestSession(World w, Location origin, int width, int length) {
+        ForestSession(World w, Location origin, int width, int length, UUID ownerId) {
+            this(UUID.randomUUID(), w, origin, width, length, ownerId);
+        }
+
+        ForestSession(UUID id, World w, Location origin, int width, int length, UUID ownerId) {
+            this.id = Objects.requireNonNull(id);
+            this.ownerId = ownerId;
             this.w = w;
             this.x0 = origin.getBlockX();
             this.y0 = origin.getBlockY();
@@ -691,7 +867,8 @@ public final class Foret implements CommandExecutor, Listener {
         /* ---------- cycle de vie ---------- */
         void start(boolean spawnFresh) {
             loadedChunk = w.getChunkAt(new Location(w, x0 + width / 2.0, y0, z0 + length / 2.0));
-            loadedChunk.setForceLoaded(true);
+            // Je partage ce ticket avec les autres moteurs qui utilisent le même chunk.
+            SharedChunkTickets.acquire(plugin, loadedChunk);
             buildFrameGround();
             if (plantSites.isEmpty()) {
                 scanExistingTreesAsSites();
@@ -908,10 +1085,23 @@ public final class Foret implements CommandExecutor, Listener {
             clearForesterReference(keepUuid);
             releaseGuard();
             if (loadedChunk != null) {
-                loadedChunk.setForceLoaded(false);
+                SharedChunkTickets.release(plugin, loadedChunk);
                 loadedChunk = null;
             }
             missingForesterCooldown = 0;
+        }
+
+        void repair() {
+            buildFrameGround();
+            if (plantSites.isEmpty()) {
+                scanExistingTreesAsSites();
+            }
+            if (plantSites.isEmpty()) {
+                placeSaplings();
+            }
+            createChestsIfMissing();
+            ensureForesterBinding(false);
+            ensureGuardIntegrity();
         }
 
         /* ---------- structures ---------- */
@@ -1517,6 +1707,10 @@ public final class Foret implements CommandExecutor, Listener {
         /* ---------- sérialisation ---------- */
         Map<String, Object> serialize() {
             Map<String, Object> map = new LinkedHashMap<>();
+            map.put("id", id.toString());
+            if (ownerId != null) {
+                map.put("owner", ownerId.toString());
+            }
             map.put("world", w.getUID().toString());
             map.put("x", x0);
             map.put("y", y0);

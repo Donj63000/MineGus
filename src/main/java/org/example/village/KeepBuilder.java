@@ -12,6 +12,7 @@ import org.bukkit.block.data.type.Lantern;
 import org.bukkit.block.data.type.Slab;
 import org.bukkit.block.data.type.Stairs;
 
+import java.util.List;
 import java.util.Queue;
 
 /**
@@ -144,6 +145,99 @@ public final class KeepBuilder {
                 geometry.centerX() + 0.5D,
                 baseY + 1.0D,
                 geometry.bodySouthZ() - 3 + 0.5D
+        );
+    }
+
+    /**
+     * Emplacements déterministes qui encadrent le porche sans boucher l'axe
+     * des doubles portes. Les quatre positions restent sur le pavage dégagé par
+     * {@link #buildEntranceApproach}.
+     */
+    static List<Location> entranceGuardAnchors(
+            Location center,
+            int rz,
+            int baseY) {
+        if (center == null) {
+            return List.of();
+        }
+        Geometry geometry = Geometry.from(center, rz);
+        int leftX = geometry.centerX() - 2;
+        int rightX = geometry.centerX() + 1;
+        int frontZ = geometry.bodySouthZ() + 3;
+        int rearZ = geometry.bodySouthZ() + 1;
+        double feetY = baseY + 1.0D;
+
+        return List.of(
+                new Location(
+                        center.getWorld(),
+                        leftX + 0.5D,
+                        feetY,
+                        frontZ + 0.5D
+                ),
+                new Location(
+                        center.getWorld(),
+                        rightX + 0.5D,
+                        feetY,
+                        frontZ + 0.5D
+                ),
+                new Location(
+                        center.getWorld(),
+                        leftX + 0.5D,
+                        feetY,
+                        rearZ + 0.5D
+                ),
+                new Location(
+                        center.getWorld(),
+                        rightX + 0.5D,
+                        feetY,
+                        rearZ + 0.5D
+                )
+        );
+    }
+
+    /**
+     * Postes de la salle des gardes, au niveau exact du chemin de ronde. Ils
+     * évitent les couchettes, les établis et l'escalier principal.
+     */
+    static List<Location> interiorGuardAnchors(
+            Location center,
+            int rz,
+            int baseY) {
+        if (center == null) {
+            return List.of();
+        }
+        Geometry geometry = Geometry.from(center, rz);
+        int leftX = geometry.centerX() - 2;
+        int rightX = geometry.centerX() + 2;
+        int southZ = geometry.bodySouthZ() - 5;
+        int northZ = geometry.bodyCenterZ() + 2;
+        double feetY = baseY + WALL_WALK_LEVEL + 1.0D;
+
+        return List.of(
+                new Location(
+                        center.getWorld(),
+                        leftX + 0.5D,
+                        feetY,
+                        southZ + 0.5D
+                ),
+                new Location(
+                        center.getWorld(),
+                        rightX + 0.5D,
+                        feetY,
+                        southZ + 0.5D
+                ),
+                new Location(
+                        center.getWorld(),
+                        leftX + 0.5D,
+                        feetY,
+                        northZ + 0.5D
+                ),
+                new Location(
+                        center.getWorld(),
+                        rightX + 0.5D,
+                        feetY,
+                        northZ + 0.5D
+                )
         );
     }
 
