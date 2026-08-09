@@ -218,6 +218,56 @@ village:
   # Respiration minimale entre les derniers jardins et la face intérieure.
   wallGap: 8
 
+  # Garnison persistante créée automatiquement à la fin de /village.
+  knights:
+    enabled: true
+
+    # Trois patrouilles de quatre donnent plusieurs groupes visibles sans
+    # saturer le pathfinding. soldiers-per-patrol est borné entre 3 et 5.
+    urban-patrols: 3
+    soldiers-per-patrol: 4
+
+    # Postes fixes : châtelet, donjon et lieux civiques importants.
+    strategic-guards: 4
+
+    # Les archers ne sont créés que si le chemin de ronde construit est
+    # réellement praticable. Sinon le village conserve seulement les fantassins.
+    wall-archers:
+      enabled: true
+      count: 4
+
+    # Une mort est persistée immédiatement ; le délai continue pendant un
+    # redémarrage et vaut exactement une minute par défaut.
+    respawn-delay-seconds: 60
+
+    # Le gestionnaire répartit ses scans entre les cycles et ne charge jamais
+    # un chunk uniquement pour déplacer ou recréer un chevalier.
+    maintenance-period-ticks: 10
+    scans-per-cycle: 4
+    detection-radius: 24
+    assistance-radius: 36
+    combat-leash-radius: 48
+    protection-margin: 16
+    max-responders-per-threat: 3
+
+    patrol-speed: 0.85
+    waypoint-arrival-radius: 2.75
+    route-advance-timeout-seconds: 25
+    missing-entity-loaded-checks: 3
+    stuck-seconds: 20
+
+    attributes:
+      # L'armure en netherite est volontairement non enchantée. Le multiplicateur
+      # de dégâts entrants compense sa forte protection afin qu'un chevalier
+      # gagne généralement contre 1 zombie, parfois 2, mais puisse mourir.
+      max-health: 26.0
+      melee-damage-cap: 6.0
+      arrow-damage-cap: 5.0
+      movement-speed: 0.27
+      follow-range: 40.0
+      knockback-resistance: 0.25
+      incoming-hostile-damage-multiplier: 2.75
+
   # Population de la ville. Les spawners sont répartis entre les quartiers et
   # partagent un quota persistant pour protéger les performances du serveur.
   population:

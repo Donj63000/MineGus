@@ -3,6 +3,7 @@
 /.codex_tmp/
 /.jdk24
 /village-visuel-upgrade.zip
+*.patch
 
 *.iml
 .idea/

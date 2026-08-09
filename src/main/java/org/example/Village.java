@@ -30,6 +30,7 @@ import org.example.village.VillageLayoutPlan;
 import org.example.village.VillageLayoutPlanner;
 import org.example.village.VillageLayoutSettings;
 import org.example.village.VillageLightingBuilder;
+import org.example.village.VillageKnightManager;
 import org.example.village.VillagePopulationSettings;
 import org.example.village.VillageStyle;
 import org.example.village.WallBuilder;
@@ -436,6 +437,25 @@ public final class Village implements CommandExecutor {
                     session.getAnchors(),
                     resolvedVillageId,
                     populationSettings
+            ));
+        }
+
+        /*
+         * La garnison est enregistrée en toute dernière action : les routes,
+         * les remparts et le donjon existent alors réellement dans le monde.
+         * Le planificateur peut donc refuser proprement les archers si le
+         * chemin de ronde n'est pas praticable.
+         */
+        VillageKnightManager knightManager = getVillageKnightManager();
+        if (knightManager != null) {
+            todo.add(() -> knightManager.registerVillage(
+                    resolvedVillageId,
+                    villageCenter,
+                    layout,
+                    session.getAnchors(),
+                    rx,
+                    rz,
+                    baseY
             ));
         }
 
@@ -1277,6 +1297,17 @@ public final class Village implements CommandExecutor {
     }
 
     /**
+     * Retourne le gestionnaire de garnison sans rendre Village dépendant d'un
+     * environnement de test qui n'instancie pas MinePlugin.
+     */
+    private VillageKnightManager getVillageKnightManager() {
+        if (plugin instanceof MinePlugin minePlugin) {
+            return minePlugin.getVillageKnightManager();
+        }
+        return null;
+    }
+
+    /**
      * Annule la génération active ou terminée et restaure les blocs dans
      * l'ordre inverse de leur première modification.
      */
@@ -1309,6 +1340,11 @@ public final class Village implements CommandExecutor {
          */
         if (currentSession == session) {
             currentSession = null;
+        }
+
+        VillageKnightManager knightManager = getVillageKnightManager();
+        if (knightManager != null) {
+            knightManager.unregisterVillage(session.getVillageId());
         }
 
         for (UUID id : session.getGeneratedEntities()) {

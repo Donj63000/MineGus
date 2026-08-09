@@ -152,6 +152,34 @@ class CoreTests(unittest.TestCase):
             log_path.write_text("journal remplacé\n", encoding="utf-8")
             self.assertEqual(tailer.read_new_lines(), ["journal remplacé"])
 
+    def test_log_tailer_waits_for_a_complete_appended_line(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            log_path = Path(temporary_directory) / "latest.log"
+            log_path.touch()
+            tailer = LogTailer(log_path)
+            self.assertEqual(tailer.read_initial_lines(), [])
+
+            with log_path.open("ab") as log_file:
+                log_file.write(b"ligne par")
+            self.assertEqual(tailer.read_new_lines(), [])
+
+            with log_path.open("ab") as log_file:
+                log_file.write(b"tielle\n")
+            self.assertEqual(tailer.read_new_lines(), ["ligne partielle"])
+
+    def test_log_tailer_can_skip_lines_already_received_from_stdout(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            log_path = Path(temporary_directory) / "latest.log"
+            log_path.write_text("ancien\n", encoding="utf-8")
+            tailer = LogTailer(log_path)
+            self.assertEqual(tailer.read_initial_lines(), ["ancien"])
+
+            with log_path.open("a", encoding="utf-8") as log_file:
+                log_file.write("déjà reçu via stdout\n")
+            tailer.seek_to_end()
+
+            self.assertEqual(tailer.read_new_lines(), [])
+
 
 if __name__ == "__main__":
     unittest.main()

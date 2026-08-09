@@ -21,6 +21,7 @@ import java.util.UUID;
 import org.example.merchant.MerchantManager;
 import org.example.progression.GlobalProgressionManager;
 import org.example.village.VillageEntityManager;
+import org.example.village.VillageKnightManager;
 
 /**
  * Plugin principal.
@@ -86,6 +87,11 @@ public class MinePlugin extends JavaPlugin implements Listener {
      */
     private RoyalGuardManager royalGuardManager;
 
+    /**
+     * Gère la garnison persistante créée avec le village.
+     */
+    private VillageKnightManager villageKnightManager;
+
     public Mineur getMineur() { return mineur; }
     public Agriculture getAgriculture() { return agriculture; }
     public Foret getForet() { return foret; }
@@ -94,6 +100,7 @@ public class MinePlugin extends JavaPlugin implements Listener {
     public GlobalProgressionManager getGlobalProgressionManager() { return globalProgressionManager; }
     public MerchantManager getMerchantManager() { return merchantManager; }
     public RoyalGuardManager getRoyalGuardManager() { return royalGuardManager; }
+    public VillageKnightManager getVillageKnightManager() { return villageKnightManager; }
 
 
     @Override
@@ -122,6 +129,11 @@ public class MinePlugin extends JavaPlugin implements Listener {
             getCommand("garde").setTabCompleter(royalGuardManager);
         }
 
+        /*
+         * La garnison doit être prête avant /village : la dernière action de
+         * génération pourra ainsi enregistrer immédiatement ses itinéraires.
+         */
+        villageKnightManager = new VillageKnightManager(this);
 
         // Instancie le gestionnaire de métiers (/job) avant /mineur pour
         // que les sessions restaurées récupèrent immédiatement leur bonus.
@@ -200,6 +212,9 @@ public class MinePlugin extends JavaPlugin implements Listener {
         }
         if (merchantManager != null) {
             merchantManager.shutdown();
+        }
+        if (villageKnightManager != null) {
+            villageKnightManager.shutdown();
         }
         if (royalGuardManager != null) {
             royalGuardManager.shutdown();

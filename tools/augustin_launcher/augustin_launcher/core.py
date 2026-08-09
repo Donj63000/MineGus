@@ -1,4 +1,9 @@
-"""Fonctions pures de détection pour le lanceur AUGUSTIN."""
+"""Fonctions système et détection pour le lanceur AUGUSTIN.
+
+Ce module ne dépend pas de Tkinter. Les opérations susceptibles de prendre du
+temps (détection de Java, lecture des journaux, test du port) sont conçues pour
+être exécutées dans un thread de travail par l'interface graphique.
+"""
 
 from __future__ import annotations
 
@@ -9,6 +14,7 @@ import shutil
 import socket
 import subprocess
 import sys
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Iterable, Sequence
@@ -18,15 +24,17 @@ MINECRAFT_VERSION = "1.21.4"
 PAPER_PORT = 25565
 MINIMUM_JAVA_VERSION = 21
 DEFAULT_MEMORY_GIB = 2
+PORT_PROBE_TIMEOUT_SECONDS = 0.20
+JAVA_VERSION_TIMEOUT_SECONDS = 6.0
+MAX_LOG_READ_BYTES = 1024 * 1024
+
 DEFAULT_SERVER_DIRECTORY = Path(
     r"C:\Users\nodig\Desktop\SERVEUR MINECRAFT AUGUSTIN\PaperServer"
 )
 DEFAULT_JAVA_EXECUTABLE = Path(
     r"C:\Users\nodig\.jdks\ms-21.0.8\bin\java.exe"
 )
-MINECRAFT_LAUNCHER_AUMID = (
-    "Microsoft.4297127D64EC6_8wekyb3d8bbwe!Minecraft"
-)
+MINECRAFT_LAUNCHER_AUMID = "Microsoft.4297127D64EC6_8wekyb3d8bbwe!Minecraft"
 
 _JAVA_VERSION_PATTERN = re.compile(
     r"(?:openjdk\s+)?version\s+\"?(?P<major>\d+)", re.IGNORECASE
@@ -63,9 +71,8 @@ class LauncherConfigurationError(RuntimeError):
 
 
 def executable_directory() -> Path:
-    """Retourne le dossier de l'exécutable, jamais le dossier temporaire PyInstaller."""
+    """Retourne le dossier de l'exécutable, pas le dossier temporaire PyInstaller."""
 
-    # Ici, je cible le dossier visible par l'utilisateur après la compilation.
     if getattr(sys, "frozen", False):
         return Path(sys.executable).resolve().parent
     return Path(__file__).resolve().parents[3]
@@ -81,10 +88,11 @@ def resolve_server_directory(
     executable_dir: Path | None = None,
     environment: dict[str, str] | None = None,
 ) -> Path:
-    """Trouve le serveur sans dépendre du répertoire courant du processus."""
+    """Trouve Paper sans dépendre du répertoire courant du processus."""
 
     environment = environment if environment is not None else os.environ
     candidates: list[Path] = []
+
     configured_directory = environment.get("AUGUSTIN_SERVER_DIR")
     if configured_directory:
         candidates.append(Path(configured_directory))
@@ -92,14 +100,21 @@ def resolve_server_directory(
     candidates.append(executable_dir or executable_directory())
     candidates.append(DEFAULT_SERVER_DIRECTORY)
 
+    seen: set[Path] = set()
     for candidate in candidates:
-        resolved = candidate.expanduser().resolve()
+        try:
+            resolved = candidate.expanduser().resolve()
+        except OSError:
+            continue
+        if resolved in seen:
+            continue
+        seen.add(resolved)
         if is_paper_server_directory(resolved):
             return resolved
 
     raise LauncherConfigurationError(
-        "Impossible de trouver paper.jar. Place AUGUSTIN_Launcher.exe dans le "
-        "dossier PaperServer ou définis AUGUSTIN_SERVER_DIR."
+        "Impossible de trouver paper.jar. Place AugLauncher.exe dans le "
+        "dossier PaperServer ou définis la variable AUGUSTIN_SERVER_DIR."
     )
 
 
@@ -110,11 +125,15 @@ def parse_java_major(version_output: str) -> int | None:
     return int(match.group("major")) if match else None
 
 
+def _no_window_creation_flags() -> int:
+    return int(getattr(subprocess, "CREATE_NO_WINDOW", 0))
+
+
 def read_java_major(
     executable: Path,
     runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
 ) -> int | None:
-    """Lance une vérification légère de version sans démarrer le serveur."""
+    """Vérifie la version d'une JVM avec une durée maximale bornée."""
 
     try:
         result = runner(
@@ -122,7 +141,8 @@ def read_java_major(
             capture_output=True,
             text=True,
             check=False,
-            timeout=10,
+            timeout=JAVA_VERSION_TIMEOUT_SECONDS,
+            creationflags=_no_window_creation_flags(),
         )
     except (OSError, subprocess.SubprocessError):
         return None
@@ -131,10 +151,46 @@ def read_java_major(
     return parse_java_major(output)
 
 
-def java_candidates(environment: dict[str, str] | None = None) -> Iterable[Path]:
-    """Fournit les JVM candidates en privilégiant la JDK 21 configurée."""
+def _common_windows_java_candidates(environment: dict[str, str]) -> Iterable[Path]:
+    """Cherche quelques emplacements JDK Windows standards sans récursion lourde."""
+
+    roots: list[Path] = []
+    for variable in ("ProgramFiles", "ProgramFiles(x86)", "LOCALAPPDATA"):
+        value = environment.get(variable)
+        if value:
+            roots.append(Path(value))
+
+    patterns = (
+        "Eclipse Adoptium/jdk-*/bin/java.exe",
+        "Microsoft/jdk-*/bin/java.exe",
+        "Java/jdk-*/bin/java.exe",
+        "BellSoft/LibericaJDK-*/bin/java.exe",
+        "Programs/Eclipse Adoptium/jdk-*/bin/java.exe",
+    )
+    for root in roots:
+        for pattern in patterns:
+            try:
+                matches = sorted(root.glob(pattern), reverse=True)
+            except OSError:
+                continue
+            yield from matches
+
+
+def java_candidates(
+    environment: dict[str, str] | None = None,
+    launcher_directory: Path | None = None,
+) -> Iterable[Path]:
+    """Fournit les JVM candidates dans un ordre stable et explicite."""
 
     environment = environment if environment is not None else os.environ
+
+    configured_java = environment.get("AUGUSTIN_JAVA")
+    if configured_java:
+        yield Path(configured_java)
+
+    launcher_root = launcher_directory or executable_directory()
+    yield launcher_root / "runtime" / "bin" / "java.exe"
+    yield launcher_root / "jdk" / "bin" / "java.exe"
     yield DEFAULT_JAVA_EXECUTABLE
 
     java_home = environment.get("JAVA_HOME")
@@ -145,6 +201,8 @@ def java_candidates(environment: dict[str, str] | None = None) -> Iterable[Path]
     if java_on_path:
         yield Path(java_on_path)
 
+    yield from _common_windows_java_candidates(environment)
+
 
 def find_java_runtime(
     candidates: Iterable[Path] | None = None,
@@ -153,17 +211,30 @@ def find_java_runtime(
     """Sélectionne une JVM Java 21 ou plus récente pour Paper 1.21.4."""
 
     seen: set[Path] = set()
+    incompatible_versions: list[str] = []
+
     for candidate in candidates if candidates is not None else java_candidates():
-        resolved = candidate.expanduser().resolve()
+        try:
+            resolved = candidate.expanduser().resolve()
+        except OSError:
+            continue
         if resolved in seen or not resolved.is_file():
             continue
         seen.add(resolved)
-        major_version = version_reader(resolved)
-        if major_version is not None and major_version >= MINIMUM_JAVA_VERSION:
-            return JavaRuntime(resolved, major_version)
 
+        major_version = version_reader(resolved)
+        if major_version is None:
+            continue
+        if major_version >= MINIMUM_JAVA_VERSION:
+            return JavaRuntime(resolved, major_version)
+        incompatible_versions.append(f"Java {major_version} ({resolved})")
+
+    detail = ""
+    if incompatible_versions:
+        detail = " JVM trop anciennes détectées : " + "; ".join(incompatible_versions[:3])
     raise LauncherConfigurationError(
-        "Java 21 ou plus récent est requis pour démarrer Paper 1.21.4."
+        "Java 21 ou plus récent est requis pour démarrer Paper 1.21.4. "
+        "Installe une JDK 21, configure JAVA_HOME ou AUGUSTIN_JAVA." + detail
     )
 
 
@@ -172,12 +243,11 @@ def build_server_command(
     minimum_memory_gib: int = DEFAULT_MEMORY_GIB,
     maximum_memory_gib: int = DEFAULT_MEMORY_GIB,
 ) -> tuple[str, ...]:
-    """Construit la commande Paper sans passer par start.bat."""
+    """Construit la commande Paper sans passer par un fichier batch."""
 
     if minimum_memory_gib <= 0 or maximum_memory_gib < minimum_memory_gib:
         raise ValueError("La mémoire Paper doit être positive et cohérente.")
 
-    # Ici, je garde les 2 Go déjà prévus par la configuration du serveur.
     return (
         str(java_runtime.executable),
         f"-Xms{minimum_memory_gib}G",
@@ -192,11 +262,12 @@ def is_port_listening(
     host: str = "127.0.0.1",
     port: int = PAPER_PORT,
     connector: Callable[..., socket.socket] = socket.create_connection,
+    timeout_seconds: float = PORT_PROBE_TIMEOUT_SECONDS,
 ) -> bool:
-    """Teste le port Minecraft afin d'empêcher un second lancement."""
+    """Teste le port Minecraft avec un délai court et toujours borné."""
 
     try:
-        connection = connector((host, port), timeout=0.25)
+        connection = connector((host, port), timeout=timeout_seconds)
     except OSError:
         return False
 
@@ -236,7 +307,8 @@ def check_minecraft_profile(
     if isinstance(profiles, dict):
         for profile in profiles.values():
             if isinstance(profile, dict) and profile.get("name") == profile_name:
-                profile_version = profile.get("lastVersionId")
+                value = profile.get("lastVersionId")
+                profile_version = value if isinstance(value, str) else None
                 break
 
     version_directory = minecraft_root / "versions" / MINECRAFT_VERSION
@@ -252,7 +324,7 @@ def check_minecraft_profile(
 
 
 def minecraft_launcher_command() -> Sequence[str]:
-    """Retourne la commande Windows stable pour ouvrir le Launcher officiel."""
+    """Retourne la commande Windows pour ouvrir le Launcher officiel."""
 
     return (
         "explorer.exe",
@@ -261,54 +333,106 @@ def minecraft_launcher_command() -> Sequence[str]:
 
 
 class LogTailer:
-    """Suit un fichier de logs, y compris après sa rotation ou sa troncature."""
+    """Suit un fichier de logs après rotation, troncature ou écriture partielle."""
 
-    def __init__(self, log_path: Path, initial_bytes: int = 64 * 1024) -> None:
+    def __init__(self, log_path: Path, initial_bytes: int = 96 * 1024) -> None:
         self.log_path = log_path
         self.initial_bytes = initial_bytes
         self._offset = 0
+        self._identity: tuple[int, int] | None = None
+        self._pending = b""
+        self._lock = threading.Lock()
+
+    @staticmethod
+    def _identity_for_stat(stat_result: os.stat_result) -> tuple[int, int]:
+        return (int(stat_result.st_dev), int(stat_result.st_ino))
+
+    @staticmethod
+    def _complete_lines(payload: bytes) -> tuple[list[str], bytes]:
+        """Retourne uniquement les lignes terminées, en conservant le fragment final."""
+
+        if not payload:
+            return [], b""
+        chunks = payload.splitlines(keepends=True)
+        pending = b""
+        if chunks and not chunks[-1].endswith((b"\n", b"\r")):
+            pending = chunks.pop()
+        lines = [chunk.rstrip(b"\r\n").decode("utf-8", errors="replace") for chunk in chunks]
+        return lines, pending
 
     def read_initial_lines(self) -> list[str]:
-        """Retourne la fin du journal existant sans charger tout son historique."""
+        """Retourne la fin du journal sans charger tout son historique."""
 
-        try:
-            size = self.log_path.stat().st_size
-        except OSError:
-            return []
+        with self._lock:
+            try:
+                stat_result = self.log_path.stat()
+                size = stat_result.st_size
+            except OSError:
+                return []
 
-        start = max(0, size - self.initial_bytes)
-        try:
-            with self.log_path.open("rb") as log_file:
-                log_file.seek(start)
-                payload = log_file.read()
-        except OSError:
-            return []
+            start = max(0, size - self.initial_bytes)
+            try:
+                with self.log_path.open("rb") as log_file:
+                    log_file.seek(start)
+                    payload = log_file.read(self.initial_bytes)
+            except OSError:
+                return []
 
-        self._offset = size
-        text = payload.decode("utf-8", errors="replace")
-        lines = text.splitlines()
-        if start > 0 and lines and not text.startswith(("\n", "\r")):
-            return lines[1:]
-        return lines
+            self._identity = self._identity_for_stat(stat_result)
+            self._offset = size
+            self._pending = b""
 
-    def read_new_lines(self) -> list[str]:
-        """Lit uniquement les lignes ajoutées depuis le dernier passage."""
+            # En partant au milieu du fichier, la première ligne peut être incomplète.
+            if start > 0:
+                first_break = payload.find(b"\n")
+                payload = payload[first_break + 1 :] if first_break >= 0 else b""
 
-        try:
-            size = self.log_path.stat().st_size
-        except OSError:
-            return []
+            lines, pending = self._complete_lines(payload)
+            if pending:
+                # Le journal existant peut se terminer sans saut de ligne : on l'affiche.
+                lines.append(pending.decode("utf-8", errors="replace"))
+            return lines
 
-        if size < self._offset:
-            # Ici, je reprends au début si Paper vient de faire tourner son journal.
-            self._offset = 0
+    def seek_to_end(self) -> None:
+        """Synchronise la position sans relire les lignes déjà reçues via stdout."""
 
-        try:
-            with self.log_path.open("rb") as log_file:
-                log_file.seek(self._offset)
-                payload = log_file.read()
-                self._offset = log_file.tell()
-        except OSError:
-            return []
+        with self._lock:
+            try:
+                stat_result = self.log_path.stat()
+            except OSError:
+                self._offset = 0
+                self._identity = None
+                self._pending = b""
+                return
+            self._identity = self._identity_for_stat(stat_result)
+            self._offset = stat_result.st_size
+            self._pending = b""
 
-        return payload.decode("utf-8", errors="replace").splitlines()
+    def read_new_lines(self, max_bytes: int = MAX_LOG_READ_BYTES) -> list[str]:
+        """Lit un volume borné de nouvelles lignes depuis le dernier passage."""
+
+        with self._lock:
+            try:
+                stat_result = self.log_path.stat()
+            except OSError:
+                return []
+
+            identity = self._identity_for_stat(stat_result)
+            if self._identity is not None and identity != self._identity:
+                self._offset = 0
+                self._pending = b""
+            elif stat_result.st_size < self._offset:
+                self._offset = 0
+                self._pending = b""
+            self._identity = identity
+
+            try:
+                with self.log_path.open("rb") as log_file:
+                    log_file.seek(self._offset)
+                    payload = log_file.read(max_bytes)
+                    self._offset = log_file.tell()
+            except OSError:
+                return []
+
+            lines, self._pending = self._complete_lines(self._pending + payload)
+            return lines

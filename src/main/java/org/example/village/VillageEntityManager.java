@@ -23,6 +23,7 @@ import org.bukkit.persistence.PersistentDataType;
 import org.bukkit.plugin.Plugin;
 import org.bukkit.scheduler.BukkitRunnable;
 import org.bukkit.scheduler.BukkitTask;
+import org.example.MinePlugin;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -920,6 +921,18 @@ public final class VillageEntityManager {
     }
 
     public static void cleanup(Plugin plugin, int villageId) {
+        /*
+         * Le nettoyage démographique peut être déclenché indépendamment de
+         * /village undo (durée de vie configurée, API ou maintenance). Il doit
+         * donc retirer aussi l'état persistant de la garnison, sinon les
+         * chevaliers supprimés seraient recréés une minute plus tard.
+         */
+        if (plugin instanceof MinePlugin minePlugin
+                && minePlugin.getVillageKnightManager() != null) {
+            minePlugin.getVillageKnightManager()
+                    .unregisterVillage(villageId);
+        }
+
         GateGuardManager.stopGuardTask(villageId);
         VILLAGE_CENTERS.remove(villageId);
         VILLAGE_ANCHORS.remove(villageId);

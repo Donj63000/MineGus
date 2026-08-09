@@ -16,6 +16,10 @@ public final class Keys {
     private static NamespacedKey royalGuardType;
     private static NamespacedKey royalGuardOwner;
     private static NamespacedKey royalGuardSlot;
+    private static NamespacedKey villageKnightType;
+    private static NamespacedKey villageKnightVillage;
+    private static NamespacedKey villageKnightSlot;
+    private static NamespacedKey villageKnightRole;
 
     private Keys() {
     }
@@ -31,6 +35,10 @@ public final class Keys {
         royalGuardType = new NamespacedKey(plugin, "royal_guard_type");
         royalGuardOwner = new NamespacedKey(plugin, "royal_guard_owner");
         royalGuardSlot = new NamespacedKey(plugin, "royal_guard_slot");
+        villageKnightType = new NamespacedKey(plugin, "village_knight_type");
+        villageKnightVillage = new NamespacedKey(plugin, "village_knight_village");
+        villageKnightSlot = new NamespacedKey(plugin, "village_knight_slot");
+        villageKnightRole = new NamespacedKey(plugin, "village_knight_role");
     }
 
     public static NamespacedKey workerType() {
@@ -66,6 +74,26 @@ public final class Keys {
     public static NamespacedKey royalGuardSlot() {
         ensureInitialized();
         return royalGuardSlot;
+    }
+
+    public static NamespacedKey villageKnightType() {
+        ensureInitialized();
+        return villageKnightType;
+    }
+
+    public static NamespacedKey villageKnightVillage() {
+        ensureInitialized();
+        return villageKnightVillage;
+    }
+
+    public static NamespacedKey villageKnightSlot() {
+        ensureInitialized();
+        return villageKnightSlot;
+    }
+
+    public static NamespacedKey villageKnightRole() {
+        ensureInitialized();
+        return villageKnightRole;
     }
 
     private static void ensureInitialized() {

@@ -55,6 +55,7 @@ import org.bukkit.plugin.java.JavaPlugin;
 import org.bukkit.projectiles.ProjectileSource;
 import org.bukkit.scheduler.BukkitTask;
 import org.bukkit.util.Vector;
+import org.example.village.VillageKnightManager;
 
 import java.util.ArrayList;
 import java.util.Collection;
@@ -2053,7 +2054,9 @@ public final class RoyalGuardManager implements TabExecutor, Listener {
         if (entity == null || ownerId == null) {
             return false;
         }
-        if (ownerId.equals(entity.getUniqueId()) || isGuardOfOwner(entity, ownerId)) {
+        if (ownerId.equals(entity.getUniqueId())
+                || isGuardOfOwner(entity, ownerId)
+                || VillageKnightManager.isVillageKnight(entity)) {
             return true;
         }
         if (entity instanceof Tameable tameable) {
