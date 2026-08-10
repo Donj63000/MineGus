@@ -1,5 +1,6 @@
 package org.example.merchant;
 
+import org.example.YamlFiles;
 import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
 import org.bukkit.Material;
@@ -31,6 +32,7 @@ import org.bukkit.inventory.meta.ItemMeta;
 import org.bukkit.persistence.PersistentDataContainer;
 import org.bukkit.persistence.PersistentDataType;
 import org.bukkit.plugin.java.JavaPlugin;
+import org.bukkit.scheduler.BukkitTask;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.File;
@@ -63,11 +65,16 @@ public final class MerchantManager implements CommandExecutor, Listener {
 
     private static final int MENU_SIZE = 54;
     private static final int OFFERS_PER_PAGE = 45;
+    private static final int MAX_OUTPUT_ITEMS_PER_TRADE = 4096;
+    private static final int MAX_OUTPUT_STACKS_PER_TRADE = 64;
+    private static final int MAX_PERSISTED_CAP_RECORDS = 20_000;
+    private static final int MAX_PERSISTED_COUNT = 1_000_000_000;
 
     private final JavaPlugin plugin;
     private final NamespacedKey traderKey;
     private final NamespacedKey itemKey;
     private final File merchantFile;
+    private final File capFile;
 
     private String merchantId = "minegus_trader";
     private String merchantDisplayName = ChatColor.GOLD + "Marchand";
@@ -88,9 +95,56 @@ public final class MerchantManager implements CommandExecutor, Listener {
     private final Map<UUID, Map<String, Integer>> playerDailyCounts = new HashMap<>();
     private LocalTime resetTimeUtc = LocalTime.MIDNIGHT;
     private long nextResetEpochMillis = 0L;
+    private BukkitTask capSaveTask;
 
     // Ensemble de tous les matériaux sortis par le marchand (pour les règles d'inputs)
     private final Set<Material> outputMaterials = EnumSet.noneOf(Material.class);
+
+    /**
+     * Instantané minimal utilisé pour rendre /marchand reload transactionnel.
+     */
+    private final class DefinitionState {
+        private final String savedMerchantId = merchantId;
+        private final String savedDisplayName = merchantDisplayName;
+        private final boolean savedLogTrades = logTrades;
+        private final boolean savedAllowOutputs = allowOutputsAsInputs;
+        private final int savedDefaultPlayerCap = defaultCapPlayerPerDay;
+        private final int savedDefaultServerCap = defaultCapServerPerDay;
+        private final Sound savedTradeSound = tradeSound;
+        private final LocalTime savedResetTime = resetTimeUtc;
+        private final long savedNextReset = nextResetEpochMillis;
+        private final Set<Material> savedOutputMaterials =
+                outputMaterials.isEmpty()
+                        ? EnumSet.noneOf(Material.class)
+                        : EnumSet.copyOf(outputMaterials);
+        private final Map<String, MerchantCategory> savedCategories =
+                new LinkedHashMap<>(categoriesById);
+        private final Map<String, ResolvedOffer> savedOffers =
+                new HashMap<>(offersById);
+        private final List<MerchantCategory> savedOrder =
+                new ArrayList<>(orderedCategories);
+
+        private void restore() {
+            merchantId = savedMerchantId;
+            merchantDisplayName = savedDisplayName;
+            logTrades = savedLogTrades;
+            allowOutputsAsInputs = savedAllowOutputs;
+            defaultCapPlayerPerDay = savedDefaultPlayerCap;
+            defaultCapServerPerDay = savedDefaultServerCap;
+            tradeSound = savedTradeSound;
+            resetTimeUtc = savedResetTime;
+            nextResetEpochMillis = savedNextReset;
+
+            outputMaterials.clear();
+            outputMaterials.addAll(savedOutputMaterials);
+            categoriesById.clear();
+            categoriesById.putAll(savedCategories);
+            offersById.clear();
+            offersById.putAll(savedOffers);
+            orderedCategories.clear();
+            orderedCategories.addAll(savedOrder);
+        }
+    }
 
     public MerchantManager(JavaPlugin plugin) {
         this.plugin = plugin;
@@ -100,9 +154,21 @@ public final class MerchantManager implements CommandExecutor, Listener {
             //noinspection ResultOfMethodCallIgnored
             plugin.getDataFolder().mkdirs();
         }
-        this.merchantFile = new File(plugin.getDataFolder(), "marchand.yaml");
+        this.merchantFile = new File(
+                plugin.getDataFolder(),
+                "marchand.yaml"
+        );
+        this.capFile = new File(
+                plugin.getDataFolder(),
+                "merchant-caps.yml"
+        );
         ensureDefaultFile();
-        reloadDefinition();
+        if (!reloadDefinition()) {
+            throw new IllegalStateException(
+                    "marchand.yaml ne contient aucune offre valide."
+            );
+        }
+        loadCapCounters();
         registerCommand();
         plugin.getServer().getPluginManager().registerEvents(this, plugin);
         discoverExistingMerchants();
@@ -126,14 +192,19 @@ public final class MerchantManager implements CommandExecutor, Listener {
     public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
         // /marchand reload
         if (args.length >= 1 && args[0].equalsIgnoreCase("reload")) {
-            if (!sender.hasPermission("mineplugin.marchand.admin")
-                    && !sender.hasPermission("mineplugin.marchand.spawn")) {
+            if (!sender.hasPermission("mineplugin.marchand.admin")) {
                 sender.sendMessage(ChatColor.RED + "Tu n'as pas la permission pour /marchand reload.");
                 return true;
             }
-            reloadDefinition();
-            discoverExistingMerchants();
-            sender.sendMessage(ChatColor.GREEN + "Configuration du marchand rechargée.");
+            if (reloadDefinition()) {
+                discoverExistingMerchants();
+                sender.sendMessage(ChatColor.GREEN
+                        + "Configuration du marchand rechargée.");
+            } else {
+                sender.sendMessage(ChatColor.RED
+                        + "Le rechargement a échoué; la dernière "
+                        + "configuration valide reste active.");
+            }
             return true;
         }
 
@@ -164,6 +235,12 @@ public final class MerchantManager implements CommandExecutor, Listener {
             if (sender != target) {
                 sender.sendMessage(ChatColor.GREEN + "Menu du marchand ouvert pour " + target.getName() + ".");
             }
+            return true;
+        }
+
+        if (args.length > 0) {
+            sender.sendMessage(ChatColor.RED
+                    + "Utilisation : /marchand [open [joueur]|reload].");
             return true;
         }
 
@@ -202,72 +279,162 @@ public final class MerchantManager implements CommandExecutor, Listener {
         villager.getInventory().clear();
     }
 
-    private void reloadDefinition() {
-        YamlConfiguration yaml = YamlConfiguration.loadConfiguration(merchantFile);
-        ConfigurationSection merchantSection = yaml.getConfigurationSection("merchant");
-        if (merchantSection != null) {
-            this.merchantId = merchantSection.getString("id", merchantId);
-            this.merchantDisplayName = ChatColor.GOLD + merchantSection.getString("display_name", "Marchand");
-            String resetStr = merchantSection.getString("reset_time_utc", "00:00");
-            try {
-                this.resetTimeUtc = LocalTime.parse(resetStr);
-            } catch (DateTimeParseException ex) {
-                plugin.getLogger().warning("Heure reset_time_utc invalide: " + resetStr + " (utilisation de 00:00)");
-                this.resetTimeUtc = LocalTime.MIDNIGHT;
-            }
+    /**
+     * Recharge la définition de façon transactionnelle. Une erreur de syntaxe
+     * ou une configuration sans offre ne doit jamais vider un marchand déjà
+     * opérationnel.
+     */
+    private boolean reloadDefinition() {
+        YamlConfiguration yaml =
+                YamlConfiguration.loadConfiguration(merchantFile);
+        ConfigurationSection categoriesSection =
+                yaml.getConfigurationSection("categories");
+        if (categoriesSection == null) {
+            plugin.getLogger().severe(
+                    "Aucune catégorie définie dans marchand.yaml; "
+                            + "rechargement annulé."
+            );
+            return false;
         }
-        ConfigurationSection rules = yaml.getConfigurationSection("rules");
-        if (rules != null) {
-            this.logTrades = rules.getBoolean("log_trades", false);
-            this.allowOutputsAsInputs = rules.getBoolean("allow_outputs_as_inputs", false);
-            ConfigurationSection defaultCaps = rules.getConfigurationSection("default_caps");
-            if (defaultCaps != null) {
-                this.defaultCapPlayerPerDay = defaultCaps.getInt("per_player_per_day", 0);
-                this.defaultCapServerPerDay = defaultCaps.getInt("per_server_per_day", 0);
+
+        DefinitionState previous = new DefinitionState();
+        try {
+            ConfigurationSection merchantSection =
+                    yaml.getConfigurationSection("merchant");
+            if (merchantSection != null) {
+                this.merchantId = merchantSection.getString(
+                        "id",
+                        merchantId
+                );
+                this.merchantDisplayName = ChatColor.GOLD
+                        + merchantSection.getString(
+                                "display_name",
+                                "Marchand"
+                        );
+                String resetStr = merchantSection.getString(
+                        "reset_time_utc",
+                        "00:00"
+                );
+                try {
+                    this.resetTimeUtc = LocalTime.parse(resetStr);
+                } catch (DateTimeParseException failure) {
+                    plugin.getLogger().warning(
+                            "Heure reset_time_utc invalide: "
+                                    + resetStr
+                                    + " (utilisation de 00:00)"
+                    );
+                    this.resetTimeUtc = LocalTime.MIDNIGHT;
+                }
+            }
+
+            ConfigurationSection rules =
+                    yaml.getConfigurationSection("rules");
+            if (rules != null) {
+                this.logTrades = rules.getBoolean(
+                        "log_trades",
+                        false
+                );
+                this.allowOutputsAsInputs = rules.getBoolean(
+                        "allow_outputs_as_inputs",
+                        false
+                );
+                ConfigurationSection defaultCaps =
+                        rules.getConfigurationSection("default_caps");
+                if (defaultCaps != null) {
+                    this.defaultCapPlayerPerDay = Math.max(
+                            0,
+                            defaultCaps.getInt("per_player_per_day", 0)
+                    );
+                    this.defaultCapServerPerDay = Math.max(
+                            0,
+                            defaultCaps.getInt("per_server_per_day", 0)
+                    );
+                } else {
+                    this.defaultCapPlayerPerDay = 0;
+                    this.defaultCapServerPerDay = 0;
+                }
+                String soundName = rules.getString(
+                        "sound_on_trade",
+                        "ENTITY_VILLAGER_YES"
+                );
+                this.tradeSound = resolveTradeSound(soundName);
             } else {
+                this.logTrades = false;
+                this.allowOutputsAsInputs = false;
                 this.defaultCapPlayerPerDay = 0;
                 this.defaultCapServerPerDay = 0;
+                this.tradeSound = resolveTradeSound(
+                        "ENTITY_VILLAGER_YES"
+                );
             }
-            String soundName = rules.getString("sound_on_trade", "ENTITY_VILLAGER_YES");
-            this.tradeSound = resolveTradeSound(soundName);
-        }
-        resetCapCounters();
-        recomputeNextResetEpoch();
-        outputMaterials.clear();
-        categoriesById.clear();
-        offersById.clear();
-        orderedCategories.clear();
-        MaterialResolver resolver = new MaterialResolver();
-        ConfigurationSection categoriesSection = yaml.getConfigurationSection("categories");
-        if (categoriesSection == null) {
-            plugin.getLogger().warning("Aucune catégorie définie dans marchand.yaml");
-            return;
-        }
-        for (String id : categoriesSection.getKeys(false)) {
-            ConfigurationSection catSection = categoriesSection.getConfigurationSection(id);
-            if (catSection == null) continue;
-            MerchantCategory category = parseCategory(id, catSection, resolver);
-            if (category != null) {
-                categoriesById.put(id, category);
+
+            /*
+             * Un reload de configuration ne remet pas les quotas à zéro :
+             * cette opération ne doit jamais permettre de contourner les caps
+             * journaliers.
+             */
+            resetCapsIfNeeded();
+            recomputeNextResetEpoch();
+
+            outputMaterials.clear();
+            categoriesById.clear();
+            offersById.clear();
+            orderedCategories.clear();
+
+            MaterialResolver resolver = new MaterialResolver();
+            for (String id : categoriesSection.getKeys(false)) {
+                ConfigurationSection categorySection =
+                        categoriesSection.getConfigurationSection(id);
+                if (categorySection == null) {
+                    continue;
+                }
+                MerchantCategory category = parseCategory(
+                        id,
+                        categorySection,
+                        resolver
+                );
+                if (category != null) {
+                    categoriesById.put(id, category);
+                }
             }
-        }
-        List<String> order = Collections.emptyList();
-        ConfigurationSection ui = merchantSection != null ? merchantSection.getConfigurationSection("ui") : null;
-        if (ui != null) {
-            order = ui.getStringList("categories_order");
-        }
-        if (order != null) {
+
+            if (categoriesById.isEmpty() || offersById.isEmpty()) {
+                throw new IllegalArgumentException(
+                        "marchand.yaml ne contient aucune offre exploitable."
+                );
+            }
+
+            List<String> order = Collections.emptyList();
+            ConfigurationSection ui = merchantSection != null
+                    ? merchantSection.getConfigurationSection("ui")
+                    : null;
+            if (ui != null) {
+                order = ui.getStringList("categories_order");
+            }
             for (String id : order) {
                 MerchantCategory category = categoriesById.get(id);
-                if (category != null) {
+                if (category != null
+                        && !orderedCategories.contains(category)) {
                     orderedCategories.add(category);
                 }
             }
-        }
-        for (MerchantCategory category : categoriesById.values()) {
-            if (!orderedCategories.contains(category)) {
-                orderedCategories.add(category);
+            for (MerchantCategory category : categoriesById.values()) {
+                if (!orderedCategories.contains(category)) {
+                    orderedCategories.add(category);
+                }
             }
+
+            pruneCapCounters();
+            return true;
+        } catch (RuntimeException | LinkageError failure) {
+            previous.restore();
+            plugin.getLogger().log(
+                    java.util.logging.Level.SEVERE,
+                    "La configuration du marchand est invalide; "
+                            + "la dernière définition valide est conservée.",
+                    failure
+            );
+            return false;
         }
     }
 
@@ -277,7 +444,7 @@ public final class MerchantManager implements CommandExecutor, Listener {
         } catch (IllegalArgumentException ex) {
             plugin.getLogger().warning("Son inconnu pour le marchand: " + soundName);
             return null;
-        } catch (Throwable throwable) {
+        } catch (RuntimeException | LinkageError throwable) {
             plugin.getLogger().warning("Impossible de charger le son du marchand dans cet environnement: "
                     + throwable.getClass().getSimpleName());
             return null;
@@ -290,13 +457,15 @@ public final class MerchantManager implements CommandExecutor, Listener {
     }
 
     private void recomputeNextResetEpoch() {
-        this.nextResetEpochMillis = computeNextResetEpoch(System.currentTimeMillis());
+        this.nextResetEpochMillis =
+                computeNextResetEpoch(System.currentTimeMillis());
     }
 
     private long computeNextResetEpoch(long nowMillis) {
         Instant now = Instant.ofEpochMilli(nowMillis);
         ZonedDateTime utcNow = now.atZone(ZoneOffset.UTC);
-        ZonedDateTime todayReset = utcNow.withHour(resetTimeUtc.getHour())
+        ZonedDateTime todayReset = utcNow
+                .withHour(resetTimeUtc.getHour())
                 .withMinute(resetTimeUtc.getMinute())
                 .withSecond(0)
                 .withNano(0);
@@ -311,7 +480,190 @@ public final class MerchantManager implements CommandExecutor, Listener {
         if (nextResetEpochMillis == 0L || now >= nextResetEpochMillis) {
             resetCapCounters();
             nextResetEpochMillis = computeNextResetEpoch(now);
+            scheduleCapSave();
         }
+    }
+
+    /**
+     * Charge les compteurs quotidiens après les offres afin d'ignorer les
+     * identifiants qui ne sont plus présents dans la configuration.
+     */
+    private void loadCapCounters() {
+        if (!capFile.isFile()) {
+            return;
+        }
+
+        YamlConfiguration yaml =
+                YamlConfiguration.loadConfiguration(capFile);
+        long now = System.currentTimeMillis();
+        long storedReset = yaml.getLong(
+                "next-reset-epoch-millis",
+                0L
+        );
+
+        /*
+         * Un timestamp très éloigné est traité comme une corruption et non
+         * comme un moyen de bloquer les quotas indéfiniment.
+         */
+        long maximumReasonableReset = now + 3L * 24L * 60L * 60L * 1000L;
+        if (storedReset <= now || storedReset > maximumReasonableReset) {
+            resetCapCounters();
+            nextResetEpochMillis = computeNextResetEpoch(now);
+            scheduleCapSave();
+            return;
+        }
+
+        resetCapCounters();
+        nextResetEpochMillis = storedReset;
+        int loadedRecords = 0;
+
+        for (Map<?, ?> raw : yaml.getMapList("server")) {
+            if (loadedRecords >= MAX_PERSISTED_CAP_RECORDS) {
+                break;
+            }
+            String offerId = Objects.toString(raw.get("offer"), "");
+            int count = readPersistedCount(raw.get("count"));
+            if (count > 0 && offersById.containsKey(offerId)) {
+                serverDailyCounts.put(offerId, count);
+                loadedRecords++;
+            }
+        }
+
+        ConfigurationSection players =
+                yaml.getConfigurationSection("players");
+        if (players != null) {
+            for (String rawPlayerId : players.getKeys(false)) {
+                if (loadedRecords >= MAX_PERSISTED_CAP_RECORDS) {
+                    break;
+                }
+
+                UUID playerId;
+                try {
+                    playerId = UUID.fromString(rawPlayerId);
+                } catch (IllegalArgumentException ignored) {
+                    plugin.getLogger().warning(
+                            "[Marchand] UUID invalide ignoré dans "
+                                    + "merchant-caps.yml: " + rawPlayerId
+                    );
+                    continue;
+                }
+
+                Map<String, Integer> counts = new HashMap<>();
+                for (Map<?, ?> raw : players.getMapList(rawPlayerId)) {
+                    if (loadedRecords >= MAX_PERSISTED_CAP_RECORDS) {
+                        break;
+                    }
+                    String offerId =
+                            Objects.toString(raw.get("offer"), "");
+                    int count = readPersistedCount(raw.get("count"));
+                    if (count > 0 && offersById.containsKey(offerId)) {
+                        counts.put(offerId, count);
+                        loadedRecords++;
+                    }
+                }
+                if (!counts.isEmpty()) {
+                    playerDailyCounts.put(playerId, counts);
+                }
+            }
+        }
+
+        if (loadedRecords >= MAX_PERSISTED_CAP_RECORDS) {
+            plugin.getLogger().warning(
+                    "[Marchand] merchant-caps.yml dépasse la limite de "
+                            + MAX_PERSISTED_CAP_RECORDS
+                            + " compteurs; les entrées restantes sont ignorées."
+            );
+        }
+        pruneCapCounters();
+    }
+
+    private int readPersistedCount(Object value) {
+        long parsed;
+        if (value instanceof Number number) {
+            parsed = number.longValue();
+        } else {
+            try {
+                parsed = Long.parseLong(Objects.toString(value, "0"));
+            } catch (NumberFormatException ignored) {
+                return 0;
+            }
+        }
+        if (parsed <= 0L) {
+            return 0;
+        }
+        return (int) Math.min(parsed, MAX_PERSISTED_COUNT);
+    }
+
+    private void pruneCapCounters() {
+        serverDailyCounts.keySet().retainAll(offersById.keySet());
+        playerDailyCounts.values().forEach(
+                counts -> counts.keySet().retainAll(offersById.keySet())
+        );
+        playerDailyCounts.entrySet().removeIf(
+                entry -> entry.getValue().isEmpty()
+        );
+    }
+
+    private void scheduleCapSave() {
+        if (capSaveTask != null && !capSaveTask.isCancelled()) {
+            return;
+        }
+        capSaveTask = Bukkit.getScheduler().runTaskLater(
+                plugin,
+                () -> {
+                    capSaveTask = null;
+                    saveCapCounters();
+                },
+                20L
+        );
+    }
+
+    private void saveCapCounters() {
+        YamlConfiguration yaml = new YamlConfiguration();
+        yaml.set("next-reset-epoch-millis", nextResetEpochMillis);
+
+        List<Map<String, Object>> serverRecords = new ArrayList<>();
+        serverDailyCounts.entrySet().stream()
+                .sorted(Map.Entry.comparingByKey())
+                .forEach(entry -> {
+                    if (entry.getValue() > 0) {
+                        Map<String, Object> record = new LinkedHashMap<>();
+                        record.put("offer", entry.getKey());
+                        record.put("count", entry.getValue());
+                        serverRecords.add(record);
+                    }
+                });
+        yaml.set("server", serverRecords);
+
+        playerDailyCounts.entrySet().stream()
+                .sorted(Map.Entry.comparingByKey())
+                .forEach(playerEntry -> {
+                    List<Map<String, Object>> records = new ArrayList<>();
+                    playerEntry.getValue().entrySet().stream()
+                            .sorted(Map.Entry.comparingByKey())
+                            .forEach(entry -> {
+                                if (entry.getValue() > 0) {
+                                    Map<String, Object> record =
+                                            new LinkedHashMap<>();
+                                    record.put("offer", entry.getKey());
+                                    record.put("count", entry.getValue());
+                                    records.add(record);
+                                }
+                            });
+                    if (!records.isEmpty()) {
+                        yaml.set(
+                                "players." + playerEntry.getKey(),
+                                records
+                        );
+                    }
+                });
+
+        YamlFiles.saveAtomically(
+                yaml,
+                capFile,
+                plugin.getLogger(),
+                "merchant-caps.yml"
+        );
     }
 
     private MerchantCategory parseCategory(String id, ConfigurationSection section, MaterialResolver resolver) {
@@ -344,6 +696,28 @@ public final class MerchantManager implements CommandExecutor, Listener {
                 continue;
             }
             for (Material mat : outputs) {
+                if (mat.isAir() || !mat.isItem()) {
+                    plugin.getLogger().warning(
+                            "Offre ignorée (sortie non distribuable) dans "
+                                    + id + " : " + mat
+                    );
+                    continue;
+                }
+                int outputAmount = definition.getOutQuantity();
+                int materialLimit = Math.min(
+                        MAX_OUTPUT_ITEMS_PER_TRADE,
+                        mat.getMaxStackSize() * MAX_OUTPUT_STACKS_PER_TRADE
+                );
+                if (outputAmount > materialLimit) {
+                    plugin.getLogger().warning(
+                            "Offre ignorée dans " + id
+                                    + ": sortie de " + outputAmount
+                                    + " objets supérieure à la limite de "
+                                    + materialLimit + " pour " + mat + "."
+                    );
+                    continue;
+                }
+
                 String offerId = id + ":" + counter.getAndIncrement();
                 int capPlayer = definition.getCapPlayerPerDay();
                 if (capPlayer == 0) capPlayer = defaultCapPlayerPerDay;
@@ -354,7 +728,7 @@ public final class MerchantManager implements CommandExecutor, Listener {
                         category,
                         requirements,
                         mat,
-                        definition.getOutQuantity(),
+                        outputAmount,
                         definition.getNote(),
                         capPlayer,
                         capServer
@@ -595,15 +969,23 @@ public final class MerchantManager implements CommandExecutor, Listener {
     private boolean isTradeAllowed(Player player, ResolvedOffer offer) {
         resetCapsIfNeeded();
 
+        int newRecords = 0;
         int capPerPlayer = offer.getCapPlayerPerDay();
         if (capPerPlayer > 0) {
-            Map<String, Integer> perOffer = playerDailyCounts
-                    .computeIfAbsent(player.getUniqueId(), id -> new HashMap<>());
-            int used = perOffer.getOrDefault(offer.id, 0);
+            Map<String, Integer> perOffer =
+                    playerDailyCounts.get(player.getUniqueId());
+            int used = perOffer == null
+                    ? 0
+                    : perOffer.getOrDefault(offer.id, 0);
             if (used >= capPerPlayer) {
-                player.sendMessage(ChatColor.RED + "Tu as déjà utilisé cette offre "
-                        + used + "/" + capPerPlayer + " fois aujourd'hui.");
+                player.sendMessage(ChatColor.RED
+                        + "Tu as déjà utilisé cette offre "
+                        + used + "/" + capPerPlayer
+                        + " fois aujourd'hui.");
                 return false;
+            }
+            if (perOffer == null || !perOffer.containsKey(offer.id)) {
+                newRecords++;
             }
         }
 
@@ -611,12 +993,46 @@ public final class MerchantManager implements CommandExecutor, Listener {
         if (capPerServer > 0) {
             int used = serverDailyCounts.getOrDefault(offer.id, 0);
             if (used >= capPerServer) {
-                player.sendMessage(ChatColor.RED + "Cette offre n'est plus disponible aujourd'hui.");
+                player.sendMessage(ChatColor.RED
+                        + "Cette offre n'est plus disponible aujourd'hui.");
                 return false;
+            }
+            if (!serverDailyCounts.containsKey(offer.id)) {
+                newRecords++;
             }
         }
 
+        /*
+         * Le suivi des quotas est volontairement fail-closed : mieux vaut
+         * refuser un échange exceptionnel que perdre son compteur et permettre
+         * un contournement des limites après redémarrage.
+         */
+        if (newRecords > 0
+                && countCapRecords() + newRecords
+                > MAX_PERSISTED_CAP_RECORDS) {
+            plugin.getLogger().warning(
+                    "[Marchand] Limite de compteurs quotidiens atteinte; "
+                            + "échange refusé pour " + player.getUniqueId() + "."
+            );
+            player.sendMessage(ChatColor.RED
+                    + "Le marchand est temporairement indisponible "
+                    + "pour cette offre.");
+            return false;
+        }
+
         return true;
+    }
+
+    private int countCapRecords() {
+        int count = serverDailyCounts.size();
+        for (Map<String, Integer> playerCounts :
+                playerDailyCounts.values()) {
+            count += playerCounts.size();
+            if (count >= MAX_PERSISTED_CAP_RECORDS) {
+                return count;
+            }
+        }
+        return count;
     }
 
     private void recordTrade(Player player, ResolvedOffer offer) {
@@ -626,13 +1042,28 @@ public final class MerchantManager implements CommandExecutor, Listener {
         if (capPerPlayer > 0) {
             Map<String, Integer> perOffer = playerDailyCounts
                     .computeIfAbsent(player.getUniqueId(), id -> new HashMap<>());
-            perOffer.put(offer.id, perOffer.getOrDefault(offer.id, 0) + 1);
+            int current = perOffer.getOrDefault(offer.id, 0);
+            perOffer.put(
+                    offer.id,
+                    (int) Math.min(
+                            (long) MAX_PERSISTED_COUNT,
+                            (long) current + 1L
+                    )
+            );
         }
 
         int capPerServer = offer.getCapServerPerDay();
         if (capPerServer > 0) {
-            serverDailyCounts.put(offer.id, serverDailyCounts.getOrDefault(offer.id, 0) + 1);
+            int current = serverDailyCounts.getOrDefault(offer.id, 0);
+            serverDailyCounts.put(
+                    offer.id,
+                    (int) Math.min(
+                            (long) MAX_PERSISTED_COUNT,
+                            (long) current + 1L
+                    )
+            );
         }
+        scheduleCapSave();
     }
 
     private boolean isAllowedAsInput(Material material) {
@@ -719,8 +1150,16 @@ public final class MerchantManager implements CommandExecutor, Listener {
     }
 
     public void shutdown() {
+        if (capSaveTask != null) {
+            capSaveTask.cancel();
+            capSaveTask = null;
+        }
+        saveCapCounters();
+
         for (Player player : Bukkit.getOnlinePlayers()) {
-            if (player.getOpenInventory().getTopInventory().getHolder() instanceof MenuHolder) {
+            if (player.getOpenInventory()
+                    .getTopInventory()
+                    .getHolder() instanceof MenuHolder) {
                 player.closeInventory();
             }
         }
@@ -1128,11 +1567,15 @@ public final class MerchantManager implements CommandExecutor, Listener {
         }
 
         public int getCapPlayerPerDay() {
-            return capPlayerPerDay;
+            /*
+             * Une valeur négative est invalide. Elle devient zéro afin que la
+             * limite par défaut de la catégorie soit réappliquée.
+             */
+            return Math.max(0, capPlayerPerDay);
         }
 
         public int getCapServerPerDay() {
-            return capServerPerDay;
+            return Math.max(0, capServerPerDay);
         }
 
         public List<IngredientRequirement> buildRequirements(MaterialResolver resolver, @Nullable IngredientDescriptor categoryInput) {

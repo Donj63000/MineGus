@@ -2,7 +2,7 @@
 
 ## Serveur Paper de développement
 
-- Le serveur Minecraft AUGUSTIN se trouve dans `C:\Users\nodig\Desktop\SERVEUR MINECRAFT AUGUSTIN\PaperServer`.
-- Le JAR du plugin installé sur ce serveur est `C:\Users\nodig\Desktop\SERVEUR MINECRAFT AUGUSTIN\PaperServer\plugins\MineGus-1.1-SNAPSHOT.jar`.
-- Lorsqu'une mise à jour du plugin du serveur est demandée, je construis d'abord `target\MineGus-1.1-SNAPSHOT.jar`, puis je mets à jour `MineGus.jar`, `Plugin compilé\MineGus-1.1-SNAPSHOT.jar` et le JAR du dossier `plugins` du serveur.
+- Le dossier du serveur Minecraft AUGUSTIN est fourni par la variable d'environnement `AUGUSTIN_SERVER_DIR`; aucun chemin propre à une machine ne doit être versionné.
+- Le JAR installé est `${AUGUSTIN_SERVER_DIR}\plugins\MineGus-1.1-SNAPSHOT.jar`.
+- Lorsqu'une mise à jour du plugin du serveur est demandée, je construis et teste d'abord `target\MineGus-1.1-SNAPSHOT.jar`, puis je déploie cet artefact dans le dossier `plugins` du serveur. Les JAR générés ne sont pas une source et ne doivent pas être commités.
 - Je vérifie les empreintes SHA-256 après la copie. Je ne démarre ou ne redémarre pas le serveur sans demande explicite.

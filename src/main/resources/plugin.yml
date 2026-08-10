@@ -8,6 +8,7 @@ commands:
   army:
     description: Fait apparaître 5 loups + 2 golems
     usage: /army
+    permission: mineplugin.army.use
   garde:
     description: Invoque, renvoie ou inspecte deux gardes royaux
     usage: |
@@ -34,23 +35,26 @@ commands:
   champ:
     description: Crée un champ automatisé (labour, plantation, récolte)
     usage: /champ [Largeur]x[Longueur]
+    permission: mineplugin.champ.use
   foret:
     description: Crée une forêt automatisée (plantation et récolte d’arbres)
     usage: /foret [Largeur]x[Longueur]
     permission: minegus.forester.use
   village:
     description: Génère un petit village de PNJ
-    usage: /village
+    usage: /village [undo]
+    permission: mineplugin.village.use
   eleveur:
     description: Crée un enclos automatisé pour l'élevage
-    usage: /eleveur
+    usage: /eleveur [list|delete <numéro>]
+    permission: mineplugin.eleveur.use
   armure:
     description: Donne l'Armure du roi GIDON
     usage: /armure
+    permission: mineplugin.armure.use
   marchand:
     description: Invoque un marchand PNJ personnalisé
-    usage: /marchand
-    permission: mineplugin.marchand.spawn
+    usage: /marchand [open [joueur]|reload]
   minegus:
     description: Aide rapide et maintenance MineGus
     usage: |
@@ -76,6 +80,30 @@ commands:
     usage: /bucheron [creer|statut|liste|reparer|supprimer|aide]
     permission: minegus.forester.use
 permissions:
+  mineplugin.army.use:
+    description: Invoquer une armée temporaire avec /army
+    default: op
+  mineplugin.champ.use:
+    description: Créer et gérer ses champs automatisés
+    default: op
+  mineplugin.champ.admin:
+    description: Administrer tous les champs automatisés
+    default: op
+  mineplugin.village.use:
+    description: Générer et annuler son village
+    default: op
+  mineplugin.village.admin:
+    description: Annuler le village d'un autre joueur
+    default: op
+  mineplugin.eleveur.use:
+    description: Créer et gérer ses enclos automatisés
+    default: op
+  mineplugin.eleveur.admin:
+    description: Administrer tous les enclos automatisés
+    default: op
+  mineplugin.armure.use:
+    description: Recevoir et activer l'Armure du roi GIDON
+    default: op
   mineplugin.tuto.use:
     description: Lancer et quitter la visite guidée privée (/tuto)
     default: true

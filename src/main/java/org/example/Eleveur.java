@@ -4,6 +4,7 @@ import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
 import org.bukkit.Location;
 import org.bukkit.Material;
+import org.bukkit.NamespacedKey;
 import org.bukkit.World;
 import org.bukkit.block.Block;
 import org.bukkit.block.BlockFace;
@@ -21,6 +22,7 @@ import org.bukkit.entity.ItemFrame;
 import org.bukkit.entity.Player;
 import org.bukkit.entity.Villager;
 import org.bukkit.event.EventHandler;
+import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
 import org.bukkit.event.block.BlockBreakEvent;
 import org.bukkit.event.block.BlockPlaceEvent;
@@ -29,9 +31,11 @@ import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.MerchantRecipe;
 import org.bukkit.inventory.meta.ItemMeta;
+import org.bukkit.persistence.PersistentDataType;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.bukkit.scheduler.BukkitRunnable;
 import org.bukkit.Particle;
+import org.bukkit.util.BoundingBox;
 
 import java.io.File;
 import java.io.FileWriter;
@@ -40,6 +44,7 @@ import java.io.PrintWriter;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
+import java.util.logging.Level;
 
 /**
  * =========================================================
@@ -59,13 +64,27 @@ import java.util.*;
  */
 public final class Eleveur implements CommandExecutor, Listener {
 
-    // Nom du bâton de sélection
-    private static final String RANCH_SELECTOR_NAME = ChatColor.GOLD + "Sélecteur d'élevage";
-
-    // Espèces gérées par l’enclos (chargées depuis la config)
-    private static List<EntityType> MAIN_SPECIES;
+    private static final String USE_PERMISSION = "mineplugin.eleveur.use";
+    private static final String ADMIN_PERMISSION = "mineplugin.eleveur.admin";
+    private static final String RANCH_SELECTOR_NAME =
+            ChatColor.GOLD + "Sélecteur d'élevage";
+    private static final int MIN_SIDE_LENGTH = 8;
+    private static final int MAX_SIDE_LENGTH = 64;
+    private static final int MAX_AREA_BLOCKS = 4096;
+    private static final int MAX_ACTIVE_RANCHES = 32;
+    private static final int MAX_RANCHES_PER_PLAYER = 2;
+    private static final int MAX_SPECIES = 9;
+    private static final List<EntityType> DEFAULT_SPECIES = List.of(
+            EntityType.CHICKEN,
+            EntityType.COW,
+            EntityType.PIG,
+            EntityType.SHEEP,
+            EntityType.RABBIT
+    );
 
     private final JavaPlugin plugin;
+    private final NamespacedKey selectorKey;
+    private final List<EntityType> mainSpecies;
 
     // Liste des sessions actives
     private final List<RanchSession> sessions = new ArrayList<>();
@@ -79,11 +98,8 @@ public final class Eleveur implements CommandExecutor, Listener {
 
     public Eleveur(JavaPlugin plugin) {
         this.plugin = plugin;
-
-        MAIN_SPECIES = plugin.getConfig().getStringList("eleveur.species")
-                .stream()
-                .map(EntityType::valueOf)
-                .toList();
+        this.selectorKey = new NamespacedKey(plugin, "ranch-selector");
+        this.mainSpecies = loadSpecies();
 
         // Lier la commande /eleveur
         if (plugin.getCommand("eleveur") != null) {
@@ -99,48 +115,118 @@ public final class Eleveur implements CommandExecutor, Listener {
 
     }
 
+    /**
+     * Charge les espèces sans permettre qu'une faute de frappe dans config.yml
+     * empêche tout le plugin de démarrer.
+     */
+    private List<EntityType> loadSpecies() {
+        LinkedHashSet<EntityType> species = new LinkedHashSet<>();
+        for (String configured : plugin.getConfig()
+                .getStringList("eleveur.species")) {
+            if (species.size() >= MAX_SPECIES) {
+                plugin.getLogger().warning(
+                        "[Eleveur] Seules les " + MAX_SPECIES
+                                + " premières espèces valides sont utilisées."
+                );
+                break;
+            }
+            try {
+                species.add(EntityType.valueOf(
+                        configured.trim().toUpperCase(Locale.ROOT)
+                ));
+            } catch (IllegalArgumentException failure) {
+                plugin.getLogger().warning(
+                        "[Eleveur] Espèce inconnue ignorée: " + configured
+                );
+            }
+        }
+        if (species.isEmpty()) {
+            plugin.getLogger().warning(
+                    "[Eleveur] Aucune espèce valide; utilisation des valeurs "
+                            + "par défaut."
+            );
+            species.addAll(DEFAULT_SPECIES);
+        }
+        return List.copyOf(species);
+    }
+
     /* ============================================================
      *                 Commande /eleveur
      * ============================================================
      */
     @Override
-    public boolean onCommand(CommandSender sender, Command cmd, String label, String[] args) {
+    public boolean onCommand(
+            CommandSender sender,
+            Command command,
+            String label,
+            String[] args) {
         if (!(sender instanceof Player player)) {
-            sender.sendMessage(ChatColor.RED + "Cette commande doit être exécutée par un joueur.");
+            sender.sendMessage(ChatColor.RED
+                    + "Cette commande doit être exécutée par un joueur.");
             return true;
         }
-        if (!cmd.getName().equalsIgnoreCase("eleveur")) {
+        if (!command.getName().equalsIgnoreCase("eleveur")) {
             return false;
+        }
+        if (!player.hasPermission(USE_PERMISSION)) {
+            player.sendMessage(ChatColor.RED
+                    + "Tu n'as pas la permission d'utiliser /eleveur.");
+            return true;
         }
 
         if (args.length > 0) {
-            switch (args[0].toLowerCase()) {
-                case "list" -> {
+            switch (args[0].toLowerCase(Locale.ROOT)) {
+                case "list", "liste" -> {
                     listSessions(player);
                     return true;
                 }
-                case "delete" -> {
+                case "delete", "supprimer" -> {
                     if (args.length < 2) {
-                        player.sendMessage(ChatColor.RED + "/eleveur delete <id>");
+                        player.sendMessage(ChatColor.RED
+                                + "/eleveur delete <numéro>");
                         return true;
                     }
                     try {
-                        int id = Integer.parseInt(args[1]);
-                        deleteSession(player, id);
-                    } catch (NumberFormatException e) {
-                        player.sendMessage(ChatColor.RED + "Index invalide.");
+                        deleteSession(player, Integer.parseInt(args[1]));
+                    } catch (NumberFormatException failure) {
+                        player.sendMessage(ChatColor.RED + "Numéro invalide.");
                     }
+                    return true;
+                }
+                default -> {
+                    player.sendMessage(ChatColor.RED
+                            + "Sous-commande inconnue: /eleveur [list|delete].");
                     return true;
                 }
             }
         }
 
-        giveRanchSelector(player);
-        // Initialise la sélection
-        selections.put(player.getUniqueId(), new Selection());
+        long owned = sessions.stream()
+                .filter(session -> player.getUniqueId().equals(session.ownerId))
+                .count();
+        if (!player.hasPermission(ADMIN_PERMISSION)
+                && owned >= MAX_RANCHES_PER_PLAYER) {
+            player.sendMessage(ChatColor.RED
+                    + "Tu as déjà atteint la limite de "
+                    + MAX_RANCHES_PER_PLAYER + " enclos.");
+            return true;
+        }
+        /*
+         * La limite globale protège le thread serveur et reste applicable aux
+         * administrateurs. Seule la limite personnelle peut être contournée.
+         */
+        if (sessions.size() >= MAX_ACTIVE_RANCHES) {
+            player.sendMessage(ChatColor.RED
+                    + "Le nombre maximal d'enclos actifs est atteint.");
+            return true;
+        }
 
-        player.sendMessage(ChatColor.GREEN + "Tu as reçu le bâton de sélection d'élevage !");
-        player.sendMessage(ChatColor.YELLOW + "Clique 2 blocs (même hauteur) pour définir l'enclos.");
+        giveRanchSelector(player);
+        selections.put(player.getUniqueId(), new Selection());
+        player.sendMessage(ChatColor.GREEN
+                + "Tu as reçu le bâton de sélection d'élevage !");
+        player.sendMessage(ChatColor.YELLOW
+                + "Clique 2 blocs (même hauteur) pour définir l'enclos.");
         return true;
     }
 
@@ -149,35 +235,75 @@ public final class Eleveur implements CommandExecutor, Listener {
         ItemMeta meta = stick.getItemMeta();
         if (meta != null) {
             meta.setDisplayName(RANCH_SELECTOR_NAME);
+            meta.getPersistentDataContainer().set(
+                    selectorKey,
+                    PersistentDataType.BYTE,
+                    (byte) 1
+            );
             stick.setItemMeta(meta);
         }
-        player.getInventory().addItem(stick);
+        player.getInventory()
+                .addItem(stick)
+                .values()
+                .forEach(leftover -> player.getWorld().dropItemNaturally(
+                        player.getLocation(),
+                        leftover
+                ));
+    }
+
+    private boolean isRanchSelector(ItemStack item) {
+        if (item == null
+                || item.getType() != Material.STICK
+                || !item.hasItemMeta()) {
+            return false;
+        }
+        Byte marker = item.getItemMeta()
+                .getPersistentDataContainer()
+                .get(selectorKey, PersistentDataType.BYTE);
+        return marker != null && marker == (byte) 1;
+    }
+
+    private List<RanchSession> visibleSessions(Player player) {
+        boolean admin = player.hasPermission(ADMIN_PERMISSION);
+        return sessions.stream()
+                .filter(session -> admin
+                        || player.getUniqueId().equals(session.ownerId))
+                .toList();
     }
 
     private void listSessions(Player player) {
-        if (sessions.isEmpty()) {
-            player.sendMessage(ChatColor.YELLOW + "Aucun enclos actif.");
+        List<RanchSession> visible = visibleSessions(player);
+        if (visible.isEmpty()) {
+            player.sendMessage(ChatColor.YELLOW + "Aucun enclos accessible.");
             return;
         }
-        for (int i = 0; i < sessions.size(); i++) {
-            RanchSession rs = sessions.get(i);
-            Location o = rs.getOrigin();
-            String msg = ChatColor.AQUA + "" + i + " : (" + o.getBlockX() + ", "
-                    + o.getBlockY() + ", " + o.getBlockZ() + ")";
-            player.sendMessage(msg);
+        for (int index = 0; index < visible.size(); index++) {
+            RanchSession session = visible.get(index);
+            Location origin = session.getOrigin();
+            player.sendMessage(ChatColor.AQUA
+                    + "#" + (index + 1) + " : "
+                    + origin.getWorld().getName() + " ("
+                    + origin.getBlockX() + ", "
+                    + origin.getBlockY() + ", "
+                    + origin.getBlockZ() + ")");
         }
     }
 
-    private void deleteSession(Player player, int id) {
-        if (id < 0 || id >= sessions.size()) {
-            player.sendMessage(ChatColor.RED + "Index invalide.");
+    private void deleteSession(Player player, int displayedIndex) {
+        List<RanchSession> visible = visibleSessions(player);
+        int index = displayedIndex - 1;
+        if (index < 0 || index >= visible.size()) {
+            player.sendMessage(ChatColor.RED
+                    + "Numéro invalide. Utilise /eleveur list.");
             return;
         }
-        RanchSession rs = sessions.get(id);
-        rs.stop();
-        sessions.remove(id);
+
+        RanchSession session = visible.get(index);
+        session.stop();
+        sessions.remove(session);
         saveAllSessions();
-        player.sendMessage(ChatColor.YELLOW + "Enclos " + id + " supprimé.");
+        player.sendMessage(ChatColor.YELLOW
+                + "Enclos #" + displayedIndex + " désactivé.");
     }
 
     /* ============================================================
@@ -201,16 +327,18 @@ public final class Eleveur implements CommandExecutor, Listener {
         Block clicked = event.getClickedBlock();
         if (clicked == null) return;
 
-        // Vérifier le bâton "Sélecteur d'élevage"
-        if (inHand == null ||
-                inHand.getType() != Material.STICK ||
-                !inHand.hasItemMeta() ||
-                !RANCH_SELECTOR_NAME.equals(inHand.getItemMeta().getDisplayName())) {
+        // Seul le marqueur PDC interne identifie un véritable sélecteur.
+        if (!isRanchSelector(inHand)) {
             return;
         }
 
-        // Empêcher l'action par défaut
         event.setCancelled(true);
+        if (!player.hasPermission(USE_PERMISSION)) {
+            selections.remove(player.getUniqueId());
+            player.sendMessage(ChatColor.RED
+                    + "Tu n'as plus la permission d'utiliser ce sélecteur.");
+            return;
+        }
 
         // Récupérer la sélection
         Selection sel = selections.get(player.getUniqueId());
@@ -239,104 +367,188 @@ public final class Eleveur implements CommandExecutor, Listener {
         return "(" + b.getX() + ", " + b.getY() + ", " + b.getZ() + ")";
     }
 
-    private void validateSelection(Player player, Selection sel) {
-        Block c1 = sel.corner1;
-        Block c2 = sel.corner2;
-        if (c1 == null || c2 == null) return;
-
-        // Vérifier même hauteur
-        if (c1.getY() != c2.getY()) {
-            player.sendMessage(ChatColor.RED + "Les 2 blocs doivent être à la même hauteur !");
-            sel.corner2 = null;
+    private void validateSelection(Player player, Selection selection) {
+        Block corner1 = selection.corner1;
+        Block corner2 = selection.corner2;
+        if (corner1 == null || corner2 == null) {
+            return;
+        }
+        if (!corner1.getWorld().getUID().equals(
+                corner2.getWorld().getUID())) {
+            player.sendMessage(ChatColor.RED
+                    + "Les 2 blocs doivent être dans le même monde !");
+            selection.corner2 = null;
+            return;
+        }
+        if (corner1.getY() != corner2.getY()) {
+            player.sendMessage(ChatColor.RED
+                    + "Les 2 blocs doivent être à la même hauteur !");
+            selection.corner2 = null;
             return;
         }
 
-        // Vérifier même monde
-        if (!c1.getWorld().equals(c2.getWorld())) {
-            player.sendMessage(ChatColor.RED + "Les 2 blocs doivent être dans le même monde !");
-            sel.corner2 = null;
-            return;
-        }
-
-        World w = c1.getWorld();
-        int y = c1.getY();
-        int x1 = c1.getX(), x2 = c2.getX();
-        int z1 = c1.getZ(), z2 = c2.getZ();
-
-        int minX = Math.min(x1, x2);
-        int maxX = Math.max(x1, x2);
-        int minZ = Math.min(z1, z2);
-        int maxZ = Math.max(z1, z2);
-
-        int width  = maxX - minX + 1;
+        World world = corner1.getWorld();
+        int minX = Math.min(corner1.getX(), corner2.getX());
+        int maxX = Math.max(corner1.getX(), corner2.getX());
+        int minZ = Math.min(corner1.getZ(), corner2.getZ());
+        int maxZ = Math.max(corner1.getZ(), corner2.getZ());
+        int width = maxX - minX + 1;
         int length = maxZ - minZ + 1;
 
-        Location origin = new Location(w, minX, y, minZ);
-        RanchSession rs = new RanchSession(plugin, origin, width, length);
-        rs.start();
-        sessions.add(rs);
+        if (!areDimensionsAllowed(width, length)) {
+            player.sendMessage(ChatColor.RED
+                    + "Un enclos doit mesurer entre " + MIN_SIDE_LENGTH
+                    + " et " + MAX_SIDE_LENGTH
+                    + " blocs par côté, sans dépasser "
+                    + MAX_AREA_BLOCKS + " blocs.");
+            selection.corner2 = null;
+            return;
+        }
+        if (!isHeightAllowed(world, corner1.getY())) {
+            player.sendMessage(ChatColor.RED
+                    + "La hauteur choisie ne laisse pas assez d'espace.");
+            selection.corner2 = null;
+            return;
+        }
+        if (sessions.stream().anyMatch(session -> session.overlaps(
+                world,
+                minX,
+                minZ,
+                width,
+                length
+        ))) {
+            player.sendMessage(ChatColor.RED
+                    + "Cette zone chevauche un enclos existant.");
+            selection.corner2 = null;
+            return;
+        }
+        long owned = sessions.stream()
+                .filter(session ->
+                        player.getUniqueId().equals(session.ownerId))
+                .count();
+        if (!player.hasPermission(ADMIN_PERMISSION)
+                && owned >= MAX_RANCHES_PER_PLAYER) {
+            player.sendMessage(ChatColor.RED
+                    + "Tu as déjà atteint la limite de "
+                    + MAX_RANCHES_PER_PLAYER + " enclos.");
+            selections.remove(player.getUniqueId());
+            return;
+        }
+        if (sessions.size() >= MAX_ACTIVE_RANCHES) {
+            player.sendMessage(ChatColor.RED
+                    + "Le nombre maximal d'enclos actifs est atteint.");
+            selections.remove(player.getUniqueId());
+            return;
+        }
 
-        player.sendMessage(ChatColor.GREEN + "Enclos créé (" + width + "×" + length + ") !");
-        saveAllSessions();
+        Location origin = new Location(
+                world,
+                minX,
+                corner1.getY(),
+                minZ
+        );
+        RanchSession session = new RanchSession(
+                plugin,
+                origin,
+                width,
+                length,
+                player.getUniqueId(),
+                mainSpecies
+        );
+        try {
+            session.start();
+            sessions.add(session);
+            saveAllSessions();
+        } catch (RuntimeException failure) {
+            session.stop();
+            plugin.getLogger().log(
+                    Level.SEVERE,
+                    "[Eleveur] Impossible de créer l'enclos de "
+                            + player.getName() + ".",
+                    failure
+            );
+            player.sendMessage(ChatColor.RED
+                    + "L'enclos n'a pas pu être créé. Consulte les logs.");
+            return;
+        }
 
-        // Nettoyer la sélection
+        player.sendMessage(ChatColor.GREEN
+                + "Enclos créé (" + width + "×" + length + ") !");
         selections.remove(player.getUniqueId());
     }
 
+    static boolean areDimensionsAllowed(int width, int length) {
+        if (width < MIN_SIDE_LENGTH || length < MIN_SIDE_LENGTH) {
+            return false;
+        }
+        return width <= MAX_SIDE_LENGTH
+                && length <= MAX_SIDE_LENGTH
+                && (long) width * length <= MAX_AREA_BLOCKS;
+    }
+
+    private static boolean isHeightAllowed(World world, int baseY) {
+        return baseY >= world.getMinHeight()
+                && baseY + 12 < world.getMaxHeight();
+    }
+
     /* ============================================================
-     *        Interception du cassage de bloc (BlockBreakEvent)
+     *        Protection des blocs et des coffres de l'enclos
      * ============================================================
      */
-    @EventHandler
+    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
     public void onBlockBreak(BlockBreakEvent event) {
         Block block = event.getBlock();
-        Player p = event.getPlayer();
+        Player player = event.getPlayer();
 
-        // Protection générale de l'enclos
-        for (RanchSession rs : sessions) {
-            if (rs.isInside(block.getLocation()) && !p.isOp()) {
+        for (RanchSession session : new ArrayList<>(sessions)) {
+            if (!session.isManagedBlock(block)) {
+                continue;
+            }
+            if (!session.canManage(player)) {
                 event.setCancelled(true);
-                p.sendMessage(ChatColor.RED + "Cet enclos est protégé, vous ne pouvez pas modifier ici !");
+                player.sendMessage(ChatColor.RED
+                        + "Cet enclos appartient à un autre joueur.");
                 return;
             }
-        }
 
-        // 1) Interdire le cassage d’un spawner si pas op
-        if (block.getType() == Material.SPAWNER && !p.isOp()) {
-            for (RanchSession rs : sessions) {
-                if (rs.isInside(block.getLocation())) {
-                    event.setCancelled(true);
-                    p.sendMessage(ChatColor.RED + "Ce spawner est protégé, vous ne pouvez pas le casser !");
-                    return;
-                }
-            }
-        }
-
-        // 2) Coffre cassé => remove
-        for (RanchSession rs : new ArrayList<>(sessions)) {
-            if (rs.isChestBlock(block)) {
-                rs.removeChest(block);
-                if (!rs.hasChests()) {
-                    rs.stop();
-                    sessions.remove(rs);
-                    saveAllSessions();
-                }
-                break;
-            }
+            return;
         }
     }
 
-    @EventHandler
-    public void onBlockPlace(BlockPlaceEvent event) {
+    /**
+     * Le suivi des coffres intervient au niveau MONITOR : une protection de
+     * région exécutée après notre contrôle ne peut plus désynchroniser la
+     * sauvegarde de l'enclos avec le bloc réellement présent.
+     */
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    public void onManagedBlockBreakCompleted(BlockBreakEvent event) {
         Block block = event.getBlock();
-        Player p = event.getPlayer();
-
-        for (RanchSession rs : sessions) {
-            if (rs.isInside(block.getLocation()) && !p.isOp()) {
-                event.setCancelled(true);
-                p.sendMessage(ChatColor.RED + "Cet enclos est protégé, vous ne pouvez pas modifier ici !");
-                return;
+        for (RanchSession session : new ArrayList<>(sessions)) {
+            if (!session.isChestBlock(block)) {
+                continue;
             }
+            session.removeChest(block);
+            if (!session.hasChests()) {
+                session.stop();
+                sessions.remove(session);
+                saveAllSessions();
+            }
+            return;
+        }
+    }
+
+    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
+    public void onBlockPlace(BlockPlaceEvent event) {
+        for (RanchSession session : sessions) {
+            if (!session.isManagedBlock(event.getBlock())) {
+                continue;
+            }
+            if (!session.canManage(event.getPlayer())) {
+                event.setCancelled(true);
+                event.getPlayer().sendMessage(ChatColor.RED
+                        + "Cet enclos appartient à un autre joueur.");
+            }
+            return;
         }
     }
 
@@ -346,116 +558,253 @@ public final class Eleveur implements CommandExecutor, Listener {
      */
     public void saveAllSessions() {
         ranchYaml.set("ranches", null);
-        int i = 0;
-        for (RanchSession rs : sessions) {
-            ranchYaml.createSection("ranches." + i, rs.toMap());
-            i++;
+        int index = 0;
+        for (RanchSession session : sessions) {
+            ranchYaml.createSection(
+                    "ranches." + index++,
+                    session.toMap()
+            );
         }
-        try {
-            ranchYaml.save(ranchFile);
-        } catch (IOException e) {
-            e.printStackTrace();
-            plugin.getLogger().severe("[Eleveur] Impossible de sauvegarder ranches.yml !");
-        }
+        YamlFiles.saveAtomically(
+                ranchYaml,
+                ranchFile,
+                plugin.getLogger(),
+                "ranches.yml"
+        );
     }
 
     public void loadSavedSessions() {
-        ConfigurationSection root = ranchYaml.getConfigurationSection("ranches");
-        if (root == null) return;
+        ConfigurationSection root =
+                ranchYaml.getConfigurationSection("ranches");
+        if (root == null) {
+            return;
+        }
 
         int loaded = 0;
         for (String key : root.getKeys(false)) {
-            ConfigurationSection sec = root.getConfigurationSection(key);
-            if (sec == null) continue;
+            if (sessions.size() >= MAX_ACTIVE_RANCHES) {
+                plugin.getLogger().warning(
+                        "[Eleveur] Limite de " + MAX_ACTIVE_RANCHES
+                                + " enclos atteinte pendant le chargement."
+                );
+                break;
+            }
 
-            String worldUID = sec.getString("world", "");
-            World w = Bukkit.getWorld(UUID.fromString(worldUID));
-            if (w == null) {
-                plugin.getLogger().warning("[Eleveur] Monde introuvable : " + worldUID);
+            ConfigurationSection section =
+                    root.getConfigurationSection(key);
+            if (section == null) {
                 continue;
             }
-            int bx = sec.getInt("x");
-            int by = sec.getInt("y");
-            int bz = sec.getInt("z");
-            int width  = sec.getInt("width");
-            int length = sec.getInt("length");
 
-            String vid = sec.getString("villager-id", "");
-            Villager existing = null;
-            if (!vid.isEmpty()) {
-                try {
-                    Entity ent = Bukkit.getEntity(UUID.fromString(vid));
-                    if (ent instanceof Villager v) {
-                        existing = v;
+            try {
+                UUID worldId = parseUuid(section.getString("world"));
+                World world = worldId == null
+                        ? null
+                        : Bukkit.getWorld(worldId);
+                if (world == null) {
+                    plugin.getLogger().warning(
+                            "[Eleveur] Monde invalide ou introuvable pour "
+                                    + "ranches." + key + "."
+                    );
+                    continue;
+                }
+
+                int baseX = section.getInt("x");
+                int baseY = section.getInt("y");
+                int baseZ = section.getInt("z");
+                int width = section.getInt("width");
+                int length = section.getInt("length");
+                if (!areDimensionsAllowed(width, length)
+                        || !isHeightAllowed(world, baseY)) {
+                    plugin.getLogger().warning(
+                            "[Eleveur] Dimensions invalides ignorées pour "
+                                    + "ranches." + key + "."
+                    );
+                    continue;
+                }
+                if (sessions.stream().anyMatch(session -> session.overlaps(
+                        world,
+                        baseX,
+                        baseZ,
+                        width,
+                        length
+                ))) {
+                    plugin.getLogger().warning(
+                            "[Eleveur] Enclos chevauchant ignoré: ranches."
+                                    + key + "."
+                    );
+                    continue;
+                }
+
+                UUID ownerId = parseUuid(section.getString("owner"));
+                Location origin = new Location(
+                        world,
+                        baseX,
+                        baseY,
+                        baseZ
+                );
+                RanchSession session = new RanchSession(
+                        plugin,
+                        origin,
+                        width,
+                        length,
+                        ownerId,
+                        mainSpecies
+                );
+
+                UUID villagerId = parseUuid(
+                        section.getString("villager-id")
+                );
+                if (villagerId != null) {
+                    Entity entity = Bukkit.getEntity(villagerId);
+                    if (entity instanceof Villager villager
+                            && session.contains(villager.getLocation())) {
+                        session.rancher = villager;
                     }
-                } catch (IllegalArgumentException ignored) {}
-            }
+                }
 
-            Location origin = new Location(w, bx, by, bz);
-            if (existing == null) {
-                clearZone(origin, width, length, List.of("Éleveur", "Golem Éleveur"));
-            } else {
-                clearZone(origin, width, length, List.of("Golem Éleveur"));
-            }
+                if (session.rancher == null) {
+                    clearZone(
+                            origin,
+                            width,
+                            length,
+                            List.of("Éleveur", "Golem Éleveur")
+                    );
+                } else {
+                    clearZone(
+                            origin,
+                            width,
+                            length,
+                            List.of("Golem Éleveur")
+                    );
+                }
 
-            RanchSession rs = new RanchSession(plugin, origin, width, length);
-            rs.rancher = existing;
-            // Démarrer l'enclos au tick suivant
-            Bukkit.getScheduler().runTaskLater(plugin, rs::start, 20L);
-            sessions.add(rs);
-            loaded++;
+                sessions.add(session);
+                Bukkit.getScheduler().runTaskLater(plugin, () -> {
+                    try {
+                        session.start();
+                    } catch (RuntimeException failure) {
+                        sessions.remove(session);
+                        session.stop();
+                        plugin.getLogger().log(
+                                Level.SEVERE,
+                                "[Eleveur] Échec du redémarrage d'un enclos.",
+                                failure
+                        );
+                    }
+                }, 20L);
+                loaded++;
+            } catch (RuntimeException failure) {
+                plugin.getLogger().log(
+                        Level.WARNING,
+                        "[Eleveur] Entrée ranches." + key + " ignorée.",
+                        failure
+                );
+            }
         }
-        plugin.getLogger().info("[Eleveur] " + loaded + " enclos rechargé(s).");
+        plugin.getLogger().info(
+                "[Eleveur] " + loaded + " enclos rechargé(s)."
+        );
     }
 
     /**
-     * Nettoie PNJ/golems en double lors d’un reload éventuel.
+     * Nettoie uniquement les entités proches au lieu de parcourir toutes les
+     * entités du monde à chaque redémarrage.
      */
-    private void clearZone(Location origin, int width, int length, List<String> relevantNames) {
-        World w = origin.getWorld();
-        int minX = origin.getBlockX() - 2;
-        int maxX = origin.getBlockX() + width + 2;
-        int minZ = origin.getBlockZ() - 2;
-        int maxZ = origin.getBlockZ() + length + 2;
+    private void clearZone(
+            Location origin,
+            int width,
+            int length,
+            List<String> relevantNames) {
+        World world = Objects.requireNonNull(
+                origin.getWorld(),
+                "origin.world"
+        );
+        BoundingBox bounds = new BoundingBox(
+                origin.getBlockX() - 3,
+                Math.max(world.getMinHeight(), origin.getBlockY() - 4),
+                origin.getBlockZ() - 3,
+                origin.getBlockX() + width + 3,
+                Math.min(world.getMaxHeight(), origin.getBlockY() + 14),
+                origin.getBlockZ() + length + 3
+        );
 
-        // Charger les chunks concernés
-        int minChunkX = minX >> 4;
-        int maxChunkX = maxX >> 4;
-        int minChunkZ = minZ >> 4;
-        int maxChunkZ = maxZ >> 4;
-        for (int cx = minChunkX; cx <= maxChunkX; cx++) {
-            for (int cz = minChunkZ; cz <= maxChunkZ; cz++) {
-                w.getChunkAt(cx, cz).load();
+        for (Entity entity : world.getNearbyEntities(bounds)) {
+            String name = ChatColor.stripColor(entity.getCustomName());
+            if (name != null && relevantNames.contains(name)) {
+                entity.remove();
             }
         }
-
-        // Supprimer PNJ/golems en double
-        w.getEntities().forEach(e -> {
-            String name = ChatColor.stripColor(e.getCustomName());
-            if (name == null) return;
-            if (!relevantNames.contains(name)) return;
-
-            Location l = e.getLocation();
-            int x = l.getBlockX();
-            int z = l.getBlockZ();
-            if (x >= minX && x <= maxX && z >= minZ && z <= maxZ) {
-                e.remove();
-            }
-        });
     }
 
+    /**
+     * API historique conservée. Un enclos créé sans propriétaire ne peut être
+     * administré que par un joueur possédant la permission d'administration.
+     */
     public void createRanch(Location origin, int width, int length) {
-        RanchSession rs = new RanchSession(plugin, origin, width, length);
-        rs.start();
-        sessions.add(rs);
-        saveAllSessions();
+        Objects.requireNonNull(origin, "origin");
+        World world = Objects.requireNonNull(
+                origin.getWorld(),
+                "origin.world"
+        );
+        if (!areDimensionsAllowed(width, length)
+                || !isHeightAllowed(world, origin.getBlockY())) {
+            throw new IllegalArgumentException(
+                    "Dimensions d'enclos invalides."
+            );
+        }
+        if (sessions.size() >= MAX_ACTIVE_RANCHES) {
+            throw new IllegalStateException(
+                    "Limite globale d'enclos atteinte."
+            );
+        }
+        if (sessions.stream().anyMatch(session -> session.overlaps(
+                world,
+                origin.getBlockX(),
+                origin.getBlockZ(),
+                width,
+                length
+        ))) {
+            throw new IllegalArgumentException(
+                    "La zone chevauche un enclos existant."
+            );
+        }
+
+        RanchSession session = new RanchSession(
+                plugin,
+                origin,
+                width,
+                length,
+                null,
+                mainSpecies
+        );
+        try {
+            session.start();
+            sessions.add(session);
+            saveAllSessions();
+        } catch (RuntimeException failure) {
+            session.stop();
+            throw failure;
+        }
     }
 
     public void stopAllRanches() {
-        for (RanchSession rs : sessions) {
-            rs.stop();
+        for (RanchSession session : sessions) {
+            session.stop();
         }
         sessions.clear();
+        selections.clear();
+    }
+
+    private static UUID parseUuid(String value) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        try {
+            return UUID.fromString(value);
+        } catch (IllegalArgumentException ignored) {
+            return null;
+        }
     }
 
     /* ============================================================
@@ -467,12 +816,15 @@ public final class Eleveur implements CommandExecutor, Listener {
         private final World world;
         private final int baseX, baseY, baseZ;
         private final int width, length;
+        private final UUID ownerId;
+        private final List<EntityType> species;
 
         private Villager rancher;
         private final List<Golem> golems = new ArrayList<>();
         private final List<Block> chestBlocks = new ArrayList<>();
 
         private BukkitRunnable ranchTask;
+        private BukkitRunnable groundTask;
 
         // Délai de boucle de la tâche principale
         private int ranchLoopPeriodTicks;
@@ -502,41 +854,77 @@ public final class Eleveur implements CommandExecutor, Listener {
         // Fichier de log pour les enclos
         private final File logFile;
 
-        RanchSession(JavaPlugin plugin, Location origin, int width, int length) {
+        RanchSession(
+                JavaPlugin plugin,
+                Location origin,
+                int width,
+                int length,
+                UUID ownerId,
+                List<EntityType> species) {
             this.plugin = plugin;
-            this.ranchLoopPeriodTicks = plugin.getConfig()
+            int configuredPeriod = plugin.getConfig()
                     .getInt("eleveur.villager-restock-ticks", 40);
-            this.world = origin.getWorld();
+            /*
+             * Bukkit refuse une période nulle. La borne haute évite aussi un
+             * débordement du compteur de réapprovisionnement.
+             */
+            this.ranchLoopPeriodTicks = Math.max(
+                    20,
+                    Math.min(20 * 60 * 60, configuredPeriod)
+            );
+            this.world = Objects.requireNonNull(
+                    origin.getWorld(),
+                    "origin.world"
+            );
             this.baseX = origin.getBlockX();
             this.baseY = origin.getBlockY();
             this.baseZ = origin.getBlockZ();
             this.width = width;
             this.length = length;
-            this.logFile = new File(plugin.getDataFolder(), "ranches.log");
+            this.ownerId = ownerId;
+            this.species = List.copyOf(species);
+            this.logFile = new File(
+                    plugin.getDataFolder(),
+                    "ranches.log"
+            );
         }
 
         public void start() {
+            if (ranchTask != null) {
+                ranchTask.cancel();
+                ranchTask = null;
+            }
+            if (groundTask != null) {
+                groundTask.cancel();
+                groundTask = null;
+            }
+            chestBlocks.clear();
+
             buildWalls();
             buildGround();
-            applyPath();   // Chemin central
+            applyPath();
             ensureCampfire();
-            buildRoof();   // Petit toit décoratif
-
+            buildRoof();
             placeChests();
             placeSpawners();
-
             spawnOrRespawnRancher();
             spawnOrRespawnGolems();
-
             runRanchLoop();
 
-            logEvent("Enclos démarré en " + world.getName() + " (" + baseX + "," + baseY + "," + baseZ + ")");
+            logEvent(
+                    "Enclos démarré en " + world.getName()
+                            + " (" + baseX + "," + baseY + "," + baseZ + ")"
+            );
         }
 
         public void stop() {
             if (ranchTask != null) {
                 ranchTask.cancel();
                 ranchTask = null;
+            }
+            if (groundTask != null) {
+                groundTask.cancel();
+                groundTask = null;
             }
             if (rancher != null && !rancher.isDead()) {
                 rancher.remove();
@@ -552,16 +940,71 @@ public final class Eleveur implements CommandExecutor, Listener {
         }
 
         /**
-         * Détermine si une location est à l'intérieur (X, Z + 10 blocs de hauteur).
+         * Détermine si une entité se trouve dans le volume intérieur.
          */
-        public boolean isInside(Location loc) {
-            if (loc.getWorld() == null || !loc.getWorld().equals(world)) return false;
-            int x = loc.getBlockX();
-            int y = loc.getBlockY();
-            int z = loc.getBlockZ();
-            if (x < baseX || x >= baseX + width) return false;
-            if (z < baseZ || z >= baseZ + length) return false;
-            return (y >= baseY && y <= baseY + 10);
+        boolean contains(Location location) {
+            if (location.getWorld() == null
+                    || !location.getWorld().getUID().equals(world.getUID())) {
+                return false;
+            }
+            int x = location.getBlockX();
+            int y = location.getBlockY();
+            int z = location.getBlockZ();
+            return x >= baseX
+                    && x < baseX + width
+                    && z >= baseZ
+                    && z < baseZ + length
+                    && y >= baseY
+                    && y <= baseY + 10;
+        }
+
+        boolean isManagedBlock(Block block) {
+            if (!block.getWorld().getUID().equals(world.getUID())) {
+                return false;
+            }
+            if (isChestBlock(block)) {
+                return true;
+            }
+
+            int x = block.getX();
+            int y = block.getY();
+            int z = block.getZ();
+            return x >= baseX - 2
+                    && x <= baseX + width + 1
+                    && z >= baseZ - 2
+                    && z <= baseZ + length + 1
+                    && y >= baseY
+                    && y <= baseY + 12;
+        }
+
+        boolean canManage(Player player) {
+            return player.hasPermission(ADMIN_PERMISSION)
+                    || ownerId != null
+                    && ownerId.equals(player.getUniqueId());
+        }
+
+        boolean overlaps(
+                World candidateWorld,
+                int candidateX,
+                int candidateZ,
+                int candidateWidth,
+                int candidateLength) {
+            if (!candidateWorld.getUID().equals(world.getUID())) {
+                return false;
+            }
+
+            int thisMinX = baseX - 2;
+            int thisMaxX = baseX + width + 1;
+            int thisMinZ = baseZ - 2;
+            int thisMaxZ = baseZ + length + 1;
+            int otherMinX = candidateX - 2;
+            int otherMaxX = candidateX + candidateWidth + 1;
+            int otherMinZ = candidateZ - 2;
+            int otherMaxZ = candidateZ + candidateLength + 1;
+            return thisMinX <= otherMaxX
+                    && thisMaxX >= otherMinX
+                    && thisMinZ <= otherMaxZ
+                    && thisMaxZ >= otherMinZ;
         }
 
         /* ========================================================
@@ -640,37 +1083,104 @@ public final class Eleveur implements CommandExecutor, Listener {
             else if (z == baseZ)            inward = BlockFace.SOUTH;
             else                             inward = BlockFace.NORTH;
 
-            Location frameLoc = gateBlock.getLocation().add(0.5, 0.5, 0.5);
-            ItemFrame frame = world.spawn(frameLoc, ItemFrame.class);
+            Location frameLocation = gateBlock.getLocation()
+                    .add(0.5, 0.5, 0.5);
+            ItemFrame frame = world.getNearbyEntities(
+                            frameLocation,
+                            0.45,
+                            0.45,
+                            0.45
+                    ).stream()
+                    .filter(ItemFrame.class::isInstance)
+                    .map(ItemFrame.class::cast)
+                    .findFirst()
+                    .orElseGet(() -> world.spawn(
+                            frameLocation,
+                            ItemFrame.class
+                    ));
+            /*
+             * La réutilisation évite de dupliquer quatre entités à chaque
+             * reload. Le cadre est décoratif et ne doit pas être décroché.
+             */
             frame.setFacingDirection(inward, true);
-            frame.setItem(new ItemStack(Material.ARROW));
+            frame.setItem(new ItemStack(Material.ARROW), false);
+            frame.setFixed(true);
+            frame.setInvulnerable(true);
+            frame.setPersistent(true);
         }
 
         private void buildGround() {
-            List<Block> replaced = new ArrayList<>();
+            /*
+             * Le chemin central et son feu de camp sont construits juste après
+             * cette méthode. Ils sont donc exclus de la file afin que la tâche
+             * différée ne les remplace jamais par de l'herbe.
+             */
+            int pathCenterZ = length / 2;
+            record GroundReplacement(Block block, Material originalType) {}
+            Deque<GroundReplacement> pending = new ArrayDeque<>();
+
             for (int dx = 0; dx < width; dx++) {
                 for (int dz = 0; dz < length; dz++) {
-                    Block b = world.getBlockAt(baseX + dx, baseY, baseZ + dz);
-                    if (b.getType() != Material.GRASS_BLOCK) {
-                        b.setType(Material.DIRT);
-                        replaced.add(b);
+                    if (Math.abs(dz - pathCenterZ) <= 1) {
+                        continue;
+                    }
+
+                    Block block = world.getBlockAt(
+                            baseX + dx,
+                            baseY,
+                            baseZ + dz
+                    );
+                    if (block.getType() != Material.GRASS_BLOCK) {
+                        pending.addLast(new GroundReplacement(
+                                block,
+                                block.getType()
+                        ));
                     }
                 }
             }
 
-            if (!replaced.isEmpty()) {
-                new BukkitRunnable() {
-                    @Override
-                    public void run() {
-                        for (Block b : replaced) {
-                            b.setType(Material.GRASS_BLOCK);
-                            world.spawnParticle(Particle.HAPPY_VILLAGER,
-                                    b.getLocation().add(0.5, 1, 0.5),
-                                    5, 0.2, 0.2, 0.2);
+            if (pending.isEmpty()) {
+                return;
+            }
+
+            /*
+             * La conversion est étalée pour ne pas envoyer plusieurs milliers
+             * de mises à jour de blocs et de particules sur un seul tick. Le
+             * type d'origine empêche aussi d'écraser une modification effectuée
+             * après la sélection, même par un administrateur.
+             */
+            groundTask = new BukkitRunnable() {
+                private int converted;
+
+                @Override
+                public void run() {
+                    int budget = 64;
+                    while (budget-- > 0 && !pending.isEmpty()) {
+                        GroundReplacement replacement = pending.removeFirst();
+                        Block block = replacement.block();
+                        if (block.getType() != replacement.originalType()) {
+                            continue;
+                        }
+
+                        block.setType(Material.GRASS_BLOCK, false);
+                        if ((converted++ & 7) == 0) {
+                            world.spawnParticle(
+                                    Particle.HAPPY_VILLAGER,
+                                    block.getLocation().add(0.5, 1, 0.5),
+                                    1,
+                                    0.2,
+                                    0.2,
+                                    0.2
+                            );
                         }
                     }
-                }.runTaskLater(plugin, 40L);
-            }
+                    if (pending.isEmpty()) {
+                        cancel();
+                        groundTask = null;
+                    }
+                }
+            };
+            groundTask.runTaskTimer(plugin, 1L, 1L);
         }
 
         /**
@@ -754,17 +1264,50 @@ public final class Eleveur implements CommandExecutor, Listener {
         private void placeSpawners() {
             int centerX = baseX + width / 2;
             int centerZ = baseZ + length / 2;
-            int[][] offsets = {{0,0}, {1,0}, {0,1}, {1,1}};
-            int i = 0;
-            for (EntityType type : MAIN_SPECIES) {
-                if (i >= offsets.length) break;
-                int[] off = offsets[i++];
-                Location spawnerLoc = new Location(world, centerX + off[0], baseY + 1, centerZ + off[1]);
-                setBlock(spawnerLoc.getBlockX(), spawnerLoc.getBlockY(), spawnerLoc.getBlockZ(), Material.SPAWNER);
+            /*
+             * Le centre reste réservé au feu de camp. Neuf positions bornées
+             * permettent de prendre en charge toutes les espèces validées.
+             */
+            int[][] offsets = {
+                    {-2, -2}, {0, -2}, {2, -2},
+                    {-2, 0},           {2, 0},
+                    {-2, 2},  {0, 2},  {2, 2},
+                    {0, 3}
+            };
 
-                if (spawnerLoc.getBlock().getState() instanceof CreatureSpawner cs) {
-                    cs.setSpawnedType(type);
-                    cs.update();
+            for (int index = 0;
+                    index < species.size() && index < offsets.length;
+                    index++) {
+                EntityType type = species.get(index);
+                int[] offset = offsets[index];
+                Location location = new Location(
+                        world,
+                        centerX + offset[0],
+                        baseY + 1,
+                        centerZ + offset[1]
+                );
+                setBlock(
+                        location.getBlockX(),
+                        location.getBlockY(),
+                        location.getBlockZ(),
+                        Material.SPAWNER
+                );
+
+                if (location.getBlock().getState()
+                        instanceof CreatureSpawner spawner) {
+                    try {
+                        spawner.setSpawnedType(type);
+                        spawner.update(true, false);
+                    } catch (RuntimeException failure) {
+                        location.getBlock().setType(Material.AIR, false);
+                        plugin.getLogger().log(
+                                Level.WARNING,
+                                "[Eleveur] L'espèce " + type
+                                        + " ne peut pas être utilisée dans "
+                                        + "un spawner.",
+                                failure
+                        );
+                    }
                 }
             }
         }
@@ -798,8 +1341,18 @@ public final class Eleveur implements CommandExecutor, Listener {
             List<MerchantRecipe> result = new ArrayList<>();
 
             // 1) boucle sur les viandes — raw
-            int rawPrice  = plugin.getConfig().getInt("eleveur.emerald-price.raw-stack",1);
-            int cookPrice = plugin.getConfig().getInt("eleveur.emerald-price.cook-stack",2);
+            int rawPrice = clampEmeraldPrice(
+                    plugin.getConfig().getInt(
+                            "eleveur.emerald-price.raw-stack",
+                            1
+                    )
+            );
+            int cookPrice = clampEmeraldPrice(
+                    plugin.getConfig().getInt(
+                            "eleveur.emerald-price.cook-stack",
+                            2
+                    )
+            );
 
             record Meat(Material raw, Material cook) {}
             List<Meat> meats = List.of(
@@ -822,12 +1375,20 @@ public final class Eleveur implements CommandExecutor, Listener {
             v.setRecipes(result);
         }
 
-        /*  utilitaire privé juste après la méthode ci‑dessus  */
-        private MerchantRecipe stackForEmerald(int emeraldCost, ItemStack stack) {
-            MerchantRecipe r = new MerchantRecipe(stack, 999_999);
-            r.addIngredient(new ItemStack(Material.EMERALD, emeraldCost));
-            r.setExperienceReward(false);
-            return r;
+        private int clampEmeraldPrice(int configuredPrice) {
+            return Math.max(1, Math.min(64, configuredPrice));
+        }
+
+        private MerchantRecipe stackForEmerald(
+                int emeraldCost,
+                ItemStack stack) {
+            MerchantRecipe recipe = new MerchantRecipe(stack, 999_999);
+            recipe.addIngredient(new ItemStack(
+                    Material.EMERALD,
+                    clampEmeraldPrice(emeraldCost)
+            ));
+            recipe.setExperienceReward(false);
+            return recipe;
         }
 
 
@@ -886,16 +1447,29 @@ public final class Eleveur implements CommandExecutor, Listener {
          * À chaque boucle, on vide l’inventaire du PNJ boucher dans les coffres.
          */
         private void transferPNJInventory() {
-            if (rancher == null) return;
-            Inventory inv = rancher.getInventory();
-            if (Arrays.stream(inv.getContents()).allMatch(Objects::isNull)) return;
+            if (rancher == null) {
+                return;
+            }
+            Inventory inventory = rancher.getInventory();
 
-            for (ItemStack stack : inv.getContents()) {
-                if (stack == null) continue;
+            /*
+             * Inventory#remove(ItemStack) peut retirer plusieurs piles
+             * identiques. Le traitement par emplacement garantit qu'une pile
+             * déposée correspond exactement à une pile retirée.
+             */
+            for (int slot = 0; slot < inventory.getSize(); slot++) {
+                ItemStack stack = inventory.getItem(slot);
+                if (stack == null || stack.getType().isAir()) {
+                    continue;
+                }
+
                 ItemStack leftover = depositOneStack(stack.clone());
-                inv.remove(stack);
-                if (leftover != null) {
-                    world.dropItemNaturally(rancher.getLocation(), leftover);
+                inventory.setItem(slot, null);
+                if (leftover != null && leftover.getAmount() > 0) {
+                    world.dropItemNaturally(
+                            rancher.getLocation(),
+                            leftover
+                    );
                 }
             }
         }
@@ -997,7 +1571,7 @@ public final class Eleveur implements CommandExecutor, Listener {
          *   Persistance
          * ========================================================
          */
-        public Map<String, Object> toMap() {
+        Map<String, Object> toMap() {
             Map<String, Object> map = new LinkedHashMap<>();
             map.put("world", world.getUID().toString());
             map.put("x", baseX);
@@ -1005,7 +1579,15 @@ public final class Eleveur implements CommandExecutor, Listener {
             map.put("z", baseZ);
             map.put("width", width);
             map.put("length", length);
-            map.put("villager-id", rancher != null ? rancher.getUniqueId().toString() : "");
+            if (ownerId != null) {
+                map.put("owner", ownerId.toString());
+            }
+            map.put(
+                    "villager-id",
+                    rancher != null
+                            ? rancher.getUniqueId().toString()
+                            : ""
+            );
             return map;
         }
 

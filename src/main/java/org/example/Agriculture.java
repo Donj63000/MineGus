@@ -4,6 +4,7 @@ import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
 import org.bukkit.Location;
 import org.bukkit.Material;
+import org.bukkit.NamespacedKey;
 import org.bukkit.World;
 import org.bukkit.block.Block;
 import org.bukkit.block.Chest;
@@ -17,18 +18,22 @@ import org.bukkit.entity.EntityType;
 import org.bukkit.entity.Player;
 import org.bukkit.entity.Villager;
 import org.bukkit.event.EventHandler;
+import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
 import org.bukkit.event.block.BlockBreakEvent;
+import org.bukkit.event.block.BlockPlaceEvent;
 import org.bukkit.event.player.PlayerInteractEvent;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.meta.ItemMeta;
+import org.bukkit.persistence.PersistentDataType;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.bukkit.scheduler.BukkitRunnable;
+import org.bukkit.util.BoundingBox;
 
 import java.io.File;
-import java.io.IOException;
 import java.util.*;
 import java.util.concurrent.ThreadLocalRandom;
+import java.util.logging.Level;
 
 /**
  * Commande /champ
@@ -41,7 +46,17 @@ import java.util.concurrent.ThreadLocalRandom;
  */
 public final class Agriculture implements CommandExecutor, Listener {
 
+    private static final String USE_PERMISSION = "mineplugin.champ.use";
+    private static final String ADMIN_PERMISSION = "mineplugin.champ.admin";
+    private static final int MIN_SIDE_LENGTH = 3;
+    private static final int MAX_SIDE_LENGTH = 64;
+    private static final int MAX_AREA_BLOCKS = 4096;
+    private static final int MAX_ACTIVE_FIELDS = 64;
+    private static final int MAX_FIELDS_PER_PLAYER = 4;
+    private static final int MAX_CHESTS_PER_CORNER = 6;
+
     private final JavaPlugin plugin;
+    private final NamespacedKey selectorKey;
     private final List<FieldSession> sessions = new ArrayList<>();
 
     // Fichier de persistance
@@ -60,6 +75,7 @@ public final class Agriculture implements CommandExecutor, Listener {
 
     public Agriculture(JavaPlugin plugin) {
         this.plugin = plugin;
+        this.selectorKey = new NamespacedKey(plugin, "champ-selector");
 
         // Lie la commande /champ à cette classe
         if (plugin.getCommand("champ") != null) {
@@ -91,6 +107,28 @@ public final class Agriculture implements CommandExecutor, Listener {
         if (!cmd.getName().equalsIgnoreCase("champ")) {
             return false;
         }
+        if (!player.hasPermission(USE_PERMISSION)) {
+            player.sendMessage(ChatColor.RED
+                    + "Tu n'as pas la permission d'utiliser /champ.");
+            return true;
+        }
+        /*
+         * La limite globale protège le thread serveur et ne doit jamais être
+         * contournable, même par un administrateur.
+         */
+        if (sessions.size() >= MAX_ACTIVE_FIELDS) {
+            player.sendMessage(ChatColor.RED
+                    + "Le nombre maximal de champs actifs est atteint.");
+            return true;
+        }
+        long owned = countOwnedFields(player.getUniqueId());
+        if (!player.hasPermission(ADMIN_PERMISSION)
+                && owned >= MAX_FIELDS_PER_PLAYER) {
+            player.sendMessage(ChatColor.RED
+                    + "Tu as déjà atteint la limite de "
+                    + MAX_FIELDS_PER_PLAYER + " champs.");
+            return true;
+        }
 
         // Donne le bâton spécial
         giveChampSelector(player);
@@ -111,9 +149,20 @@ public final class Agriculture implements CommandExecutor, Listener {
         ItemMeta meta = stick.getItemMeta();
         if (meta != null) {
             meta.setDisplayName(CHAMP_SELECTOR_NAME);
+            meta.getPersistentDataContainer().set(
+                    selectorKey,
+                    PersistentDataType.BYTE,
+                    (byte) 1
+            );
             stick.setItemMeta(meta);
         }
-        player.getInventory().addItem(stick);
+        player.getInventory()
+                .addItem(stick)
+                .values()
+                .forEach(leftover -> player.getWorld().dropItemNaturally(
+                        player.getLocation(),
+                        leftover
+                ));
     }
 
     /* =========================================================== */
@@ -133,19 +182,19 @@ public final class Agriculture implements CommandExecutor, Listener {
 
         if (clickedBlock == null) return;
 
-        // Vérifie si c'est le bâton "Sélecteur de champ"
-        if (itemInHand == null || itemInHand.getType() != Material.STICK) {
-            return;
-        }
-        if (!itemInHand.hasItemMeta()) {
-            return;
-        }
-        if (!CHAMP_SELECTOR_NAME.equals(itemInHand.getItemMeta().getDisplayName())) {
+        // Vérifie le marqueur interne du véritable sélecteur.
+        if (!isChampSelector(itemInHand)) {
             return;
         }
 
         // Empêche l'action par défaut
         event.setCancelled(true);
+        if (!player.hasPermission(USE_PERMISSION)) {
+            selections.remove(player.getUniqueId());
+            player.sendMessage(ChatColor.RED
+                    + "Tu n'as plus la permission d'utiliser ce sélecteur.");
+            return;
+        }
 
         // Récupère la sélection pour ce joueur
         Selection sel = selections.get(player.getUniqueId());
@@ -176,8 +225,22 @@ public final class Agriculture implements CommandExecutor, Listener {
         return "(" + b.getX() + ", " + b.getY() + ", " + b.getZ() + ")";
     }
 
+    private boolean isChampSelector(ItemStack item) {
+        if (item == null
+                || item.getType() != Material.STICK
+                || !item.hasItemMeta()) {
+            return false;
+        }
+        Byte marker = item.getItemMeta()
+                .getPersistentDataContainer()
+                .get(selectorKey, PersistentDataType.BYTE);
+        return marker != null && marker == (byte) 1;
+    }
+
     /**
-     * Vérifie la même hauteur, crée la session du champ.
+     * Valide la sélection avant toute écriture de blocs. Les limites empêchent
+     * qu'une commande déclenche des milliers de chargements de chunks ou une
+     * boucle synchrone démesurée sur le thread principal.
      */
     private void validateSelection(Player player, Selection sel) {
         Block c1 = sel.getCorner1();
@@ -185,59 +248,186 @@ public final class Agriculture implements CommandExecutor, Listener {
         if (c1 == null || c2 == null) {
             return;
         }
+        if (!c1.getWorld().getUID().equals(c2.getWorld().getUID())) {
+            player.sendMessage(ChatColor.RED
+                    + "Les 2 blocs doivent être dans le même monde !");
+            sel.setCorner2(null);
+            return;
+        }
         if (c1.getY() != c2.getY()) {
-            player.sendMessage(ChatColor.RED + "Les 2 blocs doivent être à la même hauteur !");
+            player.sendMessage(ChatColor.RED
+                    + "Les 2 blocs doivent être à la même hauteur !");
             sel.setCorner2(null);
             return;
         }
 
-        World w = c1.getWorld();
-        int x1 = c1.getX();
-        int x2 = c2.getX();
-        int z1 = c1.getZ();
-        int z2 = c2.getZ();
-        int y  = c1.getY();
+        World world = c1.getWorld();
+        int minX = Math.min(c1.getX(), c2.getX());
+        int maxX = Math.max(c1.getX(), c2.getX());
+        int minZ = Math.min(c1.getZ(), c2.getZ());
+        int maxZ = Math.max(c1.getZ(), c2.getZ());
+        int width = maxX - minX + 1;
+        int length = maxZ - minZ + 1;
 
-        int minX = Math.min(x1, x2);
-        int maxX = Math.max(x1, x2);
-        int minZ = Math.min(z1, z2);
-        int maxZ = Math.max(z1, z2);
+        if (!areDimensionsAllowed(width, length)) {
+            player.sendMessage(ChatColor.RED
+                    + "Un champ doit mesurer entre " + MIN_SIDE_LENGTH
+                    + " et " + MAX_SIDE_LENGTH
+                    + " blocs par côté, sans dépasser "
+                    + MAX_AREA_BLOCKS + " blocs.");
+            sel.setCorner2(null);
+            return;
+        }
+        if (!isHeightAllowed(world, c1.getY())) {
+            player.sendMessage(ChatColor.RED
+                    + "La hauteur choisie ne laisse pas assez d'espace au champ.");
+            sel.setCorner2(null);
+            return;
+        }
+        if (sessions.stream().anyMatch(session ->
+                session.overlaps(world, minX, minZ, width, length))) {
+            player.sendMessage(ChatColor.RED
+                    + "Cette zone chevauche un champ existant.");
+            sel.setCorner2(null);
+            return;
+        }
+        if (sessions.size() >= MAX_ACTIVE_FIELDS) {
+            player.sendMessage(ChatColor.RED
+                    + "Le nombre maximal de champs actifs est atteint.");
+            selections.remove(player.getUniqueId());
+            return;
+        }
+        long owned = countOwnedFields(player.getUniqueId());
+        if (!player.hasPermission(ADMIN_PERMISSION)
+                && owned >= MAX_FIELDS_PER_PLAYER) {
+            player.sendMessage(ChatColor.RED
+                    + "Tu as déjà atteint la limite de "
+                    + MAX_FIELDS_PER_PLAYER + " champs.");
+            selections.remove(player.getUniqueId());
+            return;
+        }
 
-        int width  = (maxX - minX) + 1;
-        int length = (maxZ - minZ) + 1;
+        Location origin = new Location(world, minX, c1.getY(), minZ);
+        FieldSession session = new FieldSession(
+                plugin,
+                origin,
+                width,
+                length,
+                player.getUniqueId()
+        );
+        try {
+            session.start();
+            sessions.add(session);
+            saveAllSessions();
+        } catch (RuntimeException failure) {
+            session.stop();
+            plugin.getLogger().log(
+                    Level.SEVERE,
+                    "[Agriculture] Impossible de créer le champ de "
+                            + player.getName() + ".",
+                    failure
+            );
+            player.sendMessage(ChatColor.RED
+                    + "Le champ n'a pas pu être créé. Consulte les logs serveur.");
+            return;
+        }
 
-        Location origin = new Location(w, minX, y, minZ);
-        FieldSession fs = new FieldSession(plugin, origin, width, length);
-        fs.start();
-        sessions.add(fs);
-
-        player.sendMessage(ChatColor.GREEN + "Champ créé (" + width + "×" + length + ") !");
-        saveAllSessions();
-
-        // On retire la sélection
+        player.sendMessage(ChatColor.GREEN
+                + "Champ créé (" + width + "×" + length + ") !");
         selections.remove(player.getUniqueId());
     }
 
+    static boolean areDimensionsAllowed(int width, int length) {
+        if (width < MIN_SIDE_LENGTH || length < MIN_SIDE_LENGTH) {
+            return false;
+        }
+        return width <= MAX_SIDE_LENGTH
+                && length <= MAX_SIDE_LENGTH
+                && (long) width * length <= MAX_AREA_BLOCKS;
+    }
+
+    /**
+     * Calcule une rangée de coffres qui ne peut pas rejoindre celle du coin
+     * opposé. Les petits champs historiques restent donc compatibles sans
+     * créer deux références vers le même coffre.
+     */
+    static int chestCountPerCorner(int width) {
+        if (width < MIN_SIDE_LENGTH) {
+            return 0;
+        }
+        return (int) Math.min(
+                MAX_CHESTS_PER_CORNER,
+                ((long) width + 4L) / 2L
+        );
+    }
+
+    private long countOwnedFields(UUID ownerId) {
+        return sessions.stream()
+                .filter(session -> ownerId.equals(session.ownerId))
+                .count();
+    }
+
+    private static boolean isHeightAllowed(World world, int baseY) {
+        return baseY - 1 >= world.getMinHeight()
+                && baseY + 2 < world.getMaxHeight();
+    }
+
     /* =========================================================== */
-    /*               ÉVÉNEMENT : BlockBreakEvent (coffres)         */
+    /*             PROTECTION DES STRUCTURES ET DES COFFRES        */
     /* =========================================================== */
-    @EventHandler
+    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
     public void onBlockBreak(BlockBreakEvent event) {
         Block block = event.getBlock();
+        Player player = event.getPlayer();
 
-        // On vérifie si c'est un coffre d'une session
-        for (FieldSession fs : new ArrayList<>(sessions)) {
-            if (fs.isChest(block)) {
-                fs.removeChest(block);
-
-                // S'il n'y a plus de coffres => on arrête la session
-                if (!fs.hasChests()) {
-                    fs.stop();
-                    sessions.remove(fs);
-                    saveAllSessions();
-                }
-                break; // on peut s'arrêter
+        for (FieldSession session : new ArrayList<>(sessions)) {
+            if (!session.isManagedBlock(block)) {
+                continue;
             }
+            if (!session.canManage(player)) {
+                event.setCancelled(true);
+                player.sendMessage(ChatColor.RED
+                        + "Ce champ appartient à un autre joueur.");
+                return;
+            }
+
+            return;
+        }
+    }
+
+    /**
+     * Met à jour la session uniquement lorsque tous les autres plugins ont
+     * définitivement accepté la casse du coffre.
+     */
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    public void onManagedBlockBreakCompleted(BlockBreakEvent event) {
+        Block block = event.getBlock();
+        for (FieldSession session : new ArrayList<>(sessions)) {
+            if (!session.isChest(block)) {
+                continue;
+            }
+            session.removeChest(block);
+            if (!session.hasChests()) {
+                session.stop();
+                sessions.remove(session);
+                saveAllSessions();
+            }
+            return;
+        }
+    }
+
+    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
+    public void onBlockPlace(BlockPlaceEvent event) {
+        for (FieldSession session : sessions) {
+            if (!session.isManagedBlock(event.getBlock())) {
+                continue;
+            }
+            if (!session.canManage(event.getPlayer())) {
+                event.setCancelled(true);
+                event.getPlayer().sendMessage(ChatColor.RED
+                        + "Ce champ appartient à un autre joueur.");
+            }
+            return;
         }
     }
 
@@ -246,95 +436,203 @@ public final class Agriculture implements CommandExecutor, Listener {
     /* =========================================================== */
     public void saveAllSessions() {
         farmsYaml.set("farms", null);
-        int i = 0;
-        for (FieldSession fs : sessions) {
-            farmsYaml.createSection("farms." + i, fs.toMap());
-            i++;
+        int index = 0;
+        for (FieldSession session : sessions) {
+            farmsYaml.createSection("farms." + index++, session.toMap());
         }
-        try {
-            farmsYaml.save(farmsFile);
-        } catch (IOException e) {
-            e.printStackTrace();
-            plugin.getLogger().severe("Impossible de sauvegarder farms.yml !");
-        }
+        YamlFiles.saveAtomically(
+                farmsYaml,
+                farmsFile,
+                plugin.getLogger(),
+                "farms.yml"
+        );
     }
 
     public void loadSavedSessions() {
         ConfigurationSection root = farmsYaml.getConfigurationSection("farms");
-        if (root == null) return;
+        if (root == null) {
+            return;
+        }
 
         int loaded = 0;
         for (String key : root.getKeys(false)) {
-            ConfigurationSection sec = root.getConfigurationSection(key);
-            if (sec == null) continue;
+            if (sessions.size() >= MAX_ACTIVE_FIELDS) {
+                plugin.getLogger().warning(
+                        "[Agriculture] Limite de " + MAX_ACTIVE_FIELDS
+                                + " champs atteinte pendant le chargement."
+                );
+                break;
+            }
 
-            String worldId = sec.getString("world", "");
-            World w = Bukkit.getWorld(UUID.fromString(worldId));
-            if (w == null) {
-                plugin.getLogger().warning("[Agriculture] Monde introuvable: " + worldId);
+            ConfigurationSection section = root.getConfigurationSection(key);
+            if (section == null) {
                 continue;
             }
-            int bx = sec.getInt("x");
-            int by = sec.getInt("y");
-            int bz = sec.getInt("z");
-            int width  = sec.getInt("width");
-            int length = sec.getInt("length");
 
-            Location origin = new Location(w, bx, by, bz);
-            clearZone(origin, width, length,
-                    List.of("Agriculteur", "Garde du champ"));
+            try {
+                UUID worldId = parseUuid(section.getString("world"));
+                World world = worldId == null ? null : Bukkit.getWorld(worldId);
+                if (world == null) {
+                    plugin.getLogger().warning(
+                            "[Agriculture] Monde invalide ou introuvable pour farms."
+                                    + key + "."
+                    );
+                    continue;
+                }
 
-            FieldSession fs = new FieldSession(plugin, origin, width, length);
-            Bukkit.getScheduler().runTaskLater(plugin, fs::start, 20L);
-            sessions.add(fs);
-            loaded++;
+                int baseX = section.getInt("x");
+                int baseY = section.getInt("y");
+                int baseZ = section.getInt("z");
+                int width = section.getInt("width");
+                int length = section.getInt("length");
+                if (!areDimensionsAllowed(width, length)
+                        || !isHeightAllowed(world, baseY)) {
+                    plugin.getLogger().warning(
+                            "[Agriculture] Dimensions invalides ignorées pour farms."
+                                    + key + "."
+                    );
+                    continue;
+                }
+                if (sessions.stream().anyMatch(session ->
+                        session.overlaps(world, baseX, baseZ, width, length))) {
+                    plugin.getLogger().warning(
+                            "[Agriculture] Champ chevauchant ignoré: farms."
+                                    + key + "."
+                    );
+                    continue;
+                }
+
+                UUID ownerId = parseUuid(section.getString("owner"));
+                Location origin = new Location(world, baseX, baseY, baseZ);
+                clearZone(
+                        origin,
+                        width,
+                        length,
+                        List.of("Agriculteur", "Garde du champ")
+                );
+
+                FieldSession session = new FieldSession(
+                        plugin,
+                        origin,
+                        width,
+                        length,
+                        ownerId
+                );
+                Bukkit.getScheduler().runTaskLater(plugin, () -> {
+                    try {
+                        session.start();
+                    } catch (RuntimeException failure) {
+                        sessions.remove(session);
+                        plugin.getLogger().log(
+                                Level.SEVERE,
+                                "[Agriculture] Échec du redémarrage d'un champ.",
+                                failure
+                        );
+                    }
+                }, 20L);
+                sessions.add(session);
+                loaded++;
+            } catch (RuntimeException failure) {
+                plugin.getLogger().log(
+                        Level.WARNING,
+                        "[Agriculture] Entrée farms." + key + " ignorée.",
+                        failure
+                );
+            }
         }
-        plugin.getLogger().info("[Agriculture] Restauré " + loaded + " champ(s).");
-    }
-    public void createField(Location origin, int width, int length) {
-        FieldSession fs = new FieldSession(plugin, origin, width, length);
-        fs.start();
-        sessions.add(fs);
-        saveAllSessions();
+        plugin.getLogger().info(
+                "[Agriculture] Restauré " + loaded + " champ(s)."
+        );
     }
 
+    /**
+     * API historique conservée pour les intégrations internes. Une création
+     * sans propriétaire reste administrable uniquement avec la permission
+     * d'administration.
+     */
+    public void createField(Location origin, int width, int length) {
+        Objects.requireNonNull(origin, "origin");
+        World world = Objects.requireNonNull(origin.getWorld(), "origin.world");
+        if (!areDimensionsAllowed(width, length)
+                || !isHeightAllowed(world, origin.getBlockY())) {
+            throw new IllegalArgumentException("Dimensions de champ invalides.");
+        }
+        if (sessions.size() >= MAX_ACTIVE_FIELDS) {
+            throw new IllegalStateException("Limite globale de champs atteinte.");
+        }
+        if (sessions.stream().anyMatch(session -> session.overlaps(
+                world,
+                origin.getBlockX(),
+                origin.getBlockZ(),
+                width,
+                length
+        ))) {
+            throw new IllegalArgumentException(
+                    "La zone chevauche un champ existant."
+            );
+        }
+
+        FieldSession session = new FieldSession(
+                plugin,
+                origin,
+                width,
+                length,
+                null
+        );
+        try {
+            session.start();
+            sessions.add(session);
+            saveAllSessions();
+        } catch (RuntimeException failure) {
+            session.stop();
+            throw failure;
+        }
+    }
 
     public void stopAllSessions() {
-        for (FieldSession fs : sessions) {
-            fs.stop();
+        for (FieldSession session : sessions) {
+            session.stop();
         }
         sessions.clear();
+        selections.clear();
     }
 
-    private void clearZone(Location origin, int width, int length, List<String> names) {
-        World w = origin.getWorld();
-        int minX = origin.getBlockX() - 2;
-        int maxX = origin.getBlockX() + width + 2;
-        int minZ = origin.getBlockZ() - 2;
-        int maxZ = origin.getBlockZ() + length + 2;
+    private void clearZone(
+            Location origin,
+            int width,
+            int length,
+            List<String> names) {
+        World world = Objects.requireNonNull(origin.getWorld(), "origin.world");
+        BoundingBox bounds = new BoundingBox(
+                origin.getBlockX() - 3,
+                Math.max(world.getMinHeight(), origin.getBlockY() - 4),
+                origin.getBlockZ() - 3,
+                origin.getBlockX() + width + 3,
+                Math.min(world.getMaxHeight(), origin.getBlockY() + 12),
+                origin.getBlockZ() + length + 3
+        );
 
-        // Charge les chunks autour de la zone
-        int minChunkX = minX >> 4;
-        int maxChunkX = maxX >> 4;
-        int minChunkZ = minZ >> 4;
-        int maxChunkZ = maxZ >> 4;
-        for (int cx = minChunkX; cx <= maxChunkX; cx++) {
-            for (int cz = minChunkZ; cz <= maxChunkZ; cz++) {
-                w.getChunkAt(cx, cz).load();
+        /*
+         * Une recherche bornée remplace l'ancien parcours de toutes les
+         * entités du monde, qui devenait coûteux sur les serveurs peuplés.
+         */
+        for (var entity : world.getNearbyEntities(bounds)) {
+            String name = ChatColor.stripColor(entity.getCustomName());
+            if (name != null && names.contains(name)) {
+                entity.remove();
             }
         }
+    }
 
-        w.getEntities().forEach(e -> {
-            String name = ChatColor.stripColor(e.getCustomName());
-            if (name == null || !names.contains(name)) return;
-
-            Location l = e.getLocation();
-            int x = l.getBlockX();
-            int z = l.getBlockZ();
-            if (x >= minX && x <= maxX && z >= minZ && z <= maxZ) {
-                e.remove();
-            }
-        });
+    private static UUID parseUuid(String value) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        try {
+            return UUID.fromString(value);
+        } catch (IllegalArgumentException ignored) {
+            return null;
+        }
     }
 
     /* =========================================================== */
@@ -343,7 +641,7 @@ public final class Agriculture implements CommandExecutor, Listener {
     private static final class FieldSession {
         private static final int WATER_GRID        = 6;   // motif irrigation
         private static final int TORCH_SPACING     = 5;   // torches tous les 5 blocs
-        private static final int CHESTS_PER_CORNER = 6;   // coffres par coin
+
         private static final Material FRAME_BLOCK  = Material.OAK_LOG;
         private static final Material LIGHT_BLOCK  = Material.SEA_LANTERN;
         private static final List<Material> CROPS  = List.of(
@@ -356,6 +654,7 @@ public final class Agriculture implements CommandExecutor, Listener {
         private final JavaPlugin plugin;
         private final World world;
         private final int baseX, baseY, baseZ, width, length;
+        private final UUID ownerId;
 
         private Villager farmer;
         private final List<Golem> golems = new ArrayList<>();
@@ -366,14 +665,23 @@ public final class Agriculture implements CommandExecutor, Listener {
         private int farmIndex = 0;
         private int depositIndex = 0;
 
-        FieldSession(JavaPlugin plugin, Location origin, int width, int length) {
+        FieldSession(
+                JavaPlugin plugin,
+                Location origin,
+                int width,
+                int length,
+                UUID ownerId) {
             this.plugin = plugin;
-            this.world  = origin.getWorld();
-            this.baseX  = origin.getBlockX();
-            this.baseY  = origin.getBlockY();
-            this.baseZ  = origin.getBlockZ();
-            this.width  = width;
+            this.world = Objects.requireNonNull(
+                    origin.getWorld(),
+                    "origin.world"
+            );
+            this.baseX = origin.getBlockX();
+            this.baseY = origin.getBlockY();
+            this.baseZ = origin.getBlockZ();
+            this.width = width;
             this.length = length;
+            this.ownerId = ownerId;
         }
 
         void start() {
@@ -435,19 +743,53 @@ public final class Agriculture implements CommandExecutor, Listener {
         }
 
         private void placeChests() {
+            /*
+             * Sur un champ étroit, deux rangées fixes de six coffres se
+             * chevauchaient. Le nombre est réduit symétriquement tout en
+             * conservant six coffres par coin dès huit blocs de largeur.
+             */
+            int chestCount = Agriculture.chestCountPerCorner(width);
             // Coin Nord-Ouest
-            createChests(new Location(world, baseX - 2, baseY, baseZ - 2), true);
+            createChests(
+                    new Location(world, baseX - 2, baseY, baseZ - 2),
+                    true,
+                    chestCount
+            );
             // Coin Nord-Est
-            createChests(new Location(world, baseX + width + 1, baseY, baseZ - 2), false);
+            createChests(
+                    new Location(world, baseX + width + 1, baseY, baseZ - 2),
+                    false,
+                    chestCount
+            );
             // Coin Sud-Ouest
-            createChests(new Location(world, baseX - 2, baseY, baseZ + length + 1), true);
+            createChests(
+                    new Location(world, baseX - 2, baseY, baseZ + length + 1),
+                    true,
+                    chestCount
+            );
             // Coin Sud-Est
-            createChests(new Location(world, baseX + width + 1, baseY, baseZ + length + 1), false);
+            createChests(
+                    new Location(
+                            world,
+                            baseX + width + 1,
+                            baseY,
+                            baseZ + length + 1
+                    ),
+                    false,
+                    chestCount
+            );
         }
 
-        private void createChests(Location start, boolean positiveX) {
-            for (int i = 0; i < CHESTS_PER_CORNER; i++) {
-                Location loc = start.clone().add(positiveX ? i : -i, 0, 0);
+        private void createChests(
+                Location start,
+                boolean positiveX,
+                int chestCount) {
+            for (int i = 0; i < chestCount; i++) {
+                Location loc = start.clone().add(
+                        positiveX ? i : -i,
+                        0,
+                        0
+                );
                 setBlock(loc, Material.CHEST);
                 chestBlocks.add(loc.getBlock());
             }
@@ -559,43 +901,128 @@ public final class Agriculture implements CommandExecutor, Listener {
         }
 
         /**
-         * Stocke les items dans un coffre (round-robin)
+         * Stocke les objets dans l'ensemble des coffres. Tout reliquat est
+         * déposé au sol : aucune récolte ne disparaît lorsque les coffres sont
+         * pleins ou qu'un coffre a été retiré.
          */
         private void deposit(Collection<ItemStack> items) {
-            if (chestBlocks.isEmpty()) {
-                return;
-            }
-            Block chestB = chestBlocks.get(depositIndex % chestBlocks.size());
-            depositIndex++;
+            chestBlocks.removeIf(block -> block.getType() != Material.CHEST);
+            Location fallback = farmer != null && !farmer.isDead()
+                    ? farmer.getLocation()
+                    : new Location(
+                            world,
+                            baseX + width / 2.0,
+                            baseY + 1.0,
+                            baseZ + length / 2.0
+                    );
 
-            if (chestB.getType() == Material.CHEST) {
-                Chest c = (Chest) chestB.getState();
-                for (ItemStack drop : items) {
-                    c.getInventory().addItem(drop);
+            for (ItemStack item : items) {
+                ItemStack remaining = item.clone();
+                int chestCount = chestBlocks.size();
+                int attempts = 0;
+
+                while (remaining.getAmount() > 0
+                        && chestCount > 0
+                        && attempts < chestCount) {
+                    int index = (depositIndex + attempts) % chestCount;
+                    Block chestBlock = chestBlocks.get(index);
+                    if (chestBlock.getState() instanceof Chest chest) {
+                        Map<Integer, ItemStack> leftovers =
+                                chest.getInventory().addItem(remaining);
+                        if (leftovers.isEmpty()) {
+                            remaining = null;
+                            depositIndex = (index + 1) % chestCount;
+                            break;
+                        }
+                        remaining = leftovers.values().iterator().next();
+                    }
+                    attempts++;
+                }
+
+                if (remaining != null && remaining.getAmount() > 0) {
+                    world.dropItemNaturally(fallback, remaining);
                 }
             }
         }
 
-        /* ----------------- Vérification coffres cassés ------------------- */
-        public boolean isChest(Block block) {
+        /* ----------------- Protection et coffres ------------------- */
+        boolean isChest(Block block) {
             return chestBlocks.contains(block);
         }
-        public void removeChest(Block block) {
+
+        void removeChest(Block block) {
             chestBlocks.remove(block);
         }
-        public boolean hasChests() {
+
+        boolean hasChests() {
             return !chestBlocks.isEmpty();
         }
 
+        boolean canManage(Player player) {
+            return player.hasPermission(ADMIN_PERMISSION)
+                    || ownerId != null
+                    && ownerId.equals(player.getUniqueId());
+        }
+
+        boolean isManagedBlock(Block block) {
+            if (!block.getWorld().getUID().equals(world.getUID())) {
+                return false;
+            }
+            if (isChest(block)) {
+                return true;
+            }
+
+            int x = block.getX();
+            int y = block.getY();
+            int z = block.getZ();
+            return x >= baseX - 2
+                    && x <= baseX + width + 1
+                    && z >= baseZ - 2
+                    && z <= baseZ + length + 1
+                    && y >= baseY - 1
+                    && y <= baseY + 2;
+        }
+
+        boolean overlaps(
+                World candidateWorld,
+                int candidateX,
+                int candidateZ,
+                int candidateWidth,
+                int candidateLength) {
+            if (!candidateWorld.getUID().equals(world.getUID())) {
+                return false;
+            }
+
+            /*
+             * Les deux blocs de marge englobent les coffres extérieurs et
+             * évitent que deux champs se détruisent mutuellement.
+             */
+            int thisMinX = baseX - 2;
+            int thisMaxX = baseX + width + 1;
+            int thisMinZ = baseZ - 2;
+            int thisMaxZ = baseZ + length + 1;
+            int otherMinX = candidateX - 2;
+            int otherMaxX = candidateX + candidateWidth + 1;
+            int otherMinZ = candidateZ - 2;
+            int otherMaxZ = candidateZ + candidateLength + 1;
+            return thisMinX <= otherMaxX
+                    && thisMaxX >= otherMinX
+                    && thisMinZ <= otherMaxZ
+                    && thisMaxZ >= otherMinZ;
+        }
+
         /* ----------------- Persistance ------------------- */
-        public Map<String, Object> toMap() {
+        Map<String, Object> toMap() {
             Map<String, Object> map = new LinkedHashMap<>();
             map.put("world", world.getUID().toString());
             map.put("x", baseX);
             map.put("y", baseY);
             map.put("z", baseZ);
-            map.put("width",  width);
+            map.put("width", width);
             map.put("length", length);
+            if (ownerId != null) {
+                map.put("owner", ownerId.toString());
+            }
             return map;
         }
 

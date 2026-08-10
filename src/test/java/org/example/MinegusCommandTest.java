@@ -99,6 +99,17 @@ class MinegusCommandTest {
         assertNotNull(plugin.getCommand("tuto"));
         assertEquals("mineplugin.tuto.use", plugin.getCommand("tuto").getPermission());
         assertNotNull(plugin.getCommand("niveau"));
+        assertEquals("mineplugin.army.use", plugin.getCommand("army").getPermission());
+        assertEquals("mineplugin.champ.use", plugin.getCommand("champ").getPermission());
+        assertEquals("mineplugin.eleveur.use", plugin.getCommand("eleveur").getPermission());
+        assertEquals("mineplugin.village.use", plugin.getCommand("village").getPermission());
+        assertEquals("mineplugin.armure.use", plugin.getCommand("armure").getPermission());
+        /*
+         * /marchand possède plusieurs permissions selon la sous-commande :
+         * le descripteur global doit donc rester public et laisser l'exécuteur
+         * effectuer le contrôle précis.
+         */
+        assertNull(plugin.getCommand("marchand").getPermission());
         assertNotNull(plugin.getGlobalProgressionManager());
         Permission progressionAdmin =
                 server.getPluginManager().getPermission(
@@ -111,6 +122,20 @@ class MinegusCommandTest {
         Permission tutorialPermission = server.getPluginManager().getPermission("mineplugin.tuto.use");
         assertNotNull(tutorialPermission);
         assertEquals(PermissionDefault.TRUE, tutorialPermission.getDefault());
+
+        for (String permissionName : List.of(
+                "mineplugin.army.use",
+                "mineplugin.champ.use",
+                "mineplugin.champ.admin",
+                "mineplugin.eleveur.use",
+                "mineplugin.eleveur.admin",
+                "mineplugin.village.use",
+                "mineplugin.village.admin",
+                "mineplugin.armure.use")) {
+            Permission permission = server.getPluginManager().getPermission(permissionName);
+            assertNotNull(permission, () -> "Permission absente : " + permissionName);
+            assertEquals(PermissionDefault.OP, permission.getDefault(), permissionName);
+        }
     }
 
     private static List<String> captureMessages(CommandSender sender) {

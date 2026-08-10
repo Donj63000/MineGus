@@ -3,13 +3,13 @@
 Plugin Paper pour Minecraft 1.21.4 qui automatise diverses tâches (minage, agriculture, forêt, élevage, etc.). Projet en bêta, expérimental, pensé pour de petits serveurs entre amis.
 
 ## Prérequis
-- Java 17 (OpenJDK/Temurin). Vérifier: `java -version`
-- Maven 3.9+ (ou 3.x). Vérifier: `mvn -v`
+- Java 21 (OpenJDK/Temurin). Vérifier : `java -version`
+- Maven 3.9+ (ou 3.x). Vérifier : `mvn -v`
 - Serveur Paper 1.21.4
-- IDE recommandé: IntelliJ IDEA, encodage projet en UTF‑8
+- IDE recommandé : IntelliJ IDEA, encodage projet en UTF‑8
 
-Notes:
-- Assurez‑vous que `JAVA_HOME` pointe vers une JDK 17 et que `java`/`mvn` sont dans le `PATH`.
+Notes :
+- Assurez‑vous que `JAVA_HOME` pointe vers une JDK 21 et que `java`/`mvn` sont dans le `PATH`.
 - Mémoire serveur conseillée ≥ 2 Go pour les tests locaux.
 
 ## Compilation du plugin
@@ -43,8 +43,9 @@ Référence par défaut : `src/main/resources/config.yml`. Modifiez seulement la
 ### /ping
 - Test de présence du plugin : répond « Pong! ». Disponible pour tous les joueurs et la console.
 
-### /army
+### /army (permission `mineplugin.army.use`, opérateur par défaut)
 - Invoque 5 loups apprivoisés et 2 golems nommés autour du joueur, protégés pendant 5 minutes avant disparition automatique.
+- Une nouvelle invocation remplace uniquement l'armée précédente du même joueur ; elle ne supprime jamais celle des autres joueurs.
 
 ### /garde (permission `mineplugin.garde.use`, accordée par défaut)
 - `/garde` reste une commande bascule. Les variantes explicites `/garde invoquer`, `/garde renvoyer`, `/garde statut` et `/garde aide` évitent toutefois un renvoi accidentel et donnent l’état des respawns en attente.
@@ -78,26 +79,33 @@ Référence par défaut : `src/main/resources/config.yml`. Modifiez seulement la
 - `/mineur info` : affiche monde, zone, vitesse, pattern, Y courant et conteneurs.
 - `/mineur autoriser <joueur>` : autorise un autre joueur à interagir avec la session. Si tous les coffres sont détruits, la mine s’arrête.
 
-### /champ
+### /champ (permission `mineplugin.champ.use`, opérateur par défaut)
 - Donne le bâton « Sélecteur de champ ». Sélectionne deux blocs au même niveau pour générer une ferme labourée avec irrigation, coffres, PNJ fermier et golems. Récolte et stockage automatiques tant qu’il reste des coffres.
+- Dimensions admises : de 3×3 à 64×64, avec une surface maximale de 4 096 blocs. Un joueur peut posséder au plus 4 champs (hors administrateur), dans la limite globale de 64. Sur les champs étroits, le nombre de coffres par coin est réduit automatiquement pour éviter tout chevauchement. Seul le propriétaire, ou un administrateur avec `mineplugin.champ.admin`, peut modifier la structure gérée.
 
-### /foret
+### /foret (permission `minegus.forester.use`)
 - Donne le bâton « Sélecteur de forêt ». Deux blocs au même Y définissent la micro‑forêt : cadre, saplings en grille, PNJ forestier, golems et coffres. Coupe, capture des drops et replantation automatiques, persistance en `forests.yml`. La session s’arrête si tous les coffres sont retirés.
+- Dimensions admises : de 4×4 à 64×64, avec une surface maximale de 4 096 blocs. `/foret supprimer <numéro>` désactive l'automatisation et retire ses entités gérées, mais conserve la structure de blocs. La permission `minegus.forester.bypass` permet la maintenance manuelle d'une parcelle protégée.
 
-### /eleveur
+### /eleveur (permission `mineplugin.eleveur.use`, opérateur par défaut)
 - `/eleveur` : donne le bâton « Sélecteur d’élevage » pour tracer un ranch automatisé (spawners d’animaux configurés, PNJ éleveur ramasseur, coffres, golems).
-- `/eleveur list` : liste les enclos actifs avec leur index.
-- `/eleveur delete <id>` : supprime l’enclos correspondant et nettoie la zone.
+- `/eleveur list` : liste uniquement les enclos que le joueur peut administrer, avec un index commençant à 1.
+- `/eleveur delete <numéro>` : désactive l’automatisation de l’enclos et retire ses entités gérées ; la structure de blocs reste en place.
+- Dimensions admises : de 8×8 à 64×64, avec une surface maximale de 4 096 blocs. Un joueur peut posséder au plus 2 enclos (hors administrateur), dans la limite globale non contournable de 32. `mineplugin.eleveur.admin` autorise la maintenance des enclos d'autres joueurs.
 
-### /village
+### /village (permission `mineplugin.village.use`, opérateur par défaut)
 - `/village` : génère un village semi-organique autour du joueur avec routes, place centrale, maisons, fermes, muraille, arbres, mares, jardins et mobilier. Les lanternes visibles sont complétées par un audit de lumière de bloc qui sécurise aussi les intérieurs, toitures, chemins de ronde et abords immédiats avec des blocs `LIGHT` invisibles.
-- `/village undo` : annule la dernière génération effectuée.
+- `/village undo` : annule la dernière génération effectuée par son propriétaire. `mineplugin.village.admin` autorise l'annulation par un administrateur.
+- Une construction interrompue par l'arrêt du plugin est automatiquement annulée afin de ne pas laisser de village partiel.
 
-### /armure
-- Donne l’Armure du roi GIDON (netherite enchantée). En portant l’ensemble : effets permanents (vision nocturne, résistance au feu, respiration, santé/force), et 4 loups gardes apparaissent quand le joueur est touché (disparition programmée).
+### /armure (permission `mineplugin.armure.use`, opérateur par défaut)
+- Donne l’Armure du roi GIDON (netherite enchantée). Le plugin identifie désormais ses pièces par une donnée interne et non par leur simple nom.
+- En portant l’ensemble : effets rafraîchis à courte durée (vision nocturne, résistance au feu, respiration, santé/force), et jusqu'à 4 loups gardes temporaires apparaissent quand le joueur est touché.
 
 ### /marchand (permission `mineplugin.marchand.spawn`)
 - Invoque un PNJ marchand invulnérable à l’emplacement du joueur. Les offres proviennent de `plugins/MinePlugin/marchand.yaml`; clique le PNJ pour ouvrir l’interface d’échanges.
+- `/marchand reload` exige `mineplugin.marchand.admin`. Les plafonds d'utilisation sont conservés dans `merchant-caps.yml` après un rechargement ou un redémarrage.
+- Une offre ne peut pas produire plus de 4 096 objets ni plus de 64 piles par échange ; les entrées invalides sont ignorées avec un message explicite dans les logs.
 
 ### /niveau — progression globale
 - `/niveau` ou `/niveau info` : affiche le niveau global, l'XP du palier et les quatre bonus du joueur. Les alias `/level` et `/progression` sont disponibles.
@@ -147,16 +155,16 @@ Les fonctionnalités persistantes sauvegardent leurs informations (YAML) dans `p
 - `org.example.village.VillageEntityManager` : spawn/cleanup des PNJ et golems, taggage par village, limitation de population périodique.
 
 ## Développement
-- Construire : `mvn -q package` (JAR dans `target/`). Tests optionnels : `mvn -q test` (JUnit 5 sous `src/test/java/`).
+- Vérifier et construire : `mvn -q verify` (tests JUnit 5 sous `src/test/java/`, puis JAR dans `target/`).
 - Lancer localement : copier le JAR dans `plugins/` d’un serveur Paper 1.21.4 puis démarrer le serveur.
-- Style : Java 17, 4 espaces, accolades sur la même ligne, classes `PascalCase`, méthodes/champs `camelCase`, constantes `UPPER_SNAKE_CASE`.
+- Style : Java 21, 4 espaces, accolades sur la même ligne, classes `PascalCase`, méthodes/champs `camelCase`, constantes `UPPER_SNAKE_CASE`.
 - Commits : français, présent, concis (ex. « Ajoute collecte du champ »). Ne modifiez jamais `target/*.jar`.
 - Voir `AGENTS.md` pour des consignes plus détaillées.
 
 ## Guide développeur (amélioré)
 
 ### Développement rapide
-- Cloner, utiliser Java 17, puis `mvn -q package` → JAR dans `target/`.
+- Cloner, utiliser Java 21, puis `mvn -q verify` → JAR vérifié dans `target/`.
 - Tester localement: copier le JAR dans `plugins/` d’un Paper 1.21.4 et démarrer.
 
 ### Workflow de contribution
@@ -228,18 +236,26 @@ categories:
 - Village : `/village`, observer génération progressive, `/village undo` pour rollback.
 - Marchand : spawn avec `/marchand`, ouverture via `/marchand open <joueur>`, tester une offre avec cap quotidien et vérifier le message de blocage après dépassement.
 
+## Migration depuis une version antérieure au correctif de sécurité
+- Les anciennes pièces de l'Armure GIDON ne possèdent pas l'identifiant interne de sécurité : exécutez de nouveau `/armure` pour recevoir le nouvel ensemble.
+- Les anciens champs et enclos sans propriétaire dans `fields.yml` ou `ranches.yml` restent chargés, mais leur maintenance est réservée aux administrateurs. Recréez-les, ou ajoutez une clé `owner` contenant l'UUID du propriétaire après sauvegarde du fichier.
+- Les écritures sensibles créent désormais une sauvegarde `*.bak` dans le même dossier. Conservez-la lors d'une migration.
+- Le fichier `merchant-caps.yml` est créé automatiquement pour conserver les quotas du marchand.
+
 ## Dépannage rapide
-- Le plugin ne se charge pas : vérifier la version Paper (1.21.4), `java -version` (17) et les logs `logs/latest.log`.
+- Le plugin ne se charge pas : vérifier la version Paper (1.21.4), `java -version` (21) et les logs `logs/latest.log`.
 - Commande inconnue : confirmer la permission (`op` par défaut sur la plupart des commandes) et que `plugin.yml` est bien dans le JAR généré.
 - Menus vides du marchand : valider la syntaxe de `plugins/MinePlugin/marchand.yaml` (indentation, clés `categories:` et `offers:`).
 - Caps du marchand qui ne se reset pas : vérifier `merchant.reset_time_utc` (UTC) et attendre la minute suivante après l’heure cible.
 - Golems/PNJ en double : utiliser `/minegus fix forestier` ou `/minegus fix golems`.
 - Performances : limiter la taille des zones (`/mineur`, `/foret`, `/champ`) et éviter le force‑load de chunks.
 
-## Intégration CI/CD suggérée
-- Étape 1 : `mvn -q -B package` (cache Maven si possible).
-- Étape 2 : publier `target/MineGus-<version>.jar` comme artefact.
-- Étape 3 (optionnel) : lancer un serveur Paper éphémère avec le JAR et exécuter une courte suite de commandes RCON (`/ping`, `/army`, `/marchand open @p`) pour smoke tests.
+## Intégration CI/CD
+Le workflow `.github/workflows/maven.yml` exécute :
+- `mvn -B --no-transfer-progress verify` avec Temurin 21 ;
+- les tests unitaires du lanceur Python avec Python 3.12.
+
+Publiez uniquement `target/MineGus-<version>.jar` produit par ce workflow. Les JAR précompilés présents à la racine du dépôt ne doivent pas être considérés comme une source fiable et doivent être remplacés par un artefact reconstruit.
 
 ## Licence
 MIT — voir `LICENSE`.

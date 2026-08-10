@@ -9,7 +9,7 @@ $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
 $launcherRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
-$temporaryRoot = 'C:\tmp\augustin_launcher_build'
+$temporaryRoot = Join-Path ([System.IO.Path]::GetTempPath()) 'augustin_launcher_build'
 $distDirectory = Join-Path $temporaryRoot 'dist'
 $workDirectory = Join-Path $temporaryRoot 'work'
 $specDirectory = Join-Path $temporaryRoot 'spec'
@@ -99,12 +99,10 @@ Write-Host "Exécutable généré : $artifact" -ForegroundColor Green
 
 if ($Deploy) {
     if (-not $ServerDirectory) {
-        $ServerDirectory = if ($env:AUGUSTIN_SERVER_DIR) {
-            $env:AUGUSTIN_SERVER_DIR
-        }
-        else {
-            'C:\Users\nodig\Desktop\SERVEUR MINECRAFT AUGUSTIN\PaperServer'
-        }
+        $ServerDirectory = $env:AUGUSTIN_SERVER_DIR
+    }
+    if (-not $ServerDirectory) {
+        throw 'Indique -ServerDirectory ou définis AUGUSTIN_SERVER_DIR avant un déploiement.'
     }
 
     if (-not (Test-Path -LiteralPath (Join-Path $ServerDirectory 'paper.jar') -PathType Leaf)) {

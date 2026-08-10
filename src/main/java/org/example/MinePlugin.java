@@ -10,13 +10,17 @@ import org.bukkit.entity.Wolf;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
 import org.bukkit.event.player.PlayerJoinEvent;
+import org.bukkit.event.player.PlayerQuitEvent;
 import org.bukkit.plugin.java.JavaPlugin;
-import org.bukkit.scheduler.BukkitRunnable;
+import org.bukkit.scheduler.BukkitTask;
 import org.bukkit.entity.Player;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
+import java.util.logging.Level;
 
 import org.example.merchant.MerchantManager;
 import org.example.forestry2.ForestryModule;
@@ -31,17 +35,15 @@ import org.example.tutorial.TutorialManager;
  */
 public class MinePlugin extends JavaPlugin implements Listener {
 
-    /**
-     * Liste pour suivre tous les êtres invoqués par /army
-     * (loups + golems) afin de les supprimer après un délai.
-     */
-    private final List<UUID> guardians = new ArrayList<>();
+    private static final String ARMY_PERMISSION = "mineplugin.army.use";
+    private static final long ARMY_LIFETIME_TICKS = 20L * 60L * 5L;
 
     /**
-     * Liste des golems (classe "Golem")
-     * pour la commande /army (suppression au bout de 5 minutes).
+     * Une seule armée peut être active par joueur. Cette indexation évite
+     * qu'une ancienne tâche de disparition supprime les gardes d'un autre
+     * joueur et borne aussi le nombre d'entités créées par la commande.
      */
-    private final List<Golem> golemGuards = new ArrayList<>();
+    private final Map<UUID, ArmyDeployment> activeArmies = new HashMap<>();
 
     /**
      * Gère /mineur (sessions de minage persistantes).
@@ -180,17 +182,25 @@ public class MinePlugin extends JavaPlugin implements Listener {
 
         try {
             merchantManager = new MerchantManager(this);
-        } catch (Throwable throwable) {
+        } catch (RuntimeException | LinkageError failure) {
             merchantManager = null;
-            getLogger().warning("MerchantManager desactive dans cet environnement: " + throwable.getClass().getSimpleName());
+            getLogger().log(
+                    Level.WARNING,
+                    "MerchantManager désactivé dans cet environnement.",
+                    failure
+            );
         }
 
         // Population persistante et surveillance des marchands du village.
         try {
             VillageEntityManager.initializePopulationListener(this);
             VillageEntityManager.startMerchantGuardTask(this);
-        } catch (Throwable throwable) {
-            getLogger().warning("VillageEntityManager desactive dans cet environnement: " + throwable.getClass().getSimpleName());
+        } catch (RuntimeException | LinkageError failure) {
+            getLogger().log(
+                    Level.WARNING,
+                    "VillageEntityManager désactivé dans cet environnement.",
+                    failure
+            );
         }
 
         // J'installe le module après tous les services dont il partage les tickets de chunks.
@@ -233,6 +243,12 @@ public class MinePlugin extends JavaPlugin implements Listener {
             eleveur.saveAllSessions();
             eleveur.stopAllRanches();
         }
+        if (village != null) {
+            village.shutdown();
+        }
+        if (armure != null) {
+            armure.shutdown();
+        }
         if (jobManager != null) {
             jobManager.shutdown();
         }
@@ -261,17 +277,10 @@ public class MinePlugin extends JavaPlugin implements Listener {
                     + failure.getMessage());
         }
 
-        // Nettoyage /army
-        guardians.forEach(id -> {
-            var e = Bukkit.getEntity(id);
-            if (e != null && !e.isDead()) {
-                e.remove();
-            }
-        });
-        guardians.clear();
-
-        golemGuards.forEach(Golem::remove);
-        golemGuards.clear();
+        // Nettoyage de toutes les armées transitoires.
+        for (UUID ownerId : new ArrayList<>(activeArmies.keySet())) {
+            dismissArmy(ownerId);
+        }
     }
 
     /**
@@ -287,6 +296,15 @@ public class MinePlugin extends JavaPlugin implements Listener {
 
     }
 
+    @EventHandler
+    public void onPlayerQuit(PlayerQuitEvent event) {
+        /*
+         * Les gardes temporaires n'ont aucune utilité sans leur propriétaire
+         * et ne doivent pas occuper des chunks pendant cinq minutes de plus.
+         */
+        dismissArmy(event.getPlayer().getUniqueId());
+    }
+
     /**
      * Gestion des commandes : /army, /ping
      */
@@ -299,6 +317,10 @@ public class MinePlugin extends JavaPlugin implements Listener {
         if (command.getName().equalsIgnoreCase("army")) {
             if (!(sender instanceof Player player)) {
                 sender.sendMessage("Cette commande doit être exécutée par un joueur.");
+                return true;
+            }
+            if (!player.hasPermission(ARMY_PERMISSION)) {
+                player.sendMessage("§cTu n'as pas la permission d'utiliser /army.");
                 return true;
             }
             spawnArmy(player);
@@ -318,55 +340,149 @@ public class MinePlugin extends JavaPlugin implements Listener {
      * qui disparaissent au bout de 5 minutes.
      */
     private void spawnArmy(Player player) {
+        UUID ownerId = player.getUniqueId();
+
+        /*
+         * Réinvoquer /army remplace proprement l'ancienne escouade au lieu
+         * d'empiler sans limite des entités et des tâches de nettoyage.
+         */
+        boolean replaced = activeArmies.containsKey(ownerId);
+        dismissArmy(ownerId);
+
         World world = player.getWorld();
         Location base = player.getLocation();
+        List<UUID> wolves = new ArrayList<>();
+        List<Golem> golems = new ArrayList<>();
+        ArmyDeployment deployment = new ArmyDeployment(wolves, golems);
 
-        // 1) 5 loups
-        for (int i = 0; i < 5; i++) {
-            Location spawn = base.clone().add(
-                    (i % 2 == 0 ? 2 : -2),
-                    0,
-                    (i < 2 ? 2 : -2)
-            );
-            Wolf wolf = (Wolf) world.spawnEntity(spawn, EntityType.WOLF);
-
-            wolf.setOwner(player);
-            wolf.setCustomName("§bGardien de " + player.getName());
-            wolf.setCustomNameVisible(true);
-            wolf.setCollarColor(org.bukkit.DyeColor.LIGHT_BLUE);
-            wolf.setAdult();
-
-            guardians.add(wolf.getUniqueId());
-        }
-
-        // 2) 2 golems
-        for (int i = 0; i < 2; i++) {
-            Location spawn = base.clone().add(i + 1, 0, i + 1);
-
-            // On appelle le constructeur à 2 paramètres : (plugin, Location)
-            Golem golemGuard = new Golem(this, spawn);
-            // Personnalise le nom comme tu veux
-            golemGuard.getGolem().setCustomName("§cGolem de " + player.getName());
-
-            golemGuards.add(golemGuard);
-            guardians.add(golemGuard.getGolem().getUniqueId());
-        }
-
-        // 3) Disparition après 5 min
-        new BukkitRunnable() {
-            @Override
-            public void run() {
-                guardians.removeIf(id -> {
-                    var e = Bukkit.getEntity(id);
-                    if (e != null && !e.isDead()) {
-                        e.remove();
-                    }
-                    return true;
-                });
-
-                golemGuards.forEach(Golem::remove);
-                golemGuards.clear();
+        try {
+            int[][] wolfOffsets = {
+                    {2, 2},
+                    {-2, 2},
+                    {2, -2},
+                    {-2, -2},
+                    {0, 3}
+            };
+            for (int[] offset : wolfOffsets) {
+                Location spawn = base.clone().add(
+                        offset[0],
+                        0,
+                        offset[1]
+                );
+                Wolf wolf = (Wolf) world.spawnEntity(
+                        spawn,
+                        EntityType.WOLF
+                );
+                /*
+                 * L'identifiant est enregistré avant toute personnalisation :
+                 * une exception ultérieure restera ainsi nettoyable.
+                 */
+                wolves.add(wolf.getUniqueId());
+                wolf.setOwner(player);
+                wolf.setCustomName("§bGardien de " + player.getName());
+                wolf.setCustomNameVisible(true);
+                wolf.setCollarColor(org.bukkit.DyeColor.LIGHT_BLUE);
+                wolf.setAdult();
+                /*
+                 * L'armée est éphémère et ne doit pas être conservée dans un
+                 * chunk après un crash du serveur.
+                 */
+                wolf.setPersistent(false);
             }
-        }.runTaskLater(this, 20L * 60 * 5);
+
+            for (int index = 0; index < 2; index++) {
+                Location spawn = base.clone().add(
+                        index + 1,
+                        0,
+                        index + 1
+                );
+                Golem golem = new Golem(this, spawn);
+                golems.add(golem);
+                golem.getGolem().setCustomName(
+                        "§cGolem de " + player.getName()
+                );
+                golem.getGolem().setPersistent(false);
+            }
+
+            activeArmies.put(ownerId, deployment);
+            deployment.cleanupTask = Bukkit.getScheduler().runTaskLater(
+                    this,
+                    () -> dismissArmyIfCurrent(ownerId, deployment),
+                    ARMY_LIFETIME_TICKS
+            );
+        } catch (RuntimeException failure) {
+            activeArmies.remove(ownerId, deployment);
+            cleanupDeployment(deployment, true);
+            getLogger().log(
+                    Level.SEVERE,
+                    "Impossible d'invoquer l'armée de " + player.getName() + ".",
+                    failure
+            );
+            player.sendMessage("§cL'armée n'a pas pu être invoquée.");
+            return;
+        }
+
+        if (replaced) {
+            player.sendMessage("§eTon ancienne armée a été remplacée.");
+        }
+        player.sendMessage("§aTon armée restera active pendant 5 minutes.");
     }
+
+    private void dismissArmyIfCurrent(
+            UUID ownerId,
+            ArmyDeployment expectedDeployment) {
+        if (activeArmies.get(ownerId) != expectedDeployment) {
+            return;
+        }
+        activeArmies.remove(ownerId);
+        /*
+         * La tâche est déjà en cours : ne pas tenter de l'annuler depuis son
+         * propre callback.
+         */
+        cleanupDeployment(expectedDeployment, false);
+    }
+
+    private void dismissArmy(UUID ownerId) {
+        ArmyDeployment deployment = activeArmies.remove(ownerId);
+        if (deployment != null) {
+            cleanupDeployment(deployment, true);
+        }
+    }
+
+    private void cleanupDeployment(
+            ArmyDeployment deployment,
+            boolean cancelTask) {
+        if (cancelTask
+                && deployment.cleanupTask != null
+                && !deployment.cleanupTask.isCancelled()) {
+            deployment.cleanupTask.cancel();
+        }
+
+        for (UUID entityId : deployment.wolfIds) {
+            var entity = Bukkit.getEntity(entityId);
+            if (entity != null && !entity.isDead()) {
+                entity.remove();
+            }
+        }
+        deployment.wolfIds.clear();
+
+        for (Golem golem : deployment.golems) {
+            golem.remove();
+        }
+        deployment.golems.clear();
+    }
+
+    private static final class ArmyDeployment {
+        private final List<UUID> wolfIds;
+        private final List<Golem> golems;
+        private BukkitTask cleanupTask;
+
+        private ArmyDeployment(
+                List<UUID> wolfIds,
+                List<Golem> golems) {
+            this.wolfIds = wolfIds;
+            this.golems = golems;
+        }
+    }
+
 }

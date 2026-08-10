@@ -63,6 +63,8 @@ import java.util.logging.Level;
  */
 public final class Village implements CommandExecutor {
 
+    private static final String USE_PERMISSION = "mineplugin.village.use";
+    private static final String ADMIN_PERMISSION = "mineplugin.village.admin";
     private static final int LEGACY_VILLAGER_SPAWNERS = 4;
     private static final int GOLEM_SPAWNERS = 2;
     private static final int DEFAULT_WALL_GAP = 8;
@@ -84,6 +86,7 @@ public final class Village implements CommandExecutor {
     private int currentHouseIdx;
 
     private VillageGenerationSession currentSession;
+    private UUID currentSessionOwner;
     private BukkitTask activeBuildTask;
 
     public Village(JavaPlugin plugin) {
@@ -169,11 +172,31 @@ public final class Village implements CommandExecutor {
             return true;
         }
 
+        if (!player.hasPermission(USE_PERMISSION)) {
+            player.sendMessage(ChatColor.RED
+                    + "Tu n'as pas la permission d'utiliser /village.");
+            return true;
+        }
+
         if (args.length > 0 && args[0].equalsIgnoreCase("undo")) {
+            if (!canManageCurrentSession(player)) {
+                player.sendMessage(ChatColor.RED
+                        + "Seul le propriétaire du village ou un "
+                        + "administrateur peut l'annuler.");
+                return true;
+            }
             boolean restored = undoVillage();
             player.sendMessage(restored
-                    ? ChatColor.YELLOW + "Le village a été annulé et le terrain restauré."
-                    : ChatColor.GRAY + "Aucun village généré n'est actuellement enregistré.");
+                    ? ChatColor.YELLOW
+                    + "Le village a été annulé et le terrain restauré."
+                    : ChatColor.GRAY
+                    + "Aucun village généré n'est actuellement enregistré.");
+            return true;
+        }
+
+        if (args.length > 0) {
+            player.sendMessage(ChatColor.RED
+                    + "Utilisation: /village [undo]");
             return true;
         }
 
@@ -184,12 +207,32 @@ public final class Village implements CommandExecutor {
             return true;
         }
 
-        if (generateVillageAsync(player.getLocation())) {
-            player.sendMessage(ChatColor.GREEN
-                    + "Construction du village lancée autour de votre position.");
-        } else {
+        try {
+            if (generateVillageAsync(
+                    player.getLocation(),
+                    player.getUniqueId()
+            )) {
+                player.sendMessage(ChatColor.GREEN
+                        + "Construction du village lancée autour de "
+                        + "votre position.");
+            } else {
+                player.sendMessage(ChatColor.RED
+                        + "Le village ne peut pas être construit à cet "
+                        + "emplacement.");
+            }
+        } catch (RuntimeException | LinkageError failure) {
+            VillageGenerationSession failedSession = currentSession;
+            if (failedSession != null) {
+                cancelActiveBuild();
+                rollbackSession(failedSession);
+            }
+            plugin.getLogger().log(
+                    Level.SEVERE,
+                    "Impossible de préparer la génération du village.",
+                    failure
+            );
             player.sendMessage(ChatColor.RED
-                    + "Le village ne peut pas être construit à cet emplacement.");
+                    + "La préparation du village a échoué. Consulte les logs.");
         }
         return true;
     }
@@ -199,7 +242,9 @@ public final class Village implements CommandExecutor {
      *
      * @return {@code true} lorsque la génération a pu être planifiée.
      */
-    private boolean generateVillageAsync(Location requestedCenter) {
+    private boolean generateVillageAsync(
+            Location requestedCenter,
+            UUID ownerId) {
         World world = requestedCenter.getWorld();
         if (world == null) {
             return false;
@@ -257,7 +302,7 @@ public final class Village implements CommandExecutor {
         boolean villageEntitiesEnabled = true;
         try {
             villageId = VillageEntityManager.computeVillageId(villageCenter);
-        } catch (Throwable throwable) {
+        } catch (RuntimeException | LinkageError throwable) {
             villageId = Math.abs(Objects.hash(centerX, baseY, centerZ));
             villageEntitiesEnabled = false;
             plugin.getLogger().warning(
@@ -286,6 +331,7 @@ public final class Village implements CommandExecutor {
             session.getAnchors().put("keep", keepAnchor.clone());
         }
         currentSession = session;
+        currentSessionOwner = ownerId;
         logLayoutSummary(layout);
 
         Queue<Runnable> todo = new LinkedList<>();
@@ -576,7 +622,7 @@ public final class Village implements CommandExecutor {
                                 owner.getVillageId(),
                                 populationSettings
                         );
-                    } catch (Throwable throwable) {
+                    } catch (RuntimeException | LinkageError throwable) {
                         /*
                          * Le bloc reste un spawner utilisable même dans un
                          * environnement de test qui n'implémente pas le PDC.
@@ -640,7 +686,7 @@ public final class Village implements CommandExecutor {
                             plugin,
                             villageId
                     );
-                } catch (Throwable ignored) {
+                } catch (RuntimeException | LinkageError ignored) {
                     /*
                      * Certains environnements de test ne fournissent pas le
                      * conteneur de données persistantes de Paper.
@@ -648,7 +694,7 @@ public final class Village implements CommandExecutor {
                 }
                 minePlugin.getMerchantManager()
                         .prepareMerchantNpc(villager);
-            } catch (Throwable throwable) {
+            } catch (RuntimeException | LinkageError throwable) {
                 plugin.getLogger().warning(
                         "Apparition du marchand ignorée : "
                                 + throwable.getClass().getSimpleName());
@@ -989,7 +1035,7 @@ public final class Village implements CommandExecutor {
                             processed++;
                         }
                     }
-                } catch (Throwable throwable) {
+                } catch (RuntimeException | LinkageError throwable) {
                     plugin.getLogger().log(
                             Level.SEVERE,
                             "La génération du village a échoué ; "
@@ -1298,6 +1344,34 @@ public final class Village implements CommandExecutor {
         return null;
     }
 
+    private boolean canManageCurrentSession(Player player) {
+        if (currentSession == null) {
+            return true;
+        }
+        return player.hasPermission(ADMIN_PERMISSION)
+                || currentSessionOwner != null
+                && currentSessionOwner.equals(player.getUniqueId());
+    }
+
+    /**
+     * Termine proprement le module lors de l'arrêt du serveur. Une génération
+     * incomplète est restaurée afin de ne jamais laisser un demi-village ; un
+     * village terminé reste naturellement dans le monde.
+     */
+    public void shutdown() {
+        VillageGenerationSession session = currentSession;
+        boolean generationInProgress = activeBuildTask != null;
+        cancelActiveBuild();
+
+        if (generationInProgress && session != null) {
+            rollbackSession(session);
+            return;
+        }
+
+        currentSession = null;
+        currentSessionOwner = null;
+    }
+
     /**
      * Annule la génération active ou terminée et restaure les blocs dans
      * l'ordre inverse de leur première modification.
@@ -1331,6 +1405,7 @@ public final class Village implements CommandExecutor {
          */
         if (currentSession == session) {
             currentSession = null;
+            currentSessionOwner = null;
         }
 
         VillageKnightManager knightManager = getVillageKnightManager();
@@ -1372,7 +1447,7 @@ public final class Village implements CommandExecutor {
                     plugin,
                     session.getVillageId()
             );
-        } catch (Throwable throwable) {
+        } catch (RuntimeException | LinkageError throwable) {
             plugin.getLogger().warning(
                     "Nettoyage des entités du village incomplet : "
                             + throwable.getClass().getSimpleName()

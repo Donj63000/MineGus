@@ -1,4 +1,6 @@
 /MinePlugin.jar
+/MineGus.jar
+/Plugin compilé/*.jar
 /target/
 /.codex_tmp/
 /.jdk24

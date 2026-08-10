@@ -28,12 +28,6 @@ PORT_PROBE_TIMEOUT_SECONDS = 0.20
 JAVA_VERSION_TIMEOUT_SECONDS = 6.0
 MAX_LOG_READ_BYTES = 1024 * 1024
 
-DEFAULT_SERVER_DIRECTORY = Path(
-    r"C:\Users\nodig\Desktop\SERVEUR MINECRAFT AUGUSTIN\PaperServer"
-)
-DEFAULT_JAVA_EXECUTABLE = Path(
-    r"C:\Users\nodig\.jdks\ms-21.0.8\bin\java.exe"
-)
 MINECRAFT_LAUNCHER_AUMID = "Microsoft.4297127D64EC6_8wekyb3d8bbwe!Minecraft"
 
 _JAVA_VERSION_PATTERN = re.compile(
@@ -97,8 +91,9 @@ def resolve_server_directory(
     if configured_directory:
         candidates.append(Path(configured_directory))
 
+    # Le dossier de l'exécutable est le seul repli local : aucun chemin
+    # appartenant à une machine de développement ne doit être embarqué.
     candidates.append(executable_dir or executable_directory())
-    candidates.append(DEFAULT_SERVER_DIRECTORY)
 
     seen: set[Path] = set()
     for candidate in candidates:
@@ -191,7 +186,6 @@ def java_candidates(
     launcher_root = launcher_directory or executable_directory()
     yield launcher_root / "runtime" / "bin" / "java.exe"
     yield launcher_root / "jdk" / "bin" / "java.exe"
-    yield DEFAULT_JAVA_EXECUTABLE
 
     java_home = environment.get("JAVA_HOME")
     if java_home:

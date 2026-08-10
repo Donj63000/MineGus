@@ -32,7 +32,6 @@ import org.bukkit.util.BoundingBox;
 import org.bukkit.util.Vector;
 
 import java.io.File;
-import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
@@ -48,8 +47,14 @@ public final class Foret implements CommandExecutor, Listener {
 
     private static final String USE_PERMISSION = "minegus.forester.use";
     private static final String ADMIN_PERMISSION = "minegus.forester.admin";
+    private static final String BYPASS_PERMISSION = "minegus.forester.bypass";
+    private static final int MIN_SIDE_LENGTH = 4;
     private static final int MAX_SIDE_LENGTH = 64;
     private static final int MAX_AREA_BLOCKS = 4096;
+    private static final int MAX_ACTIVE_FORESTS = 128;
+    private static final int MAX_PERSISTED_QUEUE_ENTRIES = MAX_AREA_BLOCKS;
+    private static final int MAX_PERSISTED_PLANT_SITES = MAX_AREA_BLOCKS;
+    private static final int MAX_PERSISTED_FORESTERS = MAX_ACTIVE_FORESTS * 2;
 
     /* ══════════════════════ CONSTANTES (faciles à ajuster) ══════════════════════ */
     private static final String FORET_SELECTOR_NAME = ChatColor.GOLD + "Sélecteur de forêt";
@@ -76,6 +81,7 @@ public final class Foret implements CommandExecutor, Listener {
     /* ════════════════════════════════════════════════════════════════════════════ */
 
     private final JavaPlugin plugin;
+    private final NamespacedKey selectorKey;
 
     /* sélection par joueur */
     private final Map<UUID, Selection> selections = new HashMap<>();
@@ -100,6 +106,7 @@ public final class Foret implements CommandExecutor, Listener {
 
     public Foret(JavaPlugin plugin) {
         this.plugin = plugin;
+        this.selectorKey = new NamespacedKey(plugin, "forest-selector");
         Objects.requireNonNull(plugin.getCommand("foret")).setExecutor(this);
         Bukkit.getPluginManager().registerEvents(this, plugin);
 
@@ -161,7 +168,8 @@ public final class Foret implements CommandExecutor, Listener {
         player.sendMessage(ChatColor.YELLOW + "/bucheron liste" + ChatColor.GRAY + " - afficher tes forêts");
         player.sendMessage(ChatColor.YELLOW + "/bucheron statut [numéro]" + ChatColor.GRAY + " - afficher leur état");
         player.sendMessage(ChatColor.YELLOW + "/bucheron reparer [numéro]" + ChatColor.GRAY + " - réparer la structure");
-        player.sendMessage(ChatColor.YELLOW + "/bucheron supprimer [numéro]" + ChatColor.GRAY + " - arrêter et supprimer");
+        player.sendMessage(ChatColor.YELLOW + "/bucheron supprimer [numéro]"
+                + ChatColor.GRAY + " - désactiver l'automatisation");
         return true;
     }
 
@@ -210,7 +218,8 @@ public final class Foret implements CommandExecutor, Listener {
         sessionsByHut.remove(session.getHutId());
         discardForesterRecord(session.getHutId());
         saveAllSessions();
-        player.sendMessage(ChatColor.GREEN + "Forêt arrêtée et supprimée.");
+        player.sendMessage(ChatColor.GREEN
+                + "Automatisation désactivée ; la structure reste en place.");
         return true;
     }
 
@@ -245,12 +254,37 @@ public final class Foret implements CommandExecutor, Listener {
                 .toList();
     }
 
-    private void giveSelector(Player p) {
+    private void giveSelector(Player player) {
         ItemStack stick = new ItemStack(Material.STICK);
-        ItemMeta m = stick.getItemMeta();
-        m.setDisplayName(FORET_SELECTOR_NAME);
-        stick.setItemMeta(m);
-        p.getInventory().addItem(stick);
+        ItemMeta meta = stick.getItemMeta();
+        if (meta != null) {
+            meta.setDisplayName(FORET_SELECTOR_NAME);
+            meta.getPersistentDataContainer().set(
+                    selectorKey,
+                    PersistentDataType.BYTE,
+                    (byte) 1
+            );
+            stick.setItemMeta(meta);
+        }
+        player.getInventory()
+                .addItem(stick)
+                .values()
+                .forEach(leftover -> player.getWorld().dropItemNaturally(
+                        player.getLocation(),
+                        leftover
+                ));
+    }
+
+    private boolean isForestSelector(ItemStack item) {
+        if (item == null
+                || item.getType() != Material.STICK
+                || !item.hasItemMeta()) {
+            return false;
+        }
+        Byte marker = item.getItemMeta()
+                .getPersistentDataContainer()
+                .get(selectorKey, PersistentDataType.BYTE);
+        return marker != null && marker == (byte) 1;
     }
 
     /* ═════════════════════ EVENTS ═════════════════════ */
@@ -259,13 +293,19 @@ public final class Foret implements CommandExecutor, Listener {
     public void onPlayerInteract(PlayerInteractEvent e) {
         if (e.getClickedBlock() == null) return;
         ItemStack item = e.getItem();
-        if (item == null || !item.hasItemMeta()
-                || !FORET_SELECTOR_NAME.equals(item.getItemMeta().getDisplayName()))
+        if (!isForestSelector(item)) {
             return;
+        }
 
         e.setCancelled(true);
-
         Player p = e.getPlayer();
+        if (!p.hasPermission(USE_PERMISSION)) {
+            selections.remove(p.getUniqueId());
+            p.sendMessage(ChatColor.RED
+                    + "Tu n'as plus la permission d'utiliser ce sélecteur.");
+            return;
+        }
+
         Selection sel = selections.get(p.getUniqueId());
         if (sel == null) {
             p.sendMessage(ChatColor.RED + "Refais /foret pour commencer une sélection.");
@@ -286,21 +326,58 @@ public final class Foret implements CommandExecutor, Listener {
         }
     }
 
-    @EventHandler
-    public void onBlockBreak(BlockBreakEvent e) {
-        Block b = e.getBlock();
-        for (ForestSession fs : new ArrayList<>(sessions)) {
-            if (fs.isProtectedStructure(b)) {
-                e.setCancelled(true);
+    @EventHandler(
+            priority = EventPriority.HIGHEST,
+            ignoreCancelled = true
+    )
+    public void onBlockBreak(BlockBreakEvent event) {
+        Block block = event.getBlock();
+        Player player = event.getPlayer();
+        boolean bypass = player.hasPermission(BYPASS_PERMISSION);
+
+        for (ForestSession session : new ArrayList<>(sessions)) {
+            if (session.isProtectedStructure(block)) {
+                if (!bypass) {
+                    event.setCancelled(true);
+                    player.sendMessage(ChatColor.RED
+                            + "Cette structure forestière est protégée.");
+                }
                 return;
             }
-            if (fs.removeChestIfMatch(b) && !fs.hasChests()) {
-                fs.stop();
-                sessions.remove(fs);
-                sessionsByHut.remove(fs.getHutId());
-                discardForesterRecord(fs.getHutId());
+            if (!session.isChest(block)) {
+                continue;
+            }
+            if (!bypass && !session.canManage(player)) {
+                event.setCancelled(true);
+                player.sendMessage(ChatColor.RED
+                        + "Cette forêt appartient à un autre joueur.");
+                return;
+            }
+
+            return;
+        }
+    }
+
+    /**
+     * Retire un coffre de la session seulement après la décision finale des
+     * plugins de protection de régions.
+     */
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    public void onManagedChestBreakCompleted(BlockBreakEvent event) {
+        Block block = event.getBlock();
+        for (ForestSession session : new ArrayList<>(sessions)) {
+            if (!session.isChest(block)) {
+                continue;
+            }
+            session.removeChest(block);
+            if (!session.hasChests()) {
+                session.stop();
+                sessions.remove(session);
+                sessionsByHut.remove(session.getHutId());
+                discardForesterRecord(session.getHutId());
                 saveSessions();
             }
+            return;
         }
     }
 
@@ -344,10 +421,47 @@ public final class Foret implements CommandExecutor, Listener {
         int minZ = Math.min(z1, z2), maxZ = Math.max(z1, z2);
         int width = maxX - minX + 1;
         int length = maxZ - minZ + 1;
-        if (width > MAX_SIDE_LENGTH || length > MAX_SIDE_LENGTH
-                || (long) width * length > MAX_AREA_BLOCKS) {
-            p.sendMessage(ChatColor.RED + "La forêt dépasse la limite de 64 blocs par côté et 4096 blocs.");
+        if (!areDimensionsAllowed(width, length)) {
+            p.sendMessage(ChatColor.RED
+                    + "Une forêt doit mesurer entre " + MIN_SIDE_LENGTH
+                    + " et " + MAX_SIDE_LENGTH
+                    + " blocs par côté, sans dépasser "
+                    + MAX_AREA_BLOCKS + " blocs.");
             sel.corner2 = null;
+            return;
+        }
+        if (y < w.getMinHeight()
+                || y + FOREST_HEIGHT >= w.getMaxHeight()) {
+            p.sendMessage(ChatColor.RED
+                    + "La hauteur choisie ne laisse pas assez d'espace "
+                    + "pour les arbres.");
+            sel.corner2 = null;
+            return;
+        }
+
+        int playerLimit = Math.max(
+                1,
+                plugin.getConfig().getInt(
+                        "forester-v2.max-areas-per-player",
+                        2
+                )
+        );
+        long owned = sessions.stream()
+                .filter(session ->
+                        p.getUniqueId().equals(session.ownerId))
+                .count();
+        if (!p.hasPermission(ADMIN_PERMISSION)
+                && owned >= playerLimit) {
+            p.sendMessage(ChatColor.RED
+                    + "Tu as déjà atteint la limite de "
+                    + playerLimit + " forêts.");
+            selections.remove(p.getUniqueId());
+            return;
+        }
+        if (sessions.size() >= MAX_ACTIVE_FORESTS) {
+            p.sendMessage(ChatColor.RED
+                    + "La limite globale de forêts actives est atteinte.");
+            selections.remove(p.getUniqueId());
             return;
         }
         boolean overlaps = sessions.stream().anyMatch(session ->
@@ -366,108 +480,259 @@ public final class Foret implements CommandExecutor, Listener {
                 w, new Location(w, minX, y, minZ),
                 width, length, p.getUniqueId()
         );
-        registerSession(fs, true);
-        saveSessions();
+        try {
+            registerSession(fs, true);
+            saveSessions();
+        } catch (RuntimeException | LinkageError failure) {
+            plugin.getLogger().log(
+                    java.util.logging.Level.SEVERE,
+                    "[Foret] Impossible de créer la forêt de "
+                            + p.getName() + ".",
+                    failure
+            );
+            p.sendMessage(ChatColor.RED
+                    + "La forêt n'a pas pu être créée. Consulte les logs.");
+            return;
+        }
 
-        p.sendMessage(ChatColor.GREEN + "Forêt créée ! (" + fs.width + "×" + fs.length + ")");
+        p.sendMessage(ChatColor.GREEN
+                + "Forêt créée ! (" + fs.width + "×" + fs.length + ")");
         selections.remove(p.getUniqueId());
+    }
+
+    static boolean areDimensionsAllowed(int width, int length) {
+        if (width < MIN_SIDE_LENGTH || length < MIN_SIDE_LENGTH) {
+            return false;
+        }
+        return width <= MAX_SIDE_LENGTH
+                && length <= MAX_SIDE_LENGTH
+                && (long) width * length <= MAX_AREA_BLOCKS;
     }
 
     /* ══════════════════ PERSISTENCE (interne) ══════════════════ */
     private void saveSessions() {
         forestsYaml.set("forests", null);
-        int i = 0;
-        for (ForestSession fs : sessions) {
-            forestsYaml.createSection("forests." + i++, fs.serialize());
+        int index = 0;
+        for (ForestSession session : sessions) {
+            forestsYaml.createSection(
+                    "forests." + index++,
+                    session.serialize()
+            );
         }
-        try {
-            forestsYaml.save(forestsFile);
-        } catch (IOException ex) {
-            plugin.getLogger().severe("[Foret] Erreur de sauvegarde forests.yml");
-            ex.printStackTrace();
-        }
+        YamlFiles.saveAtomically(
+                forestsYaml,
+                forestsFile,
+                plugin.getLogger(),
+                "forests.yml"
+        );
     }
 
     private void saveForesters() {
         forestersYaml.set("foresters", null);
         for (ForesterRecord record : forestersById.values()) {
-            forestersYaml.createSection("foresters." + record.workerId(), record.serialize());
+            forestersYaml.createSection(
+                    "foresters." + record.workerId(),
+                    record.serialize()
+            );
         }
-        try {
-            forestersYaml.save(forestersFile);
-        } catch (IOException ex) {
-            plugin.getLogger().severe("[Foret] Erreur de sauvegarde foresters.yml");
-            ex.printStackTrace();
-        }
+        YamlFiles.saveAtomically(
+                forestersYaml,
+                forestersFile,
+                plugin.getLogger(),
+                "foresters.yml"
+        );
     }
 
     private void loadSessions() {
-        ConfigurationSection root = forestsYaml.getConfigurationSection("forests");
-        if (root == null) return;
+        ConfigurationSection root =
+                forestsYaml.getConfigurationSection("forests");
+        if (root == null) {
+            return;
+        }
 
         int restored = 0;
         for (String key : root.getKeys(false)) {
-            ConfigurationSection sec = root.getConfigurationSection(key);
-            if (sec == null) continue;
-
-            World w = Bukkit.getWorld(UUID.fromString(sec.getString("world", "")));
-            if (w == null) continue;
-
-            int x = sec.getInt("x"), y = sec.getInt("y"), z = sec.getInt("z");
-            int width = sec.getInt("width"), length = sec.getInt("length");
-
-            UUID sessionId = parseUuid(sec.getString("id"));
-            if (sessionId == null) {
-                String legacyKey = w.getUID() + ":" + x + ":" + y + ":" + z;
-                sessionId = UUID.nameUUIDFromBytes(legacyKey.getBytes(StandardCharsets.UTF_8));
+            if (sessions.size() >= MAX_ACTIVE_FORESTS) {
+                plugin.getLogger().warning(
+                        "[Foret] Limite de " + MAX_ACTIVE_FORESTS
+                                + " forêts atteinte pendant le chargement."
+                );
+                break;
             }
-            UUID ownerId = parseUuid(sec.getString("owner"));
-            ForestSession fs = new ForestSession(
-                    sessionId, w, new Location(w, x, y, z), width, length, ownerId);
 
-            // file de récolte
-            List<String> list = sec.getStringList("harvestQueue");
-            if (!list.isEmpty()) {
-                for (String s : list) {
-                    String[] c = s.split(",");
-                    if (c.length == 3) {
-                        Block b = w.getBlockAt(
-                                Integer.parseInt(c[0]),
-                                Integer.parseInt(c[1]),
-                                Integer.parseInt(c[2]));
-                        fs.bfs.add(b);
+            ConfigurationSection section =
+                    root.getConfigurationSection(key);
+            if (section == null) {
+                continue;
+            }
+
+            try {
+                UUID worldId = parseUuid(section.getString("world"));
+                World world = worldId == null
+                        ? null
+                        : Bukkit.getWorld(worldId);
+                if (world == null) {
+                    plugin.getLogger().warning(
+                            "[Foret] Monde invalide ou introuvable pour "
+                                    + "forests." + key + "."
+                    );
+                    continue;
+                }
+
+                int x = section.getInt("x");
+                int y = section.getInt("y");
+                int z = section.getInt("z");
+                int width = section.getInt("width");
+                int length = section.getInt("length");
+                if (!areDimensionsAllowed(width, length)
+                        || y < world.getMinHeight()
+                        || y + FOREST_HEIGHT >= world.getMaxHeight()) {
+                    plugin.getLogger().warning(
+                            "[Foret] Dimensions invalides ignorées pour "
+                                    + "forests." + key + "."
+                    );
+                    continue;
+                }
+                boolean overlaps = sessions.stream().anyMatch(session ->
+                        session.w.getUID().equals(world.getUID())
+                                && x < session.x0 + session.width
+                                && x + width > session.x0
+                                && z < session.z0 + session.length
+                                && z + length > session.z0);
+                if (overlaps) {
+                    plugin.getLogger().warning(
+                            "[Foret] Forêt chevauchante ignorée: forests."
+                                    + key + "."
+                    );
+                    continue;
+                }
+
+                UUID sessionId = parseUuid(section.getString("id"));
+                if (sessionId == null) {
+                    String legacyKey = world.getUID()
+                            + ":" + x + ":" + y + ":" + z;
+                    sessionId = UUID.nameUUIDFromBytes(
+                            legacyKey.getBytes(StandardCharsets.UTF_8)
+                    );
+                }
+                UUID ownerId = parseUuid(section.getString("owner"));
+                ForestSession session = new ForestSession(
+                        sessionId,
+                        world,
+                        new Location(world, x, y, z),
+                        width,
+                        length,
+                        ownerId
+                );
+
+                int examinedQueueEntries = 0;
+                for (String serialized :
+                        section.getStringList("harvestQueue")) {
+                    if (examinedQueueEntries++
+                            >= MAX_PERSISTED_QUEUE_ENTRIES) {
+                        plugin.getLogger().warning(
+                                "[Foret] File de récolte tronquée dans forests."
+                                        + key + "."
+                        );
+                        break;
+                    }
+                    Block block = parseStoredBlock(
+                            world,
+                            serialized,
+                            ","
+                    );
+                    if (block != null
+                            && session.inBounds(block.getLocation())) {
+                        session.bfs.add(block);
                     }
                 }
-            }
-            // replant en attente
-            if (sec.contains("replantLocation")) {
-                List<Integer> rl = sec.getIntegerList("replantLocation");
-                if (rl.size() == 3)
-                    fs.replant = w.getBlockAt(rl.get(0), rl.get(1), rl.get(2));
-            }
 
-            // recharger les sites de plantation (si présents)
-            List<String> sites = sec.getStringList("sites");
-            if (!sites.isEmpty()) {
-                for (String s : sites) {
-                    // format: x;y;z;is2x2;mat
-                    String[] c = s.split(";");
-                    if (c.length == 5) {
-                        int sx = Integer.parseInt(c[0]);
-                        int sy = Integer.parseInt(c[1]);
-                        int sz = Integer.parseInt(c[2]);
-                        boolean two = Boolean.parseBoolean(c[3]);
-                        Material mat = Material.matchMaterial(c[4]);
-                        if (mat != null) fs.plantSites.add(new PlantSite(new Location(w, sx, sy, sz), two, mat));
+                List<Integer> replant =
+                        section.getIntegerList("replantLocation");
+                if (replant.size() == 3) {
+                    Block block = world.getBlockAt(
+                            replant.get(0),
+                            replant.get(1),
+                            replant.get(2)
+                    );
+                    if (session.inBounds(block.getLocation())) {
+                        session.replant = block;
                     }
                 }
-            }
 
-            registerSession(fs, false);
-            restored++;
+                int examinedPlantSites = 0;
+                for (String serialized : section.getStringList("sites")) {
+                    if (examinedPlantSites++ >= MAX_PERSISTED_PLANT_SITES) {
+                        plugin.getLogger().warning(
+                                "[Foret] Liste de plantations tronquée dans "
+                                        + "forests." + key + "."
+                        );
+                        break;
+                    }
+                    String[] parts = serialized.split(";", -1);
+                    if (parts.length != 5) {
+                        continue;
+                    }
+                    try {
+                        Location location = new Location(
+                                world,
+                                Integer.parseInt(parts[0]),
+                                Integer.parseInt(parts[1]),
+                                Integer.parseInt(parts[2])
+                        );
+                        Material material =
+                                Material.matchMaterial(parts[4]);
+                        if (material != null
+                                && session.inBounds(location)) {
+                            session.plantSites.add(new PlantSite(
+                                    location,
+                                    Boolean.parseBoolean(parts[3]),
+                                    material
+                            ));
+                        }
+                    } catch (NumberFormatException ignored) {
+                        plugin.getLogger().warning(
+                                "[Foret] Site invalide ignoré dans forests."
+                                        + key + "."
+                        );
+                    }
+                }
+
+                registerSession(session, false);
+                restored++;
+            } catch (RuntimeException | LinkageError failure) {
+                plugin.getLogger().log(
+                        java.util.logging.Level.WARNING,
+                        "[Foret] Entrée forests." + key + " ignorée.",
+                        failure
+                );
+            }
         }
-        plugin.getLogger().info("[Foret] " + restored + " forêt(s) restaurée(s).");
-        Bukkit.getScheduler().runTask(plugin, this::scanLoadedEntities);
+        plugin.getLogger().info(
+                "[Foret] " + restored + " forêt(s) restaurée(s)."
+        );
+    }
+
+    private Block parseStoredBlock(
+            World world,
+            String serialized,
+            String delimiter) {
+        String[] parts = serialized.split(
+                java.util.regex.Pattern.quote(delimiter),
+                -1
+        );
+        if (parts.length != 3) {
+            return null;
+        }
+        try {
+            return world.getBlockAt(
+                    Integer.parseInt(parts[0]),
+                    Integer.parseInt(parts[1]),
+                    Integer.parseInt(parts[2])
+            );
+        } catch (NumberFormatException ignored) {
+            return null;
+        }
     }
 
     private void loadForesters() {
@@ -476,7 +741,15 @@ public final class Foret implements CommandExecutor, Listener {
         ConfigurationSection root = forestersYaml.getConfigurationSection("foresters");
         if (root == null) return;
 
+        int examined = 0;
         for (String key : root.getKeys(false)) {
+            if (examined++ >= MAX_PERSISTED_FORESTERS) {
+                plugin.getLogger().warning(
+                        "[Foret] foresters.yml contient trop d'entrées ; "
+                                + "le surplus est ignoré."
+                );
+                break;
+            }
             try {
                 UUID workerId = UUID.fromString(key);
                 ConfigurationSection sec = root.getConfigurationSection(key);
@@ -485,7 +758,9 @@ public final class Foret implements CommandExecutor, Listener {
                 if (record == null) continue;
                 registerForester(record);
             } catch (IllegalArgumentException ex) {
-                plugin.getLogger().warning("[Foret] UUID invalide dans foresters.yml: " + key);
+                plugin.getLogger().warning(
+                        "[Foret] UUID invalide dans foresters.yml: " + key
+                );
             }
         }
     }
@@ -495,12 +770,33 @@ public final class Foret implements CommandExecutor, Listener {
         forestersByHut.put(record.hutId(), record);
     }
 
-    private void registerSession(ForestSession session, boolean spawnFresh) {
+    private void registerSession(
+            ForestSession session,
+            boolean spawnFresh) {
         sessions.add(session);
         sessionsByHut.put(session.getHutId(), session);
-        ensureForesterRecord(session);
-        session.start(spawnFresh);
-        ensureMissingWorkerTask();
+        try {
+            ensureForesterRecord(session);
+            session.start(spawnFresh);
+            ensureMissingWorkerTask();
+        } catch (RuntimeException | LinkageError failure) {
+            /*
+             * Une erreur de construction ne doit laisser ni ticket de chunk,
+             * ni tâche, ni enregistrement fantôme dans les index persistants.
+             */
+            try {
+                session.stop(true);
+            } catch (RuntimeException cleanupFailure) {
+                failure.addSuppressed(cleanupFailure);
+            }
+            sessions.remove(session);
+            sessionsByHut.remove(session.getHutId(), session);
+            sessionsByWorkerId.values().removeIf(
+                    indexed -> indexed == session
+            );
+            discardForesterRecord(session.getHutId());
+            throw failure;
+        }
     }
 
     private static UUID parseUuid(String value) {
@@ -1290,9 +1586,16 @@ public final class Foret implements CommandExecutor, Listener {
                             stepDelay = 0;
                             plugin.getLogger().info("[Foret] Job lancé @ " + site.base.getBlockX() + "," + site.base.getBlockY() + "," + site.base.getBlockZ());
                         }
-                    } catch (Throwable t) {
-                        plugin.getLogger().severe("[Foret] Erreur dans la boucle pour " + hutId);
-                        t.printStackTrace();
+                    } catch (RuntimeException | LinkageError failure) {
+                        /*
+                         * Les erreurs JVM fatales (mémoire, arrêt du thread...)
+                         * ne doivent jamais être masquées par la boucle métier.
+                         */
+                        plugin.getLogger().log(
+                                java.util.logging.Level.SEVERE,
+                                "[Foret] Erreur dans la boucle pour " + hutId,
+                                failure
+                        );
                     }
                 }
             };
@@ -1630,8 +1933,23 @@ public final class Foret implements CommandExecutor, Listener {
             }
         }
 
-        boolean removeChestIfMatch(Block b) { return chests.remove(b); }
-        boolean hasChests() { return !chests.isEmpty(); }
+        boolean isChest(Block block) {
+            return chests.contains(block);
+        }
+
+        void removeChest(Block block) {
+            chests.remove(block);
+        }
+
+        boolean hasChests() {
+            return !chests.isEmpty();
+        }
+
+        boolean canManage(Player player) {
+            return player.hasPermission(ADMIN_PERMISSION)
+                    || ownerId != null
+                    && ownerId.equals(player.getUniqueId());
+        }
 
         private void expandStorageRack() {
             // ajoute un coffre au-dessus du premier, jusqu'à MAX_RACK_HEIGHT

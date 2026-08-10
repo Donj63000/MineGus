@@ -31,7 +31,6 @@ import org.bukkit.scheduler.BukkitTask;
 import org.example.mineur.AutomatedMiningContext;
 
 import java.io.File;
-import java.io.IOException;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.Locale;
@@ -651,18 +650,16 @@ public final class JobManager implements Listener, CommandExecutor {
                 section.set("xp", data.xp);
             }
 
-            try {
-                File parent = dataFile.getParentFile();
-                if (parent != null && !parent.exists()) {
-                    parent.mkdirs();
-                }
-                config.save(dataFile);
+            boolean saved = YamlFiles.saveAtomically(
+                    config,
+                    dataFile,
+                    plugin.getLogger(),
+                    "jobs.yml"
+            );
+            if (saved) {
                 latestWrittenVersion = version;
-                return true;
-            } catch (IOException ex) {
-                plugin.getLogger().log(Level.WARNING, "[Job] Impossible de sauvegarder jobs.yml", ex);
-                return false;
             }
+            return saved;
         }
     }
 

@@ -33,8 +33,16 @@ public final class TeleportUtils {
             return false;
         }
 
-        if (Bukkit.isPrimaryThread() || TELEPORT_ASYNC == null) {
+        if (Bukkit.isPrimaryThread()) {
             return entity.teleport(location);
+        }
+        if (TELEPORT_ASYNC == null) {
+            /*
+             * Appeler Entity#teleport hors du thread principal corrompt l'état
+             * Bukkit. En l'absence de l'API Paper asynchrone, l'échec explicite
+             * est plus sûr qu'un repli synchrone illégal.
+             */
+            return false;
         }
 
         try {
@@ -47,7 +55,12 @@ public final class TeleportUtils {
             TELEPORT_ASYNC.invoke(entity, location);
             return true;
         } catch (ReflectiveOperationException | RuntimeException exception) {
-            return entity.teleport(location);
+            /*
+             * Même règle en cas d'échec réflexif : le code appelant pourra
+             * réessayer sur le thread principal sans déclencher d'accès monde
+             * concurrent.
+             */
+            return false;
         }
     }
 
