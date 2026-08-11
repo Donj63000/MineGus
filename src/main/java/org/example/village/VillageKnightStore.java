@@ -26,7 +26,7 @@ public final class VillageKnightStore {
 
     private static final int SCHEMA_VERSION = 1;
     private static final long MAX_FILE_BYTES = 4L * 1024L * 1024L;
-    private static final int MAX_GARRISONS = 32;
+    static final int MAX_GARRISONS = 32;
     private static final int MAX_ROUTES_PER_GARRISON = 64;
     private static final int MAX_SLOTS_PER_GARRISON = 64;
     private static final int MAX_POINTS_PER_ROUTE = 512;

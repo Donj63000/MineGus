@@ -23,6 +23,7 @@ import org.bukkit.scheduler.BukkitTask;
 import org.example.progression.GlobalProgressionManager;
 import org.example.village.Disposition;
 import org.example.village.KeepBuilder;
+import org.example.village.TreasuryBuilder;
 import org.example.village.VillageEntityManager;
 import org.example.village.VillageGenerationSession;
 import org.example.village.VillageLayoutPlan;
@@ -30,6 +31,7 @@ import org.example.village.VillageLayoutPlanner;
 import org.example.village.VillageLayoutSettings;
 import org.example.village.VillageLightingBuilder;
 import org.example.village.VillageKnightManager;
+import org.example.village.VillageTreasuryManager;
 import org.example.village.VillagePopulationSettings;
 import org.example.village.VillageStyle;
 import org.example.village.WallBuilder;
@@ -258,12 +260,29 @@ public final class Village implements CommandExecutor {
                 centerZ,
                 requestedCenter.getBlockY() - 1
         );
-        if (!KeepBuilder.fitsVertically(world, baseY)) {
+        VillageTreasuryManager treasuryManager =
+                getVillageTreasuryManager();
+        VillageKnightManager knightManager = getVillageKnightManager();
+        boolean treasuryEnabled = treasuryManager != null
+                && treasuryManager.isEnabled();
+        boolean keepFits = KeepBuilder.fitsVertically(world, baseY);
+        boolean treasuryFits = !treasuryEnabled
+                || TreasuryBuilder.fitsVertically(world, baseY);
+        if (!keepFits || !treasuryFits) {
+            int deepestFoundation = treasuryEnabled
+                    ? Math.max(
+                    KeepBuilder.foundationDepth(),
+                    TreasuryBuilder.foundationDepth()
+            )
+                    : KeepBuilder.foundationDepth();
             plugin.getLogger().warning(
-                    "Altitude incompatible avec la forteresse : y="
-                            + baseY
+                    "Altitude incompatible avec le donjon"
+                            + (treasuryEnabled
+                            ? " et sa salle des coffres"
+                            : "")
+                            + " : y=" + baseY
                             + " (fondations jusqu'à "
-                            + (baseY - KeepBuilder.foundationDepth())
+                            + (baseY - deepestFoundation)
                             + ", sommet jusqu'à "
                             + (baseY + KeepBuilder.maximumRelativeHeight())
                             + ")."
@@ -308,6 +327,31 @@ public final class Village implements CommandExecutor {
             plugin.getLogger().warning(
                     "VillageEntityManager indisponible : "
                             + throwable.getClass().getSimpleName());
+        }
+
+        /*
+         * Le pré-contrôle intervient avant la création de la première tâche de
+         * génération. Une collision d'identifiant ne peut donc jamais vider
+         * temporairement les coffres d'une ancienne salle avant le rollback.
+         */
+        if (treasuryEnabled
+                && !treasuryManager.canPrepareVillage(villageId)) {
+            plugin.getLogger().severe(
+                    "Village " + villageId + " non généré : le service de "
+                            + "salle des coffres est indisponible, saturé, en "
+                            + "lecture seule ou cet identifiant existe déjà."
+            );
+            return false;
+        }
+        if (treasuryEnabled
+                && (knightManager == null
+                || !knightManager.canPrepareTreasuryGuards(villageId))) {
+            plugin.getLogger().severe(
+                    "Village " + villageId + " non généré : les quatre "
+                            + "gardes obligatoires de la salle des coffres "
+                            + "ne peuvent pas être persistés."
+            );
+            return false;
         }
 
         VillageGenerationSession session =
@@ -450,6 +494,49 @@ public final class Village implements CommandExecutor {
         );
 
         /*
+         * La chambre forte appartient au donjon de CE village /village. Elle
+         * utilise le même callback transactionnel : une erreur ou
+         * /village undo restaure donc aussi chaque bloc souterrain.
+         */
+        TreasuryBuilder.Plan treasuryPlan = null;
+        if (treasuryEnabled) {
+            treasuryPlan = TreasuryBuilder.build(
+                    villageCenter,
+                    rz,
+                    baseY,
+                    todo,
+                    (x, y, z, material) ->
+                            setBlockTracked(
+                                    session,
+                                    world,
+                                    x,
+                                    y,
+                                    z,
+                                    material
+                            )
+            );
+            if (treasuryPlan == null) {
+                rollbackSession(session);
+                return false;
+            }
+
+            session.getAnchors().put(
+                    "treasury",
+                    treasuryPlan.roomAnchor().clone()
+            );
+            for (int index = 0;
+                 index < treasuryPlan.guardAnchors().size();
+                 index++) {
+                session.getAnchors().put(
+                        "treasury-guard-" + index,
+                        treasuryPlan.guardAnchors()
+                                .get(index)
+                                .clone()
+                );
+            }
+        }
+
+        /*
          * Cette passe est volontairement planifiée après la muraille et tous
          * les bâtiments. Elle peut ainsi mesurer les zones réellement sombres,
          * y compris les intérieurs, les toitures et les chemins de ronde.
@@ -467,6 +554,7 @@ public final class Village implements CommandExecutor {
         );
 
         final int resolvedVillageId = villageId;
+        final TreasuryBuilder.Plan resolvedTreasuryPlan = treasuryPlan;
         if (villageEntitiesEnabled) {
             todo.add(() -> VillageEntityManager.spawnInitial(
                     plugin,
@@ -478,22 +566,61 @@ public final class Village implements CommandExecutor {
         }
 
         /*
-         * La garnison est enregistrée en toute dernière action : les routes,
-         * les remparts et le donjon existent alors réellement dans le monde.
-         * Le planificateur peut donc refuser proprement les archers si le
-         * chemin de ronde n'est pas praticable.
+         * L'état fiscal n'est publié qu'après la construction réelle des
+         * soixante coffres, du pupitre et des portes. Un refus déclenche le
+         * rollback transactionnel au lieu de laisser une banque non gérée.
          */
-        VillageKnightManager knightManager = getVillageKnightManager();
+        if (treasuryManager != null && resolvedTreasuryPlan != null) {
+            todo.add(() -> {
+                if (!treasuryManager.registerVillage(
+                        resolvedVillageId,
+                        ownerId,
+                        resolvedTreasuryPlan
+                )) {
+                    throw new IllegalStateException(
+                            "Impossible d'enregistrer la salle des coffres "
+                                    + "du village " + resolvedVillageId + "."
+                    );
+                }
+                session.markTreasuryRegistered();
+            });
+        }
+
+        /*
+         * La garnison est enregistrée en toute dernière action : les routes,
+         * les remparts, le donjon et les quatre postes du trésor existent alors
+         * réellement dans le monde.
+         */
+        if (resolvedTreasuryPlan != null && knightManager == null) {
+            plugin.getLogger().severe(
+                    "La salle des coffres requiert le gestionnaire "
+                            + "de garnison de /village."
+            );
+            rollbackSession(session);
+            return false;
+        }
         if (knightManager != null) {
-            todo.add(() -> knightManager.registerVillage(
-                    resolvedVillageId,
-                    villageCenter,
-                    layout,
-                    session.getAnchors(),
-                    rx,
-                    rz,
-                    baseY
-            ));
+            todo.add(() -> {
+                boolean registered = knightManager.registerVillage(
+                        resolvedVillageId,
+                        villageCenter,
+                        layout,
+                        session.getAnchors(),
+                        rx,
+                        rz,
+                        baseY
+                );
+                if (resolvedTreasuryPlan != null && !registered) {
+                    throw new IllegalStateException(
+                            "Impossible de créer les quatre gardes de la "
+                                    + "salle des coffres du village "
+                                    + resolvedVillageId + "."
+                    );
+                }
+                if (registered) {
+                    session.markKnightGarrisonRegistered();
+                }
+            });
         }
 
         buildActionsInBatches(todo, session);
@@ -1344,6 +1471,17 @@ public final class Village implements CommandExecutor {
         return null;
     }
 
+    /**
+     * Retourne le service fiscal sans imposer MinePlugin aux tests unitaires
+     * historiques qui instancient cette commande avec un JavaPlugin minimal.
+     */
+    private VillageTreasuryManager getVillageTreasuryManager() {
+        if (plugin instanceof MinePlugin minePlugin) {
+            return minePlugin.getVillageTreasuryManager();
+        }
+        return null;
+    }
+
     private boolean canManageCurrentSession(Player player) {
         if (currentSession == null) {
             return true;
@@ -1408,8 +1546,16 @@ public final class Village implements CommandExecutor {
             currentSessionOwner = null;
         }
 
+        VillageTreasuryManager treasuryManager =
+                getVillageTreasuryManager();
+        if (treasuryManager != null
+                && session.isTreasuryRegistered()) {
+            treasuryManager.unregisterVillage(session.getVillageId());
+        }
+
         VillageKnightManager knightManager = getVillageKnightManager();
-        if (knightManager != null) {
+        if (knightManager != null
+                && session.isKnightGarrisonRegistered()) {
             knightManager.unregisterVillage(session.getVillageId());
         }
 

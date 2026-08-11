@@ -3,6 +3,7 @@ package org.example;
 import org.example.forestry2.SharedChunkTickets;
 
 import org.bukkit.Bukkit;
+import org.bukkit.Axis;
 import org.bukkit.ChatColor;
 import org.bukkit.Chunk;
 import org.bukkit.Location;
@@ -16,12 +17,14 @@ import org.bukkit.block.BlockFace;
 import org.bukkit.block.Container;
 import org.bukkit.block.DoubleChest;
 import org.bukkit.block.data.BlockData;
+import org.bukkit.block.data.Orientable;
 import org.bukkit.block.data.Waterlogged;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandExecutor;
 import org.bukkit.command.CommandSender;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.EntityType;
+import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Player;
 import org.bukkit.entity.Villager;
 import org.bukkit.event.EventHandler;
@@ -30,6 +33,7 @@ import org.bukkit.event.Listener;
 import org.bukkit.event.block.Action;
 import org.bukkit.event.block.BlockBreakEvent;
 import org.bukkit.event.block.BlockExplodeEvent;
+import org.bukkit.event.block.BlockFromToEvent;
 import org.bukkit.event.block.BlockPistonExtendEvent;
 import org.bukkit.event.block.BlockPistonRetractEvent;
 import org.bukkit.event.block.BlockPlaceEvent;
@@ -54,6 +58,7 @@ import org.bukkit.persistence.PersistentDataType;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.bukkit.scheduler.BukkitRunnable;
 import org.bukkit.scheduler.BukkitTask;
+import org.bukkit.util.BoundingBox;
 import org.bukkit.util.Vector;
 import org.example.mineur.AutomatedMiningContext;
 import org.example.mineur.BranchIterator;
@@ -67,12 +72,20 @@ import org.example.mineur.MiningSessionState;
 import org.example.mineur.MiningSpeed;
 import org.example.mineur.QuarryIterator;
 import org.example.mineur.TunnelIterator;
+import org.example.mineur.TunnelOperationBatch;
 import org.example.mineur.VeinFirstIterator;
 import org.example.mineur.builders.MineCabinBuilder;
 import org.example.mineur.builders.MineShaftColumnBuilder;
 import org.example.mineur.builders.StairBuilder;
 import org.example.mineur.builders.SupportBuilder;
 import org.example.mineur.builders.TorchPlacer;
+import org.example.mineur.builders.TunnelInfrastructureBuilder;
+import org.example.mineur.builders.TunnelInfrastructureBuilder.BlockPos;
+import org.example.mineur.builders.TunnelInfrastructureBuilder.FluidPlan;
+import org.example.mineur.builders.TunnelInfrastructureBuilder.FluidScanner;
+import org.example.mineur.builders.TunnelInfrastructureBuilder.Placement;
+import org.example.mineur.builders.TunnelInfrastructureBuilder.PlacementKind;
+import org.example.mineur.builders.TunnelInfrastructureBuilder.Volume;
 import org.example.mineur.store.SessionStore;
 import org.example.mineur.ui.Hologram;
 
@@ -80,6 +93,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -95,6 +109,10 @@ public class Mineur implements CommandExecutor, Listener {
     private static final String CMD_PREFIX = ChatColor.GRAY + "[Mineur] " + ChatColor.RESET;
     private static final long DEFAULT_ENTITY_WATCHDOG_INTERVAL_TICKS = 20L;
     private static final long DEFAULT_ENTITY_RECOVERY_DELAY_TICKS = 2L;
+    private static final int DEFAULT_TUNNEL_OPERATIONS_PER_TICK = 64;
+    private static final int DEFAULT_TUNNEL_FLUID_INSPECTIONS_PER_TICK = 512;
+    private static final int MAX_RUNTIME_TUNNEL_PLAN_OPERATIONS = 20_000;
+    private static final int TUNNEL_RESCAN_INTERVAL_TICKS = 100;
 
     private final JavaPlugin plugin;
     private final SessionStore sessionStore;
@@ -618,8 +636,8 @@ public class Mineur implements CommandExecutor, Listener {
                     proposedHeight
             )) {
                 player.sendMessage(CMD_PREFIX + ChatColor.RED
-                        + "Le premier tronçon du tunnel dépasserait une limite, "
-                        + "une autre mine ou la bordure.");
+                        + "Le premier tronçon du tunnel dépasserait une limite "
+                        + "de sécurité, de chunks, une autre mine ou la bordure.");
                 return;
             }
         }
@@ -632,16 +650,41 @@ public class Mineur implements CommandExecutor, Listener {
             state.rollbackPendingCursor();
         }
 
+        boolean leavingTunnel = state.pattern == MiningPattern.TUNNEL
+                && pattern != MiningPattern.TUNNEL;
         state.pattern = pattern;
         state.chainTunnelAfterQuarry = false;
         state.infiniteTunnel = false;
         state.waitingStorage = false;
+
+        if (leavingTunnel) {
+            /*
+             * Je cesse explicitement de revendiquer les scellements lorsque le
+             * joueur abandonne le mode tunnel. Un WAL partiel ne peut ainsi
+             * rester protégé indéfiniment après le changement de pattern.
+             */
+            clearTunnelInfrastructureCheckpoint(state);
+            if (runtime != null) {
+                runtime.tunnelInfrastructure = null;
+                runtime.tunnelDecoration = null;
+                runtime.tunnelMaterialPalette = null;
+                runtime.decoratedTunnelSection = "";
+            }
+        }
 
         if (pattern == MiningPattern.TUNNEL) {
             state.tunnelDirection = proposedDirection;
             state.tunnelSectionSize = proposedSectionSize;
             state.tunnelHeight = proposedHeight;
             state.tunnelSectionsMined = 0;
+            state.tunnelArrivalRoom = false;
+            clearTunnelInfrastructureCheckpoint(state);
+            if (runtime != null) {
+                runtime.tunnelInfrastructure = null;
+                runtime.tunnelDecoration = null;
+                runtime.tunnelMaterialPalette = null;
+                runtime.decoratedTunnelSection = "";
+            }
             state.maxTunnelSections = Math.max(0,
                     plugin.getConfig().getInt("mineur.tunnel.max-sections", 0));
             prepareTunnelCursor(
@@ -651,6 +694,7 @@ public class Mineur implements CommandExecutor, Listener {
                     proposedSectionSize,
                     proposedHeight
             );
+            recordTunnelOriginBounds(state);
             player.sendMessage(CMD_PREFIX + ChatColor.GRAY + "Direction du tunnel : "
                     + ChatColor.AQUA + formatDirection(state.tunnelDirection)
                     + ChatColor.GRAY + ".");
@@ -1144,12 +1188,16 @@ public class Mineur implements CommandExecutor, Listener {
 
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
     public void onBlockExplode(BlockExplodeEvent event) {
-        event.blockList().removeIf(block -> findProtectedContainerSession(block) != null);
+        event.blockList().removeIf(block ->
+                findProtectedContainerSession(block) != null
+                        || isTrackedTunnelSeal(block));
     }
 
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
     public void onEntityExplode(EntityExplodeEvent event) {
-        event.blockList().removeIf(block -> findProtectedContainerSession(block) != null);
+        event.blockList().removeIf(block ->
+                findProtectedContainerSession(block) != null
+                        || isTrackedTunnelSeal(block));
     }
 
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
@@ -1189,24 +1237,39 @@ public class Mineur implements CommandExecutor, Listener {
 
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
     public void onPistonExtend(BlockPistonExtendEvent event) {
-        if (movesProtectedContainer(event.getBlocks())) {
+        if (movesProtectedInfrastructure(
+                event.getBlocks(),
+                event.getDirection()
+        ) || isTrackedTunnelSeal(
+                event.getBlock().getRelative(event.getDirection())
+        )) {
             event.setCancelled(true);
         }
     }
 
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
     public void onPistonRetract(BlockPistonRetractEvent event) {
-        if (movesProtectedContainer(event.getBlocks())) {
+        if (movesProtectedInfrastructure(
+                event.getBlocks(),
+                event.getDirection()
+        )) {
             event.setCancelled(true);
         }
     }
 
-    private boolean movesProtectedContainer(List<Block> movedBlocks) {
+    private boolean movesProtectedInfrastructure(List<Block> movedBlocks,
+                                                 BlockFace direction) {
         if (movedBlocks == null) {
             return false;
         }
         for (Block moved : movedBlocks) {
-            if (findProtectedContainerSession(moved) != null) {
+            if (findProtectedContainerSession(moved) != null
+                    || isTrackedTunnelSeal(moved)
+                    || direction != null
+                    && (isTrackedTunnelSeal(moved.getRelative(direction))
+                    || isTrackedTunnelSeal(
+                    moved.getRelative(direction.getOppositeFace())
+            ))) {
                 return true;
             }
         }
@@ -1235,7 +1298,7 @@ public class Mineur implements CommandExecutor, Listener {
             }
             if (runtime != null
                     && !state.paused
-                    && (!isHealthyMiner(runtime) || !isLoopActive(runtime))) {
+                    && (!isHealthyMiner(runtime) || !isRuntimeWorkActive(runtime))) {
                 requestMinerRecovery(
                         state.id,
                         runtime.loopGeneration,
@@ -1320,6 +1383,162 @@ public class Mineur implements CommandExecutor, Listener {
                 runtime.loopGeneration,
                 "mort forcée du PNJ"
         );
+    }
+
+    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
+    public void onTunnelFluidFlow(BlockFromToEvent event) {
+        if (event == null || !isFluidBlock(event.getBlock())) {
+            return;
+        }
+
+        Block source = event.getBlock();
+        Block destination = event.getToBlock();
+        for (RuntimeSession runtime : runtimes.values()) {
+            MiningSessionState state = runtime.state;
+            if (state == null
+                    || state.paused
+                    || state.pattern != MiningPattern.TUNNEL
+                    || !isTunnelInfrastructureEnabled(state)
+                    || !isTunnelFluidsEnabled()
+                    || state.worldUid == null
+                    || !state.worldUid.equals(source.getWorld().getUID())) {
+                continue;
+            }
+
+            boolean sourceInside = isInsideTunnelVolume(state, source);
+            boolean destinationInside = isInsideTunnelVolume(state, destination);
+            if (!sourceInside && !destinationInside) {
+                continue;
+            }
+
+            /*
+             * Je fige aussi les écoulements entièrement intérieurs. Pendant un
+             * drainage réparti sur plusieurs ticks, une source déjà détectée ne
+             * peut ainsi coloniser une case qui a été scannée plus tôt.
+             */
+            event.setCancelled(true);
+            boolean touchesActiveSection = isInsideActiveTunnelVolume(state, source)
+                    || isInsideActiveTunnelVolume(state, destination);
+            if (touchesActiveSection) {
+                if (runtime.tunnelInfrastructure == null
+                        || runtime.tunnelInfrastructure.completed) {
+                    runtime.tunnelInfrastructure = null;
+                } else {
+                    runtime.tunnelInfrastructure.rescanRequested = true;
+                }
+            }
+            return;
+        }
+    }
+
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    public void onOwnedTunnelSealBreak(BlockBreakEvent event) {
+        if (!AutomatedMiningContext.isActive()) {
+            invalidateTunnelSealOwnership(event.getBlock());
+        }
+    }
+
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    public void onOwnedTunnelSealPlacement(BlockPlaceEvent event) {
+        if (!AutomatedMiningContext.isActive()) {
+            invalidateTunnelSealOwnership(event.getBlockPlaced());
+        }
+    }
+
+    private void invalidateTunnelSealOwnership(Block block) {
+        if (block == null) {
+            return;
+        }
+        boolean changed = false;
+        for (MiningSessionState state : sessions) {
+            if (state == null
+                    || state.worldUid == null
+                    || !state.worldUid.equals(block.getWorld().getUID())) {
+                continue;
+            }
+            BlockPos position = new BlockPos(block.getX(), block.getY(), block.getZ());
+            boolean removed = removeCoordinate(state.tunnelFrontierSeals, block)
+                    | removeCoordinate(state.tunnelForeignFrontierSeals, block)
+                    | removeCoordinate(state.tunnelPermanentSeals, block)
+                    | removeCoordinate(state.pendingTunnelFrontierSeals, block)
+                    | removeCoordinate(state.pendingTunnelPermanentSeals, block);
+            RuntimeSession runtime = runtimeOf(state.id);
+            boolean runtimeAffected = runtime != null
+                    && runtime.tunnelInfrastructure != null
+                    && runtime.tunnelInfrastructure.managedPositions.contains(position);
+            if (!removed && !runtimeAffected) {
+                continue;
+            }
+            if (removed && state.pendingTunnelFrontierSeals.isEmpty()
+                    && state.pendingTunnelPermanentSeals.isEmpty()) {
+                state.pendingTunnelInfrastructureSection = "";
+            }
+            changed |= removed;
+            if (runtime != null) {
+                /*
+                 * Je recommence aussi un préflight encore non sauvegardé : un
+                 * joueur ne peut pas faire revendiquer son bloc en le posant
+                 * entre l'inspection incrémentale et l'écriture du journal.
+                 */
+                runtime.tunnelInfrastructure = null;
+                runtime.tunnelDecoration = null;
+            }
+        }
+        if (changed) {
+            saveAllSessions();
+        }
+    }
+
+    private boolean isTrackedTunnelSeal(Block block) {
+        if (block == null) {
+            return false;
+        }
+        for (MiningSessionState state : sessions) {
+            if (state == null
+                    || state.worldUid == null
+                    || !state.worldUid.equals(block.getWorld().getUID())) {
+                continue;
+            }
+            if (containsCoordinate(state.tunnelFrontierSeals, block)
+                    || containsCoordinate(state.tunnelForeignFrontierSeals, block)
+                    || containsCoordinate(state.tunnelPermanentSeals, block)
+                    || containsCoordinate(state.pendingTunnelFrontierSeals, block)
+                    || containsCoordinate(state.pendingTunnelPermanentSeals, block)) {
+                return true;
+            }
+            RuntimeSession runtime = runtimeOf(state.id);
+            if (runtime != null
+                    && runtime.tunnelInfrastructure != null
+                    && runtime.tunnelInfrastructure.managedPositions.contains(
+                    new BlockPos(block.getX(), block.getY(), block.getZ())
+            )) {
+                return true;
+            }
+            if (isGlassBlock(block.getType())
+                    && isTunnelBoundaryBlock(state, block)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean containsCoordinate(List<Vector> positions, Block block) {
+        for (Vector vector : positions) {
+            if (vector != null
+                    && vector.getBlockX() == block.getX()
+                    && vector.getBlockY() == block.getY()
+                    && vector.getBlockZ() == block.getZ()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean removeCoordinate(List<Vector> positions, Block block) {
+        return positions.removeIf(vector -> vector != null
+                && vector.getBlockX() == block.getX()
+                && vector.getBlockY() == block.getY()
+                && vector.getBlockZ() == block.getZ());
     }
 
     @EventHandler
@@ -1635,7 +1854,7 @@ public class Mineur implements CommandExecutor, Listener {
                     }
                 }
 
-                if (!isHealthyMiner(runtime) || !isLoopActive(runtime)) {
+                if (!isHealthyMiner(runtime) || !isRuntimeWorkActive(runtime)) {
                     requestMinerRecovery(
                             runtime.state.id,
                             runtime.loopGeneration,
@@ -1827,8 +2046,8 @@ public class Mineur implements CommandExecutor, Listener {
         }
     }
 
-    public void saveAllSessions() {
-        sessionStore.saveAll(sessions);
+    public boolean saveAllSessions() {
+        return sessionStore.saveAll(sessions);
     }
 
     public void loadSavedSessions() {
@@ -2478,44 +2697,20 @@ public class Mineur implements CommandExecutor, Listener {
             throw new IllegalStateException("Monde de la session non chargé.");
         }
 
-        Set<Long> desired = new HashSet<>();
         MiningCursor active = state.cursor;
         int minX = active != null ? active.minX : state.base.getBlockX();
         int minZ = active != null ? active.minZ : state.base.getBlockZ();
         int width = Math.max(1, active != null ? active.width : state.width);
         int length = Math.max(1, active != null ? active.length : state.length);
-
-        long maxX = (long) minX + width - 1L;
-        long maxZ = (long) minZ + length - 1L;
-        if (maxX > Integer.MAX_VALUE || maxX < Integer.MIN_VALUE
-                || maxZ > Integer.MAX_VALUE || maxZ < Integer.MIN_VALUE) {
-            throw new IllegalStateException("Coordonnées de session hors limites.");
-        }
-        addChunkRectangle(desired, minX, (int) maxX, minZ, (int) maxZ);
-
-        MiningSessionState.StructureBounds structureBounds = state.structureBounds;
-        if (structureBounds != null) {
-            addChunkRectangle(
-                    desired,
-                    structureBounds.minX(),
-                    structureBounds.maxX(),
-                    structureBounds.minZ(),
-                    structureBounds.maxZ()
-            );
-        }
-        desired.add(chunkKey(state.base.getBlockX() >> 4, state.base.getBlockZ() >> 4));
-
-        for (Vector vector : state.containers) {
-            if (vector != null) {
-                desired.add(chunkKey(vector.getBlockX() >> 4, vector.getBlockZ() >> 4));
-            }
-        }
-
-        int maximum = getMaximumLoadedChunks();
-        if (desired.size() > maximum) {
-            throw new IllegalStateException("La session demanderait " + desired.size()
-                    + " chunks chargés (limite : " + maximum + ").");
-        }
+        Set<Long> desired = collectRequiredChunkKeys(
+                state,
+                minX,
+                minZ,
+                width,
+                length,
+                state.pattern == MiningPattern.TUNNEL
+                        && isTunnelInfrastructureConfigured()
+        );
 
         Iterator<Chunk> current = runtime.ticketChunks.iterator();
         while (current.hasNext()) {
@@ -3574,6 +3769,7 @@ public class Mineur implements CommandExecutor, Listener {
         if (runtime == null || runtime.state.paused) {
             return;
         }
+        runtime.tunnelCompletionPending = false;
         if (runtime.loop != null) {
             runtime.loop.cancelAndRollback();
             runtime.loop = null;
@@ -3612,8 +3808,9 @@ public class Mineur implements CommandExecutor, Listener {
                 runtime.router,
                 runtime.miner,
                 createMiningTool(),
-                block -> currentRuntime.decoration == null
-                        || !currentRuntime.decoration.isManagedBlock(block),
+                block -> (currentRuntime.decoration == null
+                        || !currentRuntime.decoration.isManagedBlock(block))
+                        && !isTunnelInfrastructureBlock(currentRuntime, block),
                 block -> evaluateAutomatedMinerBreak(runtime.state, block),
                 block -> {
                     if (currentRuntime.decoration != null) {
@@ -3640,12 +3837,27 @@ public class Mineur implements CommandExecutor, Listener {
                 ),
                 plugin.getConfig().getBoolean("mineur.apply-physics", true),
                 runtime.state.waitingStorage,
-                progressPerTick
+                progressPerTick,
+                () -> ensureTunnelInfrastructureReady(
+                        currentRuntime,
+                        loopGeneration
+                )
         );
         runtime.loop.runTaskTimer(plugin, 1L, 1L);
     }
 
     private void onLoopCompletion(UUID sessionId, long expectedGeneration) {
+        RuntimeSession pendingRuntime = runtimeOf(sessionId);
+        if (pendingRuntime != null
+                && !pendingRuntime.state.paused
+                && pendingRuntime.loopGeneration == expectedGeneration) {
+            /*
+             * Je publie l'état de transition avant de céder au scheduler. Le
+             * watchdog ne peut ainsi prendre une boucle volontairement
+             * terminée pour une panne pendant ce court intervalle.
+             */
+            pendingRuntime.tunnelCompletionPending = true;
+        }
         Bukkit.getScheduler().runTask(plugin, () -> {
             RuntimeSession runtime = runtimeOf(sessionId);
             if (runtime == null
@@ -3660,6 +3872,7 @@ public class Mineur implements CommandExecutor, Listener {
              * une boucle plus récente créée par une commande dans le même tick.
              */
             runtime.loop = null;
+            runtime.tunnelCompletionPending = true;
             MiningSessionState state = runtime.state;
 
             try {
@@ -3678,6 +3891,36 @@ public class Mineur implements CommandExecutor, Listener {
                     runtime.removeActors();
                     activateRuntime(runtime);
                     return;
+                }
+
+                if (state.pattern == MiningPattern.TUNNEL) {
+                    if (!ensureTunnelInfrastructureReady(runtime, expectedGeneration)) {
+                        if (!state.paused) {
+                            scheduleTunnelCompletionRetry(
+                                    state.id,
+                                    expectedGeneration,
+                                    20L
+                            );
+                        }
+                        return;
+                    }
+
+                    if (isTunnelInfrastructureEnabled(state)) {
+                        TunnelWorkResult decorationResult =
+                                decorateCompletedTunnelSection(runtime, expectedGeneration);
+                        if (decorationResult != TunnelWorkResult.COMPLETE) {
+                            if (!state.paused) {
+                                scheduleTunnelCompletionRetry(
+                                        state.id,
+                                        expectedGeneration,
+                                        decorationResult == TunnelWorkResult.IN_PROGRESS
+                                                ? 1L
+                                                : 20L
+                                );
+                            }
+                            return;
+                        }
+                    }
                 }
 
                 boolean continued = false;
@@ -3745,16 +3988,75 @@ public class Mineur implements CommandExecutor, Listener {
                 ? state.tunnelDirection
                 : BlockFace.SOUTH;
 
+        boolean arrivalRoom = plugin.getConfig().getBoolean(
+                "mineur.tunnel.arrival-room.enabled",
+                true
+        );
+        int transverseWidth = arrivalRoom
+                ? Math.max(tunnelSize, plugin.getConfig().getInt(
+                "mineur.tunnel.arrival-room.width",
+                15
+        ))
+                : tunnelSize;
+        int forwardDepth = arrivalRoom
+                ? Math.max(1, plugin.getConfig().getInt(
+                "mineur.tunnel.arrival-room.depth",
+                15
+        ))
+                : tunnelSize;
+        int roomHeight = arrivalRoom
+                ? Math.max(tunnelHeight, Math.min(
+                getMaximumTunnelHeight(),
+                plugin.getConfig().getInt("mineur.tunnel.arrival-room.height", 5)
+        ))
+                : tunnelHeight;
+
+        int roomWidth = direction == BlockFace.NORTH || direction == BlockFace.SOUTH
+                ? Math.min(getMaximumMineWidth(), transverseWidth)
+                : Math.min(getMaximumMineWidth(), forwardDepth);
+        int roomLength = direction == BlockFace.NORTH || direction == BlockFace.SOUTH
+                ? Math.min(getMaximumMineLength(), forwardDepth)
+                : Math.min(getMaximumMineLength(), transverseWidth);
+        int configuredAisle = Math.max(1, plugin.getConfig().getInt(
+                "mineur.tunnel.infrastructure.central-aisle-width",
+                3
+        ));
+        int configuredPlatformDepth = Math.max(3, plugin.getConfig().getInt(
+                "mineur.tunnel.infrastructure.arrival-platform-depth",
+                4
+        ));
+        if (arrivalRoom && (!hasValidDimensions(roomWidth, roomLength)
+                || transverseWidth < configuredAisle + 4
+                || forwardDepth < configuredPlatformDepth
+                || roomHeight < 3)) {
+            arrivalRoom = false;
+            roomWidth = tunnelSize;
+            roomLength = tunnelSize;
+            roomHeight = tunnelHeight;
+            plugin.getLogger().warning(
+                    "[Mineur] Salle d'arrivée désactivée pour la session " + state.id
+                            + " : ses dimensions dépassent les limites configurées."
+            );
+        }
+
         state.tunnelDirection = direction;
-        Location tunnelBase = computeAdjacentTunnelBase(state, tunnelY, tunnelSize);
+        Location tunnelBase = computeAdjacentTunnelBase(
+                state,
+                tunnelY,
+                roomWidth,
+                roomLength,
+                direction
+        );
         if (!isTunnelSectionAllowed(
                 state,
                 tunnelBase,
-                tunnelSize,
-                tunnelHeight
+                roomWidth,
+                roomLength,
+                roomHeight
         )) {
             notifyOwner(state.owner, ChatColor.RED
-                    + "Le tunnel ne peut pas démarrer : bordure, chevauchement ou distance maximale.");
+                    + "Le tunnel ne peut pas démarrer : budget de sécurité, bordure, "
+                    + "chevauchement ou distance maximale.");
             return false;
         }
 
@@ -3764,9 +4066,12 @@ public class Mineur implements CommandExecutor, Listener {
         state.tunnelSectionSize = tunnelSize;
         state.tunnelHeight = tunnelHeight;
         state.tunnelSectionsMined = 0;
+        state.tunnelArrivalRoom = arrivalRoom;
+        clearTunnelInfrastructureCheckpoint(state);
         state.maxTunnelSections = Math.max(0,
                 plugin.getConfig().getInt("mineur.tunnel.max-sections", 0));
-        prepareTunnelCursor(state, tunnelBase, tunnelSize, tunnelSize, tunnelHeight);
+        prepareTunnelCursor(state, tunnelBase, roomWidth, roomLength, roomHeight);
+        recordTunnelOriginBounds(state);
         state.minerY = tunnelY + 1.0D;
         saveAllSessions();
         return true;
@@ -3806,10 +4111,22 @@ public class Mineur implements CommandExecutor, Listener {
         long nextX = state.cursor.minX;
         long nextZ = state.cursor.minZ;
         switch (state.tunnelDirection) {
-            case NORTH -> nextZ -= section;
-            case SOUTH -> nextZ += section;
-            case WEST -> nextX -= section;
-            case EAST -> nextX += section;
+            case NORTH -> {
+                nextX += ((long) state.cursor.width - section) / 2L;
+                nextZ -= section;
+            }
+            case SOUTH -> {
+                nextX += ((long) state.cursor.width - section) / 2L;
+                nextZ += state.cursor.length;
+            }
+            case WEST -> {
+                nextX -= section;
+                nextZ += ((long) state.cursor.length - section) / 2L;
+            }
+            case EAST -> {
+                nextX += state.cursor.width;
+                nextZ += ((long) state.cursor.length - section) / 2L;
+            }
             default -> {
                 return false;
             }
@@ -3829,12 +4146,14 @@ public class Mineur implements CommandExecutor, Listener {
             state.infiniteTunnel = false;
             saveAllSessions();
             notifyOwner(state.owner, ChatColor.YELLOW
-                    + "Tunnel arrêté avant la bordure, une autre mine ou la distance maximale.");
+                    + "Tunnel arrêté avant une limite de sécurité, la bordure, "
+                    + "une autre mine ou la distance maximale.");
             return false;
         }
 
         state.tunnelSectionsMined = completedSections;
         prepareTunnelCursor(state, newBase, section, section, height);
+        state.tunnelArrivalRoom = false;
         saveAllSessions();
         return true;
     }
@@ -4073,7 +4392,7 @@ public class Mineur implements CommandExecutor, Listener {
                         "Dimensions du tronçon de tunnel hors limites."
                 );
             }
-            if (cursor.width != cursor.length) {
+            if (cursor.width != cursor.length && !state.tunnelArrivalRoom) {
                 throw new IllegalStateException(
                         "Le tronçon de tunnel persistant n'est pas carré."
                 );
@@ -4141,8 +4460,10 @@ public class Mineur implements CommandExecutor, Listener {
                     cursor.minY,
                     Math.min(cursor.y, cursorMaxY)
             );
-            state.tunnelSectionSize = cursor.width;
-            state.tunnelHeight = cursor.height;
+            if (!state.tunnelArrivalRoom) {
+                state.tunnelSectionSize = cursor.width;
+                state.tunnelHeight = cursor.height;
+            }
         }
 
         sanitizeStoredContainers(state, world);
@@ -4396,6 +4717,32 @@ public class Mineur implements CommandExecutor, Listener {
                 return existing;
             }
 
+            MiningSessionState.StructureBounds tunnelOrigin = existing.tunnelOriginBounds;
+            if (existing.pattern == MiningPattern.TUNNEL
+                    && tunnelOrigin != null
+                    && rectanglesOverlap(
+                    minX, maxX, minZ, maxZ,
+                    tunnelOrigin.minX(),
+                    tunnelOrigin.maxX(),
+                    tunnelOrigin.minZ(),
+                    tunnelOrigin.maxZ(),
+                    margin
+            )) {
+                return existing;
+            }
+            MiningSessionState.StructureBounds tunnelHistory =
+                    regularTunnelHistoryBounds(existing);
+            if (tunnelHistory != null && rectanglesOverlap(
+                    minX, maxX, minZ, maxZ,
+                    tunnelHistory.minX(),
+                    tunnelHistory.maxX(),
+                    tunnelHistory.minZ(),
+                    tunnelHistory.maxZ(),
+                    margin
+            )) {
+                return existing;
+            }
+
             if (rectanglesOverlap(
                     minX, maxX, minZ, maxZ,
                     existing.base.getBlockX(),
@@ -4480,13 +4827,85 @@ public class Mineur implements CommandExecutor, Listener {
                 state,
                 y,
                 sectionSize,
+                sectionSize,
                 state.tunnelDirection
         );
+    }
+
+    private Set<Long> collectRequiredChunkKeys(MiningSessionState state,
+                                               int minX,
+                                               int minZ,
+                                               int width,
+                                               int length,
+                                               boolean includeTunnelHalo) {
+        if (state == null || state.base == null || width < 1 || length < 1) {
+            throw new IllegalStateException("Emprise de chunks invalide.");
+        }
+        long maxX = (long) minX + width - 1L;
+        long maxZ = (long) minZ + length - 1L;
+        if (maxX > Integer.MAX_VALUE || maxX < Integer.MIN_VALUE
+                || maxZ > Integer.MAX_VALUE || maxZ < Integer.MIN_VALUE) {
+            throw new IllegalStateException("Coordonnées de session hors limites.");
+        }
+
+        Set<Long> desired = new HashSet<>();
+        if (includeTunnelHalo) {
+            /*
+             * Je garde un halo d'un bloc autour du tronçon : le plan de
+             * drainage lit uniquement cette enveloppe immédiate et ne charge
+             * ainsi jamais un chunk extérieur de façon implicite.
+             */
+            int haloMinX = checkedCoordinate((long) minX - 1L, "X minimum du halo");
+            int haloMaxX = checkedCoordinate(maxX + 1L, "X maximum du halo");
+            int haloMinZ = checkedCoordinate((long) minZ - 1L, "Z minimum du halo");
+            int haloMaxZ = checkedCoordinate(maxZ + 1L, "Z maximum du halo");
+            addChunkRectangle(desired, haloMinX, haloMaxX, haloMinZ, haloMaxZ);
+        } else {
+            addChunkRectangle(desired, minX, (int) maxX, minZ, (int) maxZ);
+        }
+
+        MiningSessionState.StructureBounds structureBounds = state.structureBounds;
+        if (structureBounds != null) {
+            addChunkRectangle(
+                    desired,
+                    structureBounds.minX(),
+                    structureBounds.maxX(),
+                    structureBounds.minZ(),
+                    structureBounds.maxZ()
+            );
+        }
+        desired.add(chunkKey(state.base.getBlockX() >> 4, state.base.getBlockZ() >> 4));
+        for (Vector vector : state.containers) {
+            if (vector != null) {
+                desired.add(chunkKey(vector.getBlockX() >> 4, vector.getBlockZ() >> 4));
+            }
+        }
+
+        int maximum = getMaximumLoadedChunks();
+        if (desired.size() > maximum) {
+            throw new IllegalStateException("La session demanderait " + desired.size()
+                    + " chunks chargés (limite : " + maximum + ").");
+        }
+        return desired;
     }
 
     private Location computeAdjacentTunnelBase(MiningSessionState state,
                                                int y,
                                                int sectionSize,
+                                               BlockFace direction) {
+        return computeAdjacentTunnelBase(
+                state,
+                y,
+                sectionSize,
+                sectionSize,
+                direction
+        );
+    }
+
+    private Location computeAdjacentTunnelBase(MiningSessionState state,
+                                               int y,
+                                               int sectionWidth,
+                                               int sectionLength,
                                                BlockFace direction) {
         MiningCursor active = state.cursor;
         int minX = active != null ? active.minX : state.base.getBlockX();
@@ -4502,20 +4921,20 @@ public class Mineur implements CommandExecutor, Listener {
         long tunnelZ;
         switch (direction) {
             case NORTH -> {
-                tunnelX = centerX - sectionSize / 2L;
-                tunnelZ = (long) minZ - sectionSize;
+                tunnelX = centerX - sectionWidth / 2L;
+                tunnelZ = (long) minZ - sectionLength;
             }
             case SOUTH -> {
-                tunnelX = centerX - sectionSize / 2L;
+                tunnelX = centerX - sectionWidth / 2L;
                 tunnelZ = maxZ + 1L;
             }
             case WEST -> {
-                tunnelX = (long) minX - sectionSize;
-                tunnelZ = centerZ - sectionSize / 2L;
+                tunnelX = (long) minX - sectionWidth;
+                tunnelZ = centerZ - sectionLength / 2L;
             }
             case EAST -> {
                 tunnelX = maxX + 1L;
-                tunnelZ = centerZ - sectionSize / 2L;
+                tunnelZ = centerZ - sectionLength / 2L;
             }
             default -> throw new IllegalStateException(
                     "Direction de tunnel non cardinale."
@@ -4541,18 +4960,33 @@ public class Mineur implements CommandExecutor, Listener {
                                             Location sectionBase,
                                             int sectionSize,
                                             int tunnelHeight) {
+        return isTunnelSectionAllowed(
+                state,
+                sectionBase,
+                sectionSize,
+                sectionSize,
+                tunnelHeight
+        );
+    }
+
+    private boolean isTunnelSectionAllowed(MiningSessionState state,
+                                            Location sectionBase,
+                                            int sectionWidth,
+                                            int sectionLength,
+                                            int tunnelHeight) {
         World world = sectionBase != null ? sectionBase.getWorld() : null;
         if (state == null
                 || state.base == null
                 || world == null
                 || !world.equals(state.base.getWorld())
-                || sectionSize < 1
-                || !hasValidDimensions(sectionSize, sectionSize)) {
+                || sectionWidth < 1
+                || sectionLength < 1
+                || !hasValidDimensions(sectionWidth, sectionLength)) {
             return false;
         }
 
-        long maxXLong = (long) sectionBase.getBlockX() + sectionSize - 1L;
-        long maxZLong = (long) sectionBase.getBlockZ() + sectionSize - 1L;
+        long maxXLong = (long) sectionBase.getBlockX() + sectionWidth - 1L;
+        long maxZLong = (long) sectionBase.getBlockZ() + sectionLength - 1L;
         if (maxXLong > Integer.MAX_VALUE || maxXLong < Integer.MIN_VALUE
                 || maxZLong > Integer.MAX_VALUE
                 || maxZLong < Integer.MIN_VALUE) {
@@ -4572,6 +5006,38 @@ public class Mineur implements CommandExecutor, Listener {
 
         int maxX = (int) maxXLong;
         int maxZ = (int) maxZLong;
+        BlockFace direction = isCardinalDirection(state.tunnelDirection)
+                ? state.tunnelDirection
+                : BlockFace.SOUTH;
+        Volume plannedVolume = new Volume(
+                sectionBase.getBlockX(),
+                maxX,
+                minY,
+                (int) maxY,
+                sectionBase.getBlockZ(),
+                maxZ
+        );
+        try {
+            collectRequiredChunkKeys(
+                    state,
+                    sectionBase.getBlockX(),
+                    sectionBase.getBlockZ(),
+                    sectionWidth,
+                    sectionLength,
+                    isTunnelInfrastructureConfigured()
+            );
+            if (isTunnelInfrastructureConfigured()
+                    && isTunnelFluidsEnabled()
+                    && !isTunnelFluidPlanWithinRuntimeBudget(
+                    plannedVolume,
+                    direction,
+                    true
+            )) {
+                return false;
+            }
+        } catch (RuntimeException exception) {
+            return false;
+        }
         if (!isRectangleInsideWorldBorder(
                 world,
                 sectionBase.getBlockX(),
@@ -4605,6 +5071,1646 @@ public class Mineur implements CommandExecutor, Listener {
                 || face == BlockFace.SOUTH
                 || face == BlockFace.EAST
                 || face == BlockFace.WEST;
+    }
+
+    private boolean isTunnelInfrastructureEnabled(MiningSessionState state) {
+        return state != null
+                && state.pattern == MiningPattern.TUNNEL
+                && state.cursor != null
+                && isTunnelInfrastructureConfigured();
+    }
+
+    private boolean isTunnelInfrastructureConfigured() {
+        return plugin.getConfig().getBoolean(
+                "mineur.tunnel.infrastructure.enabled",
+                true
+        );
+    }
+
+    private boolean isTunnelFluidsEnabled() {
+        return plugin.getConfig().getBoolean(
+                "mineur.tunnel.infrastructure.fluids-enabled",
+                true
+        );
+    }
+
+    private int getTunnelOperationsPerTick() {
+        return Math.max(1, Math.min(
+                512,
+                plugin.getConfig().getInt(
+                        "mineur.tunnel.infrastructure.operations-per-tick",
+                        DEFAULT_TUNNEL_OPERATIONS_PER_TICK
+                )
+        ));
+    }
+
+    private int getTunnelFluidInspectionsPerTick() {
+        return Math.max(1, Math.min(
+                4_096,
+                plugin.getConfig().getInt(
+                        "mineur.tunnel.infrastructure.fluid-inspections-per-tick",
+                        DEFAULT_TUNNEL_FLUID_INSPECTIONS_PER_TICK
+                )
+        ));
+    }
+
+    private Volume activeTunnelVolume(MiningSessionState state) {
+        if (state == null || state.cursor == null) {
+            throw new IllegalArgumentException("Curseur de tunnel absent.");
+        }
+        MiningCursor cursor = state.cursor;
+        int maximumX = safeRectangleMaximum(cursor.minX, cursor.width);
+        int maximumZ = safeRectangleMaximum(cursor.minZ, cursor.length);
+        int maximumY = checkedCoordinate(
+                (long) cursor.minY + Math.max(1, cursor.height) - 1L,
+                "Y maximum du tunnel"
+        );
+        return new Volume(
+                cursor.minX,
+                maximumX,
+                cursor.minY,
+                maximumY,
+                cursor.minZ,
+                maximumZ
+        );
+    }
+
+    private void recordTunnelOriginBounds(MiningSessionState state) {
+        Volume volume = activeTunnelVolume(state);
+        state.tunnelOriginBounds = new MiningSessionState.StructureBounds(
+                volume.minX(),
+                volume.maxX(),
+                volume.minY(),
+                volume.maxY(),
+                volume.minZ(),
+                volume.maxZ()
+        );
+    }
+
+    private String tunnelSectionKey(MiningSessionState state, Volume volume) {
+        UUID worldId = state.worldUid != null
+                ? state.worldUid
+                : state.base.getWorld().getUID();
+        return worldId + ":" + volume.minX() + ":" + volume.maxX()
+                + ":" + volume.minY() + ":" + volume.maxY()
+                + ":" + volume.minZ() + ":" + volume.maxZ()
+                + ":" + state.tunnelDirection.name();
+    }
+
+    private boolean isInsideTunnelVolume(MiningSessionState state, Block block) {
+        if (isInsideActiveTunnelVolume(state, block)) {
+            return true;
+        }
+        if (state == null || state.cursor == null || block == null
+                || state.worldUid == null
+                || !state.worldUid.equals(block.getWorld().getUID())) {
+            return false;
+        }
+        return containsBounds(state.tunnelOriginBounds, block)
+                || containsBounds(regularTunnelHistoryBounds(state), block);
+    }
+
+    private boolean isInsideActiveTunnelVolume(MiningSessionState state,
+                                               Block block) {
+        if (state == null || state.cursor == null || block == null
+                || state.worldUid == null
+                || !state.worldUid.equals(block.getWorld().getUID())) {
+            return false;
+        }
+        MiningCursor cursor = state.cursor;
+        long maximumX = (long) cursor.minX + Math.max(1, cursor.width) - 1L;
+        long maximumY = (long) cursor.minY + Math.max(1, cursor.height) - 1L;
+        long maximumZ = (long) cursor.minZ + Math.max(1, cursor.length) - 1L;
+        return block.getX() >= cursor.minX && block.getX() <= maximumX
+                && block.getY() >= cursor.minY && block.getY() <= maximumY
+                && block.getZ() >= cursor.minZ && block.getZ() <= maximumZ;
+    }
+
+    private boolean isTunnelBoundaryBlock(MiningSessionState state, Block block) {
+        return isBoundsBoundary(state != null ? state.tunnelOriginBounds : null, block)
+                || isBoundsBoundary(regularTunnelHistoryBounds(state), block);
+    }
+
+    private boolean containsBounds(MiningSessionState.StructureBounds bounds,
+                                   Block block) {
+        return bounds != null
+                && block != null
+                && block.getX() >= bounds.minX()
+                && block.getX() <= bounds.maxX()
+                && block.getY() >= bounds.minY()
+                && block.getY() <= bounds.maxY()
+                && block.getZ() >= bounds.minZ()
+                && block.getZ() <= bounds.maxZ();
+    }
+
+    private boolean isBoundsBoundary(MiningSessionState.StructureBounds bounds,
+                                     Block block) {
+        if (!containsBounds(bounds, block)) {
+            return false;
+        }
+        return block.getX() == bounds.minX()
+                || block.getX() == bounds.maxX()
+                || block.getY() == bounds.minY()
+                || block.getY() == bounds.maxY()
+                || block.getZ() == bounds.minZ()
+                || block.getZ() == bounds.maxZ();
+    }
+
+    private MiningSessionState.StructureBounds regularTunnelHistoryBounds(
+            MiningSessionState state) {
+        if (state == null
+                || state.pattern != MiningPattern.TUNNEL
+                || state.cursor == null
+                || state.tunnelSectionsMined < 1
+                || !isCardinalDirection(state.tunnelDirection)) {
+            return null;
+        }
+        try {
+            Volume history = TunnelInfrastructureBuilder.historicalCorridorVolume(
+                    activeTunnelVolume(state),
+                    state.tunnelDirection,
+                    state.tunnelSectionsMined
+            );
+            return new MiningSessionState.StructureBounds(
+                    history.minX(),
+                    history.maxX(),
+                    history.minY(),
+                    history.maxY(),
+                    history.minZ(),
+                    history.maxZ()
+            );
+        } catch (IllegalArgumentException exception) {
+            return null;
+        }
+    }
+
+    private boolean isFluidBlock(Block block) {
+        if (block == null) {
+            return false;
+        }
+        if (isDirectFluidBlock(block)) {
+            return true;
+        }
+        BlockData data = block.getBlockData();
+        return data instanceof Waterlogged waterlogged && waterlogged.isWaterlogged();
+    }
+
+    private boolean isDirectFluidBlock(Block block) {
+        if (block == null) {
+            return false;
+        }
+        Material type = block.getType();
+        return type == Material.WATER
+                || type == Material.LAVA
+                || type == Material.BUBBLE_COLUMN
+                || block.isLiquid();
+    }
+
+    private boolean isFluidAt(World world, BlockPos position) {
+        if (world == null
+                || position == null
+                || position.y() < effectiveWorldMinHeight(world)
+                || position.y() >= effectiveWorldMaxHeight(world)) {
+            return false;
+        }
+        return isFluidBlock(world.getBlockAt(
+                position.x(),
+                position.y(),
+                position.z()
+        ));
+    }
+
+    private boolean isTunnelBoundaryThreatAt(World world, BlockPos position) {
+        if (world == null
+                || position == null
+                || position.y() < effectiveWorldMinHeight(world)
+                || position.y() >= effectiveWorldMaxHeight(world)) {
+            return false;
+        }
+        Block block = world.getBlockAt(
+                position.x(),
+                position.y(),
+                position.z()
+        );
+        return isFluidBlock(block) || block.isPassable();
+    }
+
+    private boolean isTunnelInfrastructureBlock(RuntimeSession runtime, Block block) {
+        if (runtime == null || block == null || runtime.tunnelInfrastructure == null) {
+            return false;
+        }
+        return runtime.tunnelInfrastructure.managedPositions.contains(
+                new BlockPos(block.getX(), block.getY(), block.getZ())
+        );
+    }
+
+    private TunnelInfrastructureWork createTunnelInfrastructureWork(
+            RuntimeSession runtime,
+            Volume volume,
+            String sectionKey) {
+        MiningSessionState state = runtime.state;
+        World world = state.base != null ? state.base.getWorld() : null;
+        if (world == null) {
+            throw new IllegalStateException("Monde du tunnel non chargé.");
+        }
+
+        TunnelMaterialPalette palette = runtime.tunnelMaterialPalette;
+        if (palette == null) {
+            palette = getTunnelMaterialPalette();
+            runtime.tunnelMaterialPalette = palette;
+        }
+        Material glass = palette.glass();
+        FluidScanner fluidScanner = null;
+        if (isTunnelFluidsEnabled()) {
+            if (!isTunnelFluidPlanWithinRuntimeBudget(
+                    volume,
+                    state.tunnelDirection,
+                    state.tunnelSectionsMined == 0
+            )) {
+                throw new IllegalArgumentException(
+                        "Le tronçon dépasse le budget opérationnel de l'infrastructure."
+                );
+            }
+            fluidScanner = TunnelInfrastructureBuilder.createFluidScanner(
+                    volume,
+                    state.tunnelDirection,
+                    state.tunnelSectionsMined == 0,
+                    glass,
+                    glass
+            );
+        }
+
+        TunnelInfrastructureWork work = new TunnelInfrastructureWork(
+                sectionKey,
+                volume,
+                fluidScanner,
+                palette
+        );
+        if (fluidScanner == null) {
+            initializeTunnelInfrastructurePlan(state, work, null);
+        }
+        return work;
+    }
+
+    private boolean isTunnelFluidPlanWithinRuntimeBudget(Volume volume,
+                                                         BlockFace direction,
+                                                         boolean sealEntrance) {
+        if (volume == null || !isCardinalDirection(direction)) {
+            return false;
+        }
+        try {
+            return TunnelInfrastructureBuilder.isFluidInspectionPlanWithinBudget(
+                    volume,
+                    direction,
+                    sealEntrance
+            ) && TunnelInfrastructureBuilder.fluidInspectionCount(
+                    volume,
+                    direction,
+                    sealEntrance
+            ) <= getMaximumTunnelPlanOperations();
+        } catch (IllegalArgumentException exception) {
+            return false;
+        }
+    }
+
+    private void initializeTunnelInfrastructurePlan(
+            MiningSessionState state,
+            TunnelInfrastructureWork work,
+            FluidPlan fluidPlan) {
+        Map<BlockPos, Placement> permanent = new java.util.LinkedHashMap<>();
+        Map<BlockPos, Placement> temporary = new java.util.LinkedHashMap<>();
+        Set<BlockPos> managed = new LinkedHashSet<>();
+
+        if (fluidPlan != null) {
+            for (Placement placement : fluidPlan.permanentSeals()) {
+                permanent.putIfAbsent(placement.position(), placement);
+                managed.add(placement.position());
+            }
+            for (Placement placement : fluidPlan.temporarySeals()) {
+                if (!permanent.containsKey(placement.position())) {
+                    temporary.putIfAbsent(placement.position(), placement);
+                }
+                managed.add(placement.position());
+            }
+            work.drains = List.copyOf(fluidPlan.drainedInterior());
+        }
+
+        boolean samePersistedSection = work.sectionKey.equals(
+                state.preparedTunnelSection
+        );
+        if (samePersistedSection) {
+            for (Vector vector : state.tunnelPermanentSeals) {
+                BlockPos position = blockPosition(vector);
+                if (position != null && work.volume.contains(position)) {
+                    work.ownedPermanentSeals.add(position);
+                }
+            }
+            for (Vector vector : state.tunnelForeignFrontierSeals) {
+                BlockPos position = blockPosition(vector);
+                if (position != null && work.volume.contains(position)) {
+                    work.foreignFrontierSeals.add(position);
+                }
+            }
+        }
+        boolean samePendingSection = work.sectionKey.equals(
+                state.pendingTunnelInfrastructureSection
+        );
+        if (samePendingSection) {
+            for (Vector vector : state.pendingTunnelPermanentSeals) {
+                BlockPos position = blockPosition(vector);
+                if (position != null && work.volume.contains(position)) {
+                    work.journaledPermanentSeals.add(position);
+                }
+            }
+            for (Vector vector : state.pendingTunnelFrontierSeals) {
+                BlockPos position = blockPosition(vector);
+                if (position != null && work.volume.contains(position)) {
+                    work.journaledFrontierSeals.add(position);
+                }
+            }
+        }
+
+        List<BlockPos> previousFrontier = new ArrayList<>();
+        for (Vector vector : state.tunnelFrontierSeals) {
+            BlockPos position = blockPosition(vector);
+            if (position == null) {
+                continue;
+            }
+            if (samePersistedSection && work.volume.contains(position)) {
+                work.ownedFrontierSeals.add(position);
+            } else if (!samePersistedSection
+                    && state.preparedTunnelSection != null
+                    && !state.preparedTunnelSection.isBlank()
+                    && isPreviousFrontierOpening(
+                    position,
+                    work.volume,
+                    state.tunnelDirection
+            )) {
+                /*
+                 * Je n'ouvre que la section commune avec le nouveau tunnel.
+                 * Les bandes latérales et hautes de la grande salle restent
+                 * vitrées afin qu'un corridor plus étroit ne les inonde pas.
+                 */
+                previousFrontier.add(position);
+            }
+        }
+        List<BlockPos> previousForeignFrontier = new ArrayList<>();
+        for (Vector vector : state.tunnelForeignFrontierSeals) {
+            BlockPos position = blockPosition(vector);
+            if (position != null
+                    && !samePersistedSection
+                    && state.preparedTunnelSection != null
+                    && !state.preparedTunnelSection.isBlank()
+                    && isPreviousFrontierOpening(
+                    position,
+                    work.volume,
+                    state.tunnelDirection
+            )) {
+                previousForeignFrontier.add(position);
+            }
+        }
+
+        for (BlockPos position : new ArrayList<>(work.ownedFrontierSeals)) {
+            if (permanent.containsKey(position)
+                    || work.journaledPermanentSeals.contains(position)) {
+                work.ownedFrontierSeals.remove(position);
+                work.ownedPermanentSeals.add(position);
+            }
+        }
+        for (BlockPos position : new ArrayList<>(work.journaledFrontierSeals)) {
+            if (permanent.containsKey(position)
+                    || work.journaledPermanentSeals.contains(position)
+                    || work.ownedPermanentSeals.contains(position)) {
+                work.journaledFrontierSeals.remove(position);
+                work.journaledPermanentSeals.add(position);
+            }
+        }
+        work.ownedPermanentSeals.removeIf(position ->
+                !work.volume.contains(position));
+        work.ownedFrontierSeals.removeIf(position ->
+                !work.volume.contains(position)
+                        || work.ownedPermanentSeals.contains(position));
+        work.journaledPermanentSeals.removeIf(position ->
+                !work.volume.contains(position));
+        work.journaledFrontierSeals.removeIf(position ->
+                !work.volume.contains(position)
+                        || work.journaledPermanentSeals.contains(position));
+        work.foreignFrontierSeals.removeIf(position ->
+                !work.volume.contains(position) || permanent.containsKey(position));
+        for (BlockPos position : work.ownedPermanentSeals) {
+            Placement placement = new Placement(
+                    position,
+                    work.palette.glass(),
+                    PlacementKind.PERMANENT_SEAL
+            );
+            permanent.putIfAbsent(position, placement);
+            temporary.remove(position);
+            managed.add(position);
+        }
+        for (BlockPos position : work.ownedFrontierSeals) {
+            if (!permanent.containsKey(position)) {
+                temporary.putIfAbsent(
+                        position,
+                        new Placement(
+                                position,
+                                work.palette.glass(),
+                                PlacementKind.TEMPORARY_SEAL
+                        )
+                );
+            }
+            managed.add(position);
+        }
+        for (BlockPos position : work.journaledPermanentSeals) {
+            permanent.putIfAbsent(
+                    position,
+                    new Placement(
+                            position,
+                            work.palette.glass(),
+                            PlacementKind.PERMANENT_SEAL
+                    )
+            );
+            temporary.remove(position);
+            managed.add(position);
+        }
+        for (BlockPos position : work.journaledFrontierSeals) {
+            if (!permanent.containsKey(position)) {
+                temporary.putIfAbsent(
+                        position,
+                        new Placement(
+                                position,
+                                work.palette.glass(),
+                                PlacementKind.TEMPORARY_SEAL
+                        )
+                );
+            }
+            managed.add(position);
+        }
+        for (BlockPos position : work.foreignFrontierSeals) {
+            if (!permanent.containsKey(position)) {
+                temporary.putIfAbsent(
+                        position,
+                        new Placement(
+                                position,
+                                work.palette.glass(),
+                                PlacementKind.TEMPORARY_SEAL
+                        )
+                );
+            }
+            managed.add(position);
+        }
+
+        List<Placement> seals = new ArrayList<>(
+                permanent.size() + temporary.size()
+        );
+        seals.addAll(permanent.values());
+        seals.addAll(temporary.values());
+        work.seals = List.copyOf(seals);
+        work.permanentSeals = List.copyOf(permanent.values());
+        work.previousFrontier = List.copyOf(previousFrontier);
+        work.previousForeignFrontier = List.copyOf(previousForeignFrontier);
+        work.managedPositions = Set.copyOf(managed);
+        work.fluidPlanInitialized = true;
+    }
+
+    private BlockPos blockPosition(Vector vector) {
+        return vector != null
+                ? new BlockPos(
+                vector.getBlockX(),
+                vector.getBlockY(),
+                vector.getBlockZ()
+        )
+                : null;
+    }
+
+    private boolean isPreviousFrontierOpening(BlockPos position,
+                                              Volume nextVolume,
+                                              BlockFace direction) {
+        if (position.y() < nextVolume.minY() || position.y() > nextVolume.maxY()) {
+            return false;
+        }
+        return switch (direction) {
+            case SOUTH -> position.z() == (long) nextVolume.minZ() - 1L
+                    && position.x() >= nextVolume.minX()
+                    && position.x() <= nextVolume.maxX();
+            case NORTH -> position.z() == (long) nextVolume.maxZ() + 1L
+                    && position.x() >= nextVolume.minX()
+                    && position.x() <= nextVolume.maxX();
+            case EAST -> position.x() == (long) nextVolume.minX() - 1L
+                    && position.z() >= nextVolume.minZ()
+                    && position.z() <= nextVolume.maxZ();
+            case WEST -> position.x() == (long) nextVolume.maxX() + 1L
+                    && position.z() >= nextVolume.minZ()
+                    && position.z() <= nextVolume.maxZ();
+            default -> false;
+        };
+    }
+
+    private boolean ensureTunnelInfrastructureReady(RuntimeSession runtime,
+                                                     long expectedGeneration) {
+        if (runtime == null) {
+            return true;
+        }
+
+        MiningSessionState state = runtime.state;
+        if (!isTunnelInfrastructureEnabled(state)) {
+            if (state.pattern == MiningPattern.TUNNEL
+                    && state.cursor != null
+                    && !isTunnelInfrastructureConfigured()
+                    && hasTunnelInfrastructureCheckpoint(state, runtime)) {
+                state.pause(MiningSessionState.PauseReason.SAFETY);
+                saveAllSessions();
+                notifyOwner(state.owner, ChatColor.RED
+                        + "Tunnel mis en pause : réactive l'infrastructure avant de "
+                        + "reprendre ce tronçon déjà préparé.");
+                return false;
+            }
+            runtime.tunnelInfrastructure = null;
+            runtime.tunnelDecoration = null;
+            return true;
+        }
+
+        Volume volume = activeTunnelVolume(state);
+        String sectionKey = tunnelSectionKey(state, volume);
+        runtime.tunnelInfrastructureTicks++;
+
+        if (isTunnelFluidsEnabled()
+                && !isTunnelFluidPlanWithinRuntimeBudget(
+                volume,
+                state.tunnelDirection,
+                state.tunnelSectionsMined == 0
+        )) {
+            state.pause(MiningSessionState.PauseReason.SAFETY);
+            saveAllSessions();
+            notifyOwner(state.owner, ChatColor.RED
+                    + "Tunnel mis en pause : ses dimensions dépassent le budget "
+                    + "opérationnel de l'infrastructure.");
+            return false;
+        }
+
+        TunnelInfrastructureWork work = runtime.tunnelInfrastructure;
+        boolean rescanDue = work != null
+                && work.completed
+                && runtime.tunnelInfrastructureTicks >= runtime.nextTunnelRescanTick;
+        if (work == null || !sectionKey.equals(work.sectionKey) || rescanDue) {
+            work = createTunnelInfrastructureWork(runtime, volume, sectionKey);
+            runtime.tunnelInfrastructure = work;
+        }
+        if (!work.fluidPlanInitialized) {
+            World world = state.base != null ? state.base.getWorld() : null;
+            if (world == null || work.fluidScanner == null) {
+                throw new IllegalStateException("Scan du tunnel sans monde chargé.");
+            }
+            boolean scanComplete = work.fluidScanner.scan(
+                    getTunnelFluidInspectionsPerTick(),
+                    position -> isFluidAt(world, position),
+                    position -> isTunnelBoundaryThreatAt(world, position)
+            );
+            if (!scanComplete) {
+                return false;
+            }
+            initializeTunnelInfrastructurePlan(
+                    state,
+                    work,
+                    work.fluidScanner.result()
+            );
+        }
+        if (work.completed) {
+            return true;
+        }
+
+        int remainingBudget = getTunnelOperationsPerTick();
+        if (!work.journalPrepared) {
+            prepareTunnelSealJournal(runtime, work, remainingBudget);
+            /*
+             * Je sépare strictement le préflight du lot de mutations. Même si
+             * le journal vient d'être sauvegardé, la pose commencera au tick
+             * suivant et ne pourra pas doubler le budget de travail courant.
+             */
+            return false;
+        }
+        while (remainingBudget-- > 0) {
+            TunnelMutationResult result;
+            Block affected;
+
+            if (work.sealIndex < work.seals.size()) {
+                Placement placement = work.seals.get(work.sealIndex);
+                affected = blockAt(state, placement.position());
+                boolean alreadyOwned = placement.kind()
+                        == PlacementKind.PERMANENT_SEAL
+                        ? work.ownedPermanentSeals.contains(placement.position())
+                        || work.journaledPermanentSeals.contains(
+                        placement.position()
+                )
+                        : work.ownedFrontierSeals.contains(placement.position())
+                        || work.journaledFrontierSeals.contains(
+                        placement.position()
+                );
+                boolean matchingBlockAlreadyPresent =
+                        affected.getType() == placement.material()
+                                && !isFluidBlock(affected);
+                boolean foreignGlassAlreadyPresent = placement.kind()
+                        == PlacementKind.TEMPORARY_SEAL
+                        && isGlassBlock(affected.getType());
+                if (foreignGlassAlreadyPresent) {
+                    matchingBlockAlreadyPresent = true;
+                    result = TunnelMutationResult.APPLIED;
+                } else {
+                    result = applyTunnelSeal(runtime, placement);
+                }
+                if (result.isProgress()) {
+                    if (result == TunnelMutationResult.APPLIED
+                            && (alreadyOwned || !matchingBlockAlreadyPresent)) {
+                        if (placement.kind() == PlacementKind.PERMANENT_SEAL) {
+                            work.ownedPermanentSeals.add(placement.position());
+                            work.foreignFrontierSeals.remove(placement.position());
+                        } else {
+                            work.ownedFrontierSeals.add(placement.position());
+                            work.foreignFrontierSeals.remove(placement.position());
+                        }
+                    } else if (result == TunnelMutationResult.APPLIED
+                            && placement.kind() == PlacementKind.TEMPORARY_SEAL
+                            && matchingBlockAlreadyPresent) {
+                        /*
+                         * Je garde la provenance du verre déjà présent : il
+                         * sera rouvert avec ses drops, sans devenir ma propriété.
+                         */
+                        work.foreignFrontierSeals.add(placement.position());
+                    }
+                    work.sealIndex++;
+                }
+            } else if (work.drainIndex < work.drains.size()) {
+                BlockPos position = work.drains.get(work.drainIndex);
+                affected = blockAt(state, position);
+                result = clearTunnelFluid(runtime, position);
+                if (result.isProgress()) {
+                    work.drainIndex++;
+                }
+            } else if (work.previousFrontierIndex < work.previousFrontier.size()) {
+                BlockPos position = work.previousFrontier.get(
+                        work.previousFrontierIndex
+                );
+                affected = blockAt(state, position);
+                result = removePreviousTunnelFrontier(runtime, position);
+                if (result.isProgress()) {
+                    work.previousFrontierIndex++;
+                }
+            } else if (work.previousForeignFrontierIndex
+                    < work.previousForeignFrontier.size()) {
+                BlockPos position = work.previousForeignFrontier.get(
+                        work.previousForeignFrontierIndex
+                );
+                affected = blockAt(state, position);
+                result = removePreviousTunnelFrontier(runtime, position, true);
+                if (result.isProgress()) {
+                    work.previousForeignFrontierIndex++;
+                }
+            } else {
+                if (work.rescanRequested) {
+                    TunnelInfrastructureWork replacement =
+                            createTunnelInfrastructureWork(
+                            runtime,
+                            volume,
+                            sectionKey
+                    );
+                    replacement.ownedFrontierSeals.addAll(
+                            work.ownedFrontierSeals
+                    );
+                    replacement.ownedPermanentSeals.addAll(
+                            work.ownedPermanentSeals
+                    );
+                    replacement.journaledFrontierSeals.addAll(
+                            work.journaledFrontierSeals
+                    );
+                    replacement.journaledPermanentSeals.addAll(
+                            work.journaledPermanentSeals
+                    );
+                    replacement.foreignFrontierSeals.addAll(
+                            work.foreignFrontierSeals
+                    );
+                    if (replacement.fluidPlanInitialized) {
+                        initializeTunnelInfrastructurePlan(
+                                state,
+                                replacement,
+                                null
+                        );
+                    }
+                    runtime.tunnelInfrastructure = replacement;
+                    return false;
+                }
+                completeTunnelInfrastructure(runtime, work);
+                return true;
+            }
+
+            if (result == TunnelMutationResult.RETRY_LATER) {
+                return false;
+            }
+            if (result == TunnelMutationResult.DENIED) {
+                state.pause(MiningSessionState.PauseReason.PROTECTION);
+                saveAllSessions();
+                onMiningProtectionBlocked(state, affected, expectedGeneration);
+                return false;
+            }
+        }
+        return false;
+    }
+
+    private boolean hasTunnelInfrastructureCheckpoint(MiningSessionState state,
+                                                       RuntimeSession runtime) {
+        return runtime != null && runtime.tunnelInfrastructure != null
+                || state != null && (state.preparedTunnelSection != null
+                && !state.preparedTunnelSection.isBlank()
+                || state.pendingTunnelInfrastructureSection != null
+                && !state.pendingTunnelInfrastructureSection.isBlank()
+                || !state.tunnelFrontierSeals.isEmpty()
+                || !state.tunnelForeignFrontierSeals.isEmpty()
+                || !state.tunnelPermanentSeals.isEmpty()
+                || !state.pendingTunnelFrontierSeals.isEmpty()
+                || !state.pendingTunnelPermanentSeals.isEmpty());
+    }
+
+    private void prepareTunnelSealJournal(RuntimeSession runtime,
+                                           TunnelInfrastructureWork work,
+                                           int maximumOperations) {
+        MiningSessionState state = runtime.state;
+        int endExclusive = Math.min(
+                work.seals.size(),
+                work.journalIndex + Math.max(1, maximumOperations)
+        );
+        for (int index = work.journalIndex; index < endExclusive; index++) {
+            Placement placement = work.seals.get(index);
+            BlockPos position = placement.position();
+            boolean known = placement.kind() == PlacementKind.PERMANENT_SEAL
+                    ? work.ownedPermanentSeals.contains(position)
+                    || work.journaledPermanentSeals.contains(position)
+                    : work.ownedFrontierSeals.contains(position)
+                    || work.journaledFrontierSeals.contains(position);
+            if (known) {
+                continue;
+            }
+
+            Block target = blockAt(state, position);
+            if (placement.kind() == PlacementKind.TEMPORARY_SEAL
+                    && isGlassBlock(target.getType())) {
+                /*
+                 * Je conserve tout verre joueur de la couture, même si sa
+                 * couleur diffère après un changement de palette.
+                 */
+                continue;
+            }
+            if (target.getType() == placement.material()
+                    && !isFluidBlock(target)) {
+                // Je ne revendique jamais un verre identique déjà présent.
+                continue;
+            }
+            if (placement.kind() == PlacementKind.PERMANENT_SEAL) {
+                work.journaledPermanentSeals.add(position);
+            } else {
+                work.journaledFrontierSeals.add(position);
+            }
+        }
+        work.journalIndex = endExclusive;
+
+        if (work.journalIndex < work.seals.size()) {
+            return;
+        }
+
+        String pendingSection =
+                work.journaledFrontierSeals.isEmpty()
+                        && work.journaledPermanentSeals.isEmpty()
+                        ? ""
+                        : work.sectionKey;
+        boolean changed = !Objects.equals(
+                pendingSection,
+                state.pendingTunnelInfrastructureSection
+        ) || !sameCoordinates(
+                state.pendingTunnelFrontierSeals,
+                work.journaledFrontierSeals
+        ) || !sameCoordinates(
+                state.pendingTunnelPermanentSeals,
+                work.journaledPermanentSeals
+        );
+
+        String previousPendingSection = state.pendingTunnelInfrastructureSection;
+        List<Vector> previousPendingFrontier = new ArrayList<>(
+                state.pendingTunnelFrontierSeals
+        );
+        List<Vector> previousPendingPermanent = new ArrayList<>(
+                state.pendingTunnelPermanentSeals
+        );
+        state.pendingTunnelInfrastructureSection = pendingSection;
+        replaceVectors(
+                state.pendingTunnelFrontierSeals,
+                work.journaledFrontierSeals
+        );
+        replaceVectors(
+                state.pendingTunnelPermanentSeals,
+                work.journaledPermanentSeals
+        );
+        if (changed) {
+            /*
+             * J'enregistre tout le plan une seule fois avant la première
+             * mutation. Une extinction pourra réadopter uniquement mon verre,
+             * sans provoquer une écriture disque à chaque lot de poses.
+             */
+            if (!saveAllSessions()) {
+                state.pendingTunnelInfrastructureSection = previousPendingSection;
+                state.pendingTunnelFrontierSeals.clear();
+                state.pendingTunnelFrontierSeals.addAll(previousPendingFrontier);
+                state.pendingTunnelPermanentSeals.clear();
+                state.pendingTunnelPermanentSeals.addAll(previousPendingPermanent);
+                state.pause(MiningSessionState.PauseReason.ERROR);
+                throw new IllegalStateException(
+                        "Le journal du tunnel n'a pas pu être sauvegardé."
+                );
+            }
+        }
+        work.journalPrepared = true;
+    }
+
+    private void replaceVectors(List<Vector> target,
+                                java.util.Collection<BlockPos> positions) {
+        target.clear();
+        for (BlockPos position : positions) {
+            target.add(new Vector(position.x(), position.y(), position.z()));
+        }
+    }
+
+    private void completeTunnelInfrastructure(RuntimeSession runtime,
+                                              TunnelInfrastructureWork work) {
+        MiningSessionState state = runtime.state;
+        boolean changed = state.tunnelInfrastructureVersion
+                != MiningSessionState.CURRENT_TUNNEL_INFRASTRUCTURE_VERSION
+                || !work.sectionKey.equals(state.preparedTunnelSection)
+                || !sameCoordinates(
+                state.tunnelFrontierSeals,
+                work.ownedFrontierSeals
+        )
+                || !sameCoordinates(
+                state.tunnelPermanentSeals,
+                work.ownedPermanentSeals
+        )
+                || !sameCoordinates(
+                state.tunnelForeignFrontierSeals,
+                work.foreignFrontierSeals
+        )
+                || (state.pendingTunnelInfrastructureSection != null
+                && !state.pendingTunnelInfrastructureSection.isBlank())
+                || !state.pendingTunnelFrontierSeals.isEmpty()
+                || !state.pendingTunnelPermanentSeals.isEmpty();
+
+        int previousInfrastructureVersion = state.tunnelInfrastructureVersion;
+        String previousPreparedSection = state.preparedTunnelSection;
+        String previousPendingSection = state.pendingTunnelInfrastructureSection;
+        List<Vector> previousFrontier = new ArrayList<>(state.tunnelFrontierSeals);
+        List<Vector> previousForeignFrontier = new ArrayList<>(
+                state.tunnelForeignFrontierSeals
+        );
+        List<Vector> previousPermanent = new ArrayList<>(state.tunnelPermanentSeals);
+        List<Vector> previousPendingFrontier = new ArrayList<>(
+                state.pendingTunnelFrontierSeals
+        );
+        List<Vector> previousPendingPermanent = new ArrayList<>(
+                state.pendingTunnelPermanentSeals
+        );
+
+        state.tunnelInfrastructureVersion =
+                MiningSessionState.CURRENT_TUNNEL_INFRASTRUCTURE_VERSION;
+        state.preparedTunnelSection = work.sectionKey;
+        replaceVectors(state.tunnelFrontierSeals, work.ownedFrontierSeals);
+        replaceVectors(
+                state.tunnelForeignFrontierSeals,
+                work.foreignFrontierSeals
+        );
+        replaceVectors(state.tunnelPermanentSeals, work.ownedPermanentSeals);
+        state.pendingTunnelInfrastructureSection = "";
+        state.pendingTunnelFrontierSeals.clear();
+        state.pendingTunnelPermanentSeals.clear();
+        if (changed && !saveAllSessions()) {
+            state.tunnelInfrastructureVersion = previousInfrastructureVersion;
+            state.preparedTunnelSection = previousPreparedSection;
+            state.pendingTunnelInfrastructureSection = previousPendingSection;
+            state.tunnelFrontierSeals.clear();
+            state.tunnelFrontierSeals.addAll(previousFrontier);
+            state.tunnelForeignFrontierSeals.clear();
+            state.tunnelForeignFrontierSeals.addAll(previousForeignFrontier);
+            state.tunnelPermanentSeals.clear();
+            state.tunnelPermanentSeals.addAll(previousPermanent);
+            state.pendingTunnelFrontierSeals.clear();
+            state.pendingTunnelFrontierSeals.addAll(previousPendingFrontier);
+            state.pendingTunnelPermanentSeals.clear();
+            state.pendingTunnelPermanentSeals.addAll(previousPendingPermanent);
+            state.pause(MiningSessionState.PauseReason.ERROR);
+            throw new IllegalStateException(
+                    "Le commit du tunnel n'a pas pu être sauvegardé."
+            );
+        }
+        work.completed = true;
+        runtime.nextTunnelRescanTick = runtime.tunnelInfrastructureTicks
+                + TUNNEL_RESCAN_INTERVAL_TICKS;
+    }
+
+    private boolean isRuntimeWorkActive(RuntimeSession runtime) {
+        return runtime != null
+                && (runtime.tunnelCompletionPending || isLoopActive(runtime));
+    }
+
+    private boolean sameCoordinates(List<Vector> persisted,
+                                    java.util.Collection<BlockPos> planned) {
+        Set<BlockPos> persistedPositions = new LinkedHashSet<>();
+        for (Vector vector : persisted) {
+            if (vector != null) {
+                persistedPositions.add(new BlockPos(
+                        vector.getBlockX(),
+                        vector.getBlockY(),
+                        vector.getBlockZ()
+                ));
+            }
+        }
+        return persistedPositions.equals(new LinkedHashSet<>(planned));
+    }
+
+    private Block blockAt(MiningSessionState state, BlockPos position) {
+        World world = state.base != null ? state.base.getWorld() : null;
+        if (world == null) {
+            throw new IllegalStateException("Monde du tunnel non chargé.");
+        }
+        return world.getBlockAt(position.x(), position.y(), position.z());
+    }
+
+    private TunnelMutationResult applyTunnelSeal(RuntimeSession runtime,
+                                                 Placement placement) {
+        MiningSessionState state = runtime.state;
+        Block target = blockAt(state, placement.position());
+        Material material = placement.material();
+        if (target.getType() == material && !isFluidBlock(target)) {
+            configureTunnelBlock(target, placement.kind(), state.tunnelDirection);
+            return TunnelMutationResult.APPLIED;
+        }
+
+        Material previousType = target.getType();
+        boolean fluid = isFluidBlock(target);
+        boolean directFluid = isDirectFluidBlock(target);
+        if (!previousType.isAir()
+                && !directFluid
+                && !MiningBlockPolicy.isMineable(target)) {
+            return TunnelMutationResult.SKIPPED;
+        }
+
+        List<ItemStack> drops = !previousType.isAir() && !directFluid
+                ? new ArrayList<>(MiningBlockPolicy.computeDrops(
+                target,
+                createMiningTool()
+        ))
+                : List.of();
+        if (!drops.isEmpty()
+                && (runtime.router == null || !runtime.router.canFitAll(drops))) {
+            onStorageBlocked(state);
+            return TunnelMutationResult.RETRY_LATER;
+        }
+        if ((previousType.isAir() || directFluid)
+                && !isTunnelPlacementSpaceAvailable(runtime, target, material)) {
+            return TunnelMutationResult.RETRY_LATER;
+        }
+
+        BlockState snapshot = target.getState();
+        if (!previousType.isAir() || fluid) {
+            MiningLoop.BreakPermissionResult breakResult = evaluateTunnelBreak(
+                    state,
+                    target
+            );
+            if (breakResult != MiningLoop.BreakPermissionResult.ALLOWED) {
+                return breakResult == MiningLoop.BreakPermissionResult.RETRY_LATER
+                        ? TunnelMutationResult.RETRY_LATER
+                        : TunnelMutationResult.DENIED;
+            }
+            if (target.getType() != previousType) {
+                return TunnelMutationResult.SKIPPED;
+            }
+        }
+
+        MiningLoop.BreakPermissionResult placeReadiness = tunnelPlaceReadiness(state);
+        if (placeReadiness != MiningLoop.BreakPermissionResult.ALLOWED) {
+            return placeReadiness == MiningLoop.BreakPermissionResult.RETRY_LATER
+                    ? TunnelMutationResult.RETRY_LATER
+                    : TunnelMutationResult.DENIED;
+        }
+
+        try {
+            target.setType(material, false);
+            configureTunnelBlock(target, placement.kind(), state.tunnelDirection);
+            if (!callTunnelPlaceEvent(state, target, snapshot, material)) {
+                restoreTunnelSnapshot(snapshot, target);
+                return TunnelMutationResult.DENIED;
+            }
+            if (target.getType() != material) {
+                restoreTunnelSnapshot(snapshot, target);
+                return TunnelMutationResult.DENIED;
+            }
+        } catch (RuntimeException exception) {
+            restoreTunnelSnapshot(snapshot, target);
+            throw exception;
+        }
+
+        depositTunnelDrops(runtime, target.getLocation(), drops);
+        return TunnelMutationResult.APPLIED;
+    }
+
+    private TunnelMutationResult clearTunnelFluid(RuntimeSession runtime,
+                                                  BlockPos position) {
+        MiningSessionState state = runtime.state;
+        Block target = blockAt(state, position);
+        if (!isFluidBlock(target)) {
+            return TunnelMutationResult.APPLIED;
+        }
+
+        MiningLoop.BreakPermissionResult permission = evaluateTunnelBreak(state, target);
+        if (permission != MiningLoop.BreakPermissionResult.ALLOWED) {
+            return permission == MiningLoop.BreakPermissionResult.RETRY_LATER
+                    ? TunnelMutationResult.RETRY_LATER
+                    : TunnelMutationResult.DENIED;
+        }
+        if (!isFluidBlock(target)) {
+            return TunnelMutationResult.APPLIED;
+        }
+
+        BlockState snapshot = target.getState();
+        try {
+            BlockData data = target.getBlockData();
+            if (data instanceof Waterlogged waterlogged && waterlogged.isWaterlogged()) {
+                waterlogged.setWaterlogged(false);
+                target.setBlockData(waterlogged, false);
+            } else {
+                target.setType(Material.AIR, false);
+            }
+            return TunnelMutationResult.APPLIED;
+        } catch (RuntimeException exception) {
+            restoreTunnelSnapshot(snapshot, target);
+            throw exception;
+        }
+    }
+
+    private TunnelMutationResult removePreviousTunnelFrontier(
+            RuntimeSession runtime,
+            BlockPos position) {
+        return removePreviousTunnelFrontier(runtime, position, false);
+    }
+
+    private TunnelMutationResult removePreviousTunnelFrontier(
+            RuntimeSession runtime,
+            BlockPos position,
+            boolean routeDrops) {
+        MiningSessionState state = runtime.state;
+        Block target = blockAt(state, position);
+        if (!isGlassBlock(target.getType())) {
+            return TunnelMutationResult.SKIPPED;
+        }
+
+        List<ItemStack> drops = routeDrops
+                ? new ArrayList<>(MiningBlockPolicy.computeDrops(
+                target,
+                createMiningTool()
+        ))
+                : List.of();
+        if (!drops.isEmpty()
+                && (runtime.router == null || !runtime.router.canFitAll(drops))) {
+            onStorageBlocked(state);
+            return TunnelMutationResult.RETRY_LATER;
+        }
+
+        MiningLoop.BreakPermissionResult permission = evaluateTunnelBreak(state, target);
+        if (permission != MiningLoop.BreakPermissionResult.ALLOWED) {
+            return permission == MiningLoop.BreakPermissionResult.RETRY_LATER
+                    ? TunnelMutationResult.RETRY_LATER
+                    : TunnelMutationResult.DENIED;
+        }
+        if (!isGlassBlock(target.getType())) {
+            return TunnelMutationResult.SKIPPED;
+        }
+
+        BlockState snapshot = target.getState();
+        try {
+            target.setType(Material.AIR, false);
+            depositTunnelDrops(runtime, target.getLocation(), drops);
+            return TunnelMutationResult.APPLIED;
+        } catch (RuntimeException exception) {
+            restoreTunnelSnapshot(snapshot, target);
+            throw exception;
+        }
+    }
+
+    private MiningLoop.BreakPermissionResult evaluateTunnelBreak(
+            MiningSessionState state,
+            Block block) {
+        if (state == null
+                || block == null
+                || state.paused
+                || state.worldUid == null
+                || !state.worldUid.equals(block.getWorld().getUID())
+                || !isInsideWorldBorder(block.getLocation())) {
+            return MiningLoop.BreakPermissionResult.DENIED;
+        }
+
+        Player owner = state.owner != null ? Bukkit.getPlayer(state.owner) : null;
+        boolean ownerRequired = plugin.getConfig().getBoolean(
+                "mineur.protection.require-owner-online",
+                true
+        );
+        boolean fireEvent = plugin.getConfig().getBoolean(
+                "mineur.protection.fire-block-break-event",
+                true
+        );
+        if (owner == null) {
+            return ownerRequired || fireEvent
+                    ? MiningLoop.BreakPermissionResult.RETRY_LATER
+                    : MiningLoop.BreakPermissionResult.ALLOWED;
+        }
+        if (!fireEvent) {
+            return MiningLoop.BreakPermissionResult.ALLOWED;
+        }
+
+        boolean allowed = AutomatedMiningContext.call(() -> {
+            BlockBreakEvent event = new BlockBreakEvent(block, owner);
+            event.setDropItems(false);
+            event.setExpToDrop(0);
+            Bukkit.getPluginManager().callEvent(event);
+            return !event.isCancelled();
+        });
+        return allowed
+                ? MiningLoop.BreakPermissionResult.ALLOWED
+                : MiningLoop.BreakPermissionResult.DENIED;
+    }
+
+    private MiningLoop.BreakPermissionResult tunnelPlaceReadiness(
+            MiningSessionState state) {
+        if (state == null || state.paused) {
+            return MiningLoop.BreakPermissionResult.DENIED;
+        }
+        Player owner = state.owner != null ? Bukkit.getPlayer(state.owner) : null;
+        boolean ownerRequired = plugin.getConfig().getBoolean(
+                "mineur.protection.require-owner-online",
+                true
+        );
+        boolean fireEvent = plugin.getConfig().getBoolean(
+                "mineur.protection.fire-block-place-event",
+                true
+        );
+        return owner == null && (ownerRequired || fireEvent)
+                ? MiningLoop.BreakPermissionResult.RETRY_LATER
+                : MiningLoop.BreakPermissionResult.ALLOWED;
+    }
+
+    private boolean callTunnelPlaceEvent(MiningSessionState state,
+                                         Block target,
+                                         BlockState replacedState,
+                                         Material material) {
+        if (!plugin.getConfig().getBoolean(
+                "mineur.protection.fire-block-place-event",
+                true
+        )) {
+            return true;
+        }
+        Player owner = state.owner != null ? Bukkit.getPlayer(state.owner) : null;
+        if (owner == null) {
+            return false;
+        }
+
+        BlockPlaceEvent event = new BlockPlaceEvent(
+                target,
+                replacedState,
+                findShaftPlacedAgainst(target),
+                new ItemStack(material, 1),
+                owner,
+                true,
+                EquipmentSlot.HAND
+        );
+        AutomatedMiningContext.call(() -> {
+            Bukkit.getPluginManager().callEvent(event);
+            return null;
+        });
+        return !event.isCancelled() && event.canBuild();
+    }
+
+    private void configureTunnelBlock(Block target,
+                                      PlacementKind kind,
+                                      BlockFace direction) {
+        BlockData data = target.getBlockData();
+        if (data instanceof Waterlogged waterlogged) {
+            waterlogged.setWaterlogged(false);
+        }
+        if (kind == PlacementKind.SUPPORT_BEAM && data instanceof Orientable orientable) {
+            orientable.setAxis(
+                    direction == BlockFace.NORTH || direction == BlockFace.SOUTH
+                            ? Axis.X
+                            : Axis.Z
+            );
+        }
+        target.setBlockData(data, false);
+    }
+
+    private void restoreTunnelSnapshot(BlockState snapshot, Block target) {
+        if (snapshot == null) {
+            return;
+        }
+        try {
+            if (!snapshot.update(true, false)) {
+                plugin.getLogger().warning(
+                        "[Mineur] Snapshot du tunnel non restauré en "
+                                + (target != null ? coords(target) : "position inconnue")
+                                + "."
+                );
+            }
+        } catch (RuntimeException exception) {
+            plugin.getLogger().log(
+                    Level.SEVERE,
+                    "[Mineur] Échec de restauration d'un bloc du tunnel.",
+                    exception
+            );
+        }
+    }
+
+    private void depositTunnelDrops(RuntimeSession runtime,
+                                    Location fallback,
+                                    List<ItemStack> drops) {
+        if (drops == null || drops.isEmpty()) {
+            return;
+        }
+        List<ItemStack> leftovers = runtime.router != null
+                ? runtime.router.deposit(drops)
+                : new ArrayList<>(drops);
+        if (!leftovers.isEmpty() && runtime.router != null) {
+            runtime.router.dropOnGround(
+                    runtime.state.base.getWorld(),
+                    fallback,
+                    leftovers
+            );
+        }
+        onStorageFreed(runtime.state);
+    }
+
+    private Material getConfiguredTunnelMaterial(String path, Material fallback) {
+        String configured = plugin.getConfig().getString(path, fallback.name());
+        Material material = configured != null ? Material.matchMaterial(configured) : null;
+        if (material == null
+                || !material.isBlock()
+                || !material.isItem()
+                || !material.isSolid()
+                || material.isAir()) {
+            plugin.getLogger().warning(
+                    "[Mineur] Matériau solide et posable requis pour " + path + " ; "
+                            + fallback.name() + " est utilisé."
+            );
+            return fallback;
+        }
+        return material;
+    }
+
+    private Material resolveTunnelPlacementMaterial(
+            Placement placement,
+            TunnelMaterialPalette palette) {
+        return switch (placement.kind()) {
+            case PERMANENT_SEAL, TEMPORARY_SEAL -> palette.glass();
+            case SUPPORT_POST -> palette.post();
+            case SUPPORT_BEAM -> palette.beam();
+            case LIGHT -> palette.light();
+            case PLATFORM -> palette.floor();
+            case CHEST, WORKSTATION -> placement.material();
+        };
+    }
+
+    private TunnelMaterialPalette getTunnelMaterialPalette() {
+        return new TunnelMaterialPalette(
+                getConfiguredTunnelGlassMaterial(),
+                getConfiguredTunnelMaterial(
+                        "mineur.tunnel.infrastructure.post-material",
+                        Material.SPRUCE_FENCE
+                ),
+                getConfiguredTunnelMaterial(
+                        "mineur.tunnel.infrastructure.beam-material",
+                        Material.STRIPPED_SPRUCE_LOG
+                ),
+                getConfiguredTunnelMaterial(
+                        "mineur.tunnel.infrastructure.floor-material",
+                        Material.SPRUCE_PLANKS
+                ),
+                getConfiguredTunnelMaterial(
+                        "mineur.tunnel.infrastructure.light-material",
+                        Material.SHROOMLIGHT
+                )
+        );
+    }
+
+    private boolean isGlassBlock(Material material) {
+        return material == Material.GLASS
+                || material == Material.TINTED_GLASS
+                || (material != null && material.name().endsWith("_STAINED_GLASS"));
+    }
+
+    private Material getConfiguredTunnelGlassMaterial() {
+        Material configured = getConfiguredTunnelMaterial(
+                "mineur.tunnel.infrastructure.glass-material",
+                Material.LIGHT_BLUE_STAINED_GLASS
+        );
+        if (isGlassBlock(configured)) {
+            return configured;
+        }
+        plugin.getLogger().warning(
+                "[Mineur] Le scellement du tunnel doit être un bloc de verre plein ; "
+                        + "LIGHT_BLUE_STAINED_GLASS est utilisé."
+        );
+        return Material.LIGHT_BLUE_STAINED_GLASS;
+    }
+
+    private TunnelInfrastructureBuilder.Settings getTunnelInfrastructureSettings(
+            Volume volume,
+            BlockFace direction,
+            boolean arrivalRoom) {
+        long orientedWidth = direction == BlockFace.NORTH || direction == BlockFace.SOUTH
+                ? volume.sizeX()
+                : volume.sizeZ();
+        long orientedLength = direction == BlockFace.NORTH || direction == BlockFace.SOUTH
+                ? volume.sizeZ()
+                : volume.sizeX();
+        int maximumAisle = Math.max(
+                1,
+                Math.toIntExact(orientedWidth - (arrivalRoom ? 4L : 2L))
+        );
+        int aisle = Math.max(1, Math.min(
+                Math.min(255, maximumAisle),
+                plugin.getConfig().getInt(
+                        "mineur.tunnel.infrastructure.central-aisle-width",
+                        3
+                )
+        ));
+        if ((aisle & 1) == 0) {
+            aisle--;
+        }
+        return new TunnelInfrastructureBuilder.Settings(
+                Math.max(1, Math.min(1_024, plugin.getConfig().getInt(
+                        "mineur.tunnel.infrastructure.support-spacing",
+                        5
+                ))),
+                Math.min(
+                        Math.max(0, Math.min(1_024, plugin.getConfig().getInt(
+                                "mineur.tunnel.infrastructure.first-support-offset",
+                                3
+                        ))),
+                        Math.max(0, Math.toIntExact(orientedLength - 1L))
+                ),
+                Math.max(1, Math.min(1_024, plugin.getConfig().getInt(
+                        "mineur.tunnel.infrastructure.light-every-frames",
+                        1
+                ))),
+                aisle,
+                Math.max(3, Math.min(
+                        Math.min(1_024, Math.toIntExact(orientedLength)),
+                        plugin.getConfig().getInt(
+                        "mineur.tunnel.infrastructure.arrival-platform-depth",
+                        4
+                ))),
+                getMaximumTunnelPlanOperations()
+        );
+    }
+
+    private int getMaximumTunnelPlanOperations() {
+        return Math.max(1, Math.min(
+                MAX_RUNTIME_TUNNEL_PLAN_OPERATIONS,
+                plugin.getConfig().getInt(
+                        "mineur.tunnel.infrastructure.max-planned-blocks-per-section",
+                        4_096
+                )
+        ));
+    }
+
+    private TunnelWorkResult decorateCompletedTunnelSection(
+            RuntimeSession runtime,
+            long expectedGeneration) {
+        TunnelInfrastructureWork work = runtime.tunnelInfrastructure;
+        if (work == null || !work.completed) {
+            return TunnelWorkResult.RETRY_LATER;
+        }
+        if (work.sectionKey.equals(runtime.decoratedTunnelSection)) {
+            runtime.tunnelDecoration = null;
+            return TunnelWorkResult.COMPLETE;
+        }
+
+        TunnelDecorationWork decoration = runtime.tunnelDecoration;
+        if (decoration == null || !work.sectionKey.equals(decoration.sectionKey)) {
+            TunnelInfrastructureBuilder.Plan plan;
+            try {
+                plan = TunnelInfrastructureBuilder.planDecorations(
+                        work.volume,
+                        runtime.state.tunnelDirection,
+                        runtime.state.tunnelArrivalRoom,
+                        getTunnelInfrastructureSettings(
+                                work.volume,
+                                runtime.state.tunnelDirection,
+                                runtime.state.tunnelArrivalRoom
+                        ),
+                        work.permanentSeals
+                );
+            } catch (IllegalArgumentException exception) {
+                /*
+                 * Je conserve le drainage lorsque des limites personnalisées
+                 * rendent le décor impossible (par exemple un tunnel trop bas).
+                 * La session ne doit pas s'arrêter pour une amélioration visuelle.
+                 */
+                plugin.getLogger().warning(
+                        "[Mineur] Décor du tunnel ignoré pour la session "
+                                + runtime.state.id + " : " + exception.getMessage()
+                );
+                runtime.decoratedTunnelSection = work.sectionKey;
+                runtime.tunnelDecoration = null;
+                return TunnelWorkResult.COMPLETE;
+            }
+
+            List<Placement> resolvedPlacements = new ArrayList<>(
+                    plan.placements().size()
+            );
+            for (Placement original : plan.placements()) {
+                resolvedPlacements.add(new Placement(
+                        original.position(),
+                        resolveTunnelPlacementMaterial(original, work.palette),
+                        original.kind()
+                ));
+            }
+            decoration = new TunnelDecorationWork(
+                    work.sectionKey,
+                    resolvedPlacements
+            );
+            runtime.tunnelDecoration = decoration;
+        }
+
+        TunnelOperationBatch.Result<Placement> batch =
+                TunnelOperationBatch.process(
+                        decoration.placements,
+                        decoration.placementIndex,
+                        getTunnelOperationsPerTick(),
+                        placement -> {
+                            TunnelMutationResult result = placement.kind()
+                                    == PlacementKind.PERMANENT_SEAL
+                                    ? applyTunnelSeal(runtime, placement)
+                                    : placeTunnelDecoration(runtime, placement);
+                            return switch (result) {
+                                case APPLIED, SKIPPED ->
+                                        TunnelOperationBatch.StepResult.ADVANCED;
+                                case RETRY_LATER ->
+                                        TunnelOperationBatch.StepResult.RETRY_LATER;
+                                case DENIED ->
+                                        TunnelOperationBatch.StepResult.DENIED;
+                            };
+                        }
+                );
+        decoration.placementIndex = batch.nextIndex();
+        if (batch.status() == TunnelOperationBatch.Status.RETRY_LATER) {
+            return TunnelWorkResult.RETRY_LATER;
+        }
+        if (batch.status() == TunnelOperationBatch.Status.DENIED) {
+            runtime.state.pause(MiningSessionState.PauseReason.PROTECTION);
+            saveAllSessions();
+            onMiningProtectionBlocked(
+                    runtime.state,
+                    blockAt(runtime.state, batch.blockedItem().position()),
+                    expectedGeneration
+            );
+            return TunnelWorkResult.DENIED;
+        }
+        if (batch.status() == TunnelOperationBatch.Status.IN_PROGRESS) {
+            return TunnelWorkResult.IN_PROGRESS;
+        }
+        runtime.decoratedTunnelSection = work.sectionKey;
+        runtime.tunnelDecoration = null;
+        return TunnelWorkResult.COMPLETE;
+    }
+
+    private TunnelMutationResult placeTunnelDecoration(RuntimeSession runtime,
+                                                       Placement placement) {
+        MiningSessionState state = runtime.state;
+        Block target = blockAt(state, placement.position());
+        Material material = placement.material();
+        if (target.getType() == material && !isFluidBlock(target)) {
+            /*
+             * Je considère un bloc déjà présent comme terminé sans modifier ses
+             * données : il peut appartenir à un joueur et le retry doit rester
+             * strictement idempotent.
+             */
+            return TunnelMutationResult.APPLIED;
+        }
+        if (isFluidBlock(target)) {
+            runtime.tunnelInfrastructure = null;
+            return TunnelMutationResult.RETRY_LATER;
+        }
+        if (!target.getType().isAir()) {
+            /*
+             * Je n'écrase jamais une construction apparue dans une salle déjà
+             * excavée. Le décor est secondaire face aux blocs du monde.
+             */
+            return TunnelMutationResult.SKIPPED;
+        }
+        if (!isTunnelPlacementSpaceAvailable(runtime, target, material)) {
+            return TunnelMutationResult.RETRY_LATER;
+        }
+
+        MiningLoop.BreakPermissionResult readiness = tunnelPlaceReadiness(state);
+        if (readiness != MiningLoop.BreakPermissionResult.ALLOWED) {
+            return readiness == MiningLoop.BreakPermissionResult.RETRY_LATER
+                    ? TunnelMutationResult.RETRY_LATER
+                    : TunnelMutationResult.DENIED;
+        }
+
+        BlockState snapshot = target.getState();
+        try {
+            target.setType(material, false);
+            configureTunnelBlock(target, placement.kind(), state.tunnelDirection);
+            if (!callTunnelPlaceEvent(state, target, snapshot, material)
+                    || target.getType() != material) {
+                restoreTunnelSnapshot(snapshot, target);
+                return TunnelMutationResult.DENIED;
+            }
+            return TunnelMutationResult.APPLIED;
+        } catch (RuntimeException exception) {
+            restoreTunnelSnapshot(snapshot, target);
+            throw exception;
+        }
+    }
+
+    private boolean isTunnelPlacementSpaceAvailable(RuntimeSession runtime,
+                                                     Block target,
+                                                     Material material) {
+        if (target == null || material == null) {
+            return false;
+        }
+        BlockData blockData;
+        try {
+            blockData = material.createBlockData();
+        } catch (IllegalArgumentException exception) {
+            return false;
+        }
+        if (!target.canPlace(blockData)) {
+            return false;
+        }
+
+        double inset = 1.0E-4D;
+        BoundingBox bounds = new BoundingBox(
+                target.getX() + inset,
+                target.getY() + inset,
+                target.getZ() + inset,
+                target.getX() + 1.0D - inset,
+                target.getY() + 1.0D - inset,
+                target.getZ() + 1.0D - inset
+        );
+        return target.getWorld().getNearbyEntities(bounds).stream().noneMatch(
+                entity -> entity instanceof LivingEntity living
+                        && living.isValid()
+                        && !living.isDead()
+                        && !isRuntimeActor(runtime, living)
+        );
+    }
+
+    private boolean isRuntimeActor(RuntimeSession runtime, Entity entity) {
+        if (runtime == null || entity == null) {
+            return false;
+        }
+        if (entity.equals(runtime.miner)) {
+            return true;
+        }
+        for (Golem golem : runtime.golems) {
+            if (golem != null && entity.equals(golem.getGolem())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private void scheduleTunnelCompletionRetry(UUID sessionId,
+                                               long expectedGeneration,
+                                               long delayTicks) {
+        Bukkit.getScheduler().runTaskLater(plugin, () -> {
+            RuntimeSession runtime = runtimeOf(sessionId);
+            if (runtime == null
+                    || runtime.state.paused
+                    || runtime.loopGeneration != expectedGeneration) {
+                return;
+            }
+            onLoopCompletion(sessionId, expectedGeneration);
+        }, Math.max(1L, delayTicks));
+    }
+
+    private enum TunnelWorkResult {
+        COMPLETE,
+        IN_PROGRESS,
+        RETRY_LATER,
+        DENIED
+    }
+
+    private enum TunnelMutationResult {
+        APPLIED,
+        SKIPPED,
+        RETRY_LATER,
+        DENIED;
+
+        boolean isProgress() {
+            return this == APPLIED || this == SKIPPED;
+        }
     }
 
     private ItemStack createMiningTool() {
@@ -4764,9 +6870,11 @@ public class Mineur implements CommandExecutor, Listener {
                 );
                 int height = Math.min(
                         availableHeight,
-                        state.tunnelHeight > 0
+                        cursor.height > 0
+                                ? cursor.height
+                                : (state.tunnelHeight > 0
                                 ? state.tunnelHeight
-                                : getConfiguredTunnelHeight()
+                                : getConfiguredTunnelHeight())
                 );
                 ensureTunnelCursorDefaults(cursor, height);
                 yield new TunnelIterator(world, cursor, height);
@@ -4828,7 +6936,21 @@ public class Mineur implements CommandExecutor, Listener {
         cursor.height = safeHeight;
         state.cursor = cursor;
         state.pendingCursor = null;
-        state.tunnelHeight = safeHeight;
+    }
+
+    private void clearTunnelInfrastructureCheckpoint(MiningSessionState state) {
+        if (state == null) {
+            return;
+        }
+        state.tunnelInfrastructureVersion = 0;
+        state.preparedTunnelSection = "";
+        state.tunnelFrontierSeals.clear();
+        state.tunnelForeignFrontierSeals.clear();
+        state.tunnelPermanentSeals.clear();
+        state.pendingTunnelInfrastructureSection = "";
+        state.pendingTunnelFrontierSeals.clear();
+        state.pendingTunnelPermanentSeals.clear();
+        state.tunnelOriginBounds = null;
     }
 
     private void ensureTunnelCursorDefaults(MiningCursor cursor, int height) {
@@ -4853,8 +6975,10 @@ public class Mineur implements CommandExecutor, Listener {
     }
 
     private int getConfiguredTunnelHeight() {
-        return Math.max(1, Math.min(
-                getMaximumTunnelHeight(),
+        int maximum = getMaximumTunnelHeight();
+        int minimum = Math.min(3, maximum);
+        return Math.max(minimum, Math.min(
+                maximum,
                 plugin.getConfig().getInt("mineur.tunnel.height", 3)
         ));
     }
@@ -5153,6 +7277,70 @@ public class Mineur implements CommandExecutor, Listener {
         }
     }
 
+    private static final class TunnelInfrastructureWork {
+        private final String sectionKey;
+        private final Volume volume;
+        private final FluidScanner fluidScanner;
+        private final TunnelMaterialPalette palette;
+        private final Set<BlockPos> ownedFrontierSeals = new LinkedHashSet<>();
+        private final Set<BlockPos> ownedPermanentSeals = new LinkedHashSet<>();
+        private final Set<BlockPos> journaledFrontierSeals = new LinkedHashSet<>();
+        private final Set<BlockPos> journaledPermanentSeals = new LinkedHashSet<>();
+        private final Set<BlockPos> foreignFrontierSeals = new LinkedHashSet<>();
+        private List<Placement> seals = List.of();
+        private List<BlockPos> drains = List.of();
+        private List<Placement> permanentSeals = List.of();
+        private List<BlockPos> previousFrontier = List.of();
+        private List<BlockPos> previousForeignFrontier = List.of();
+        private Set<BlockPos> managedPositions = Set.of();
+        private int sealIndex;
+        private int journalIndex;
+        private int drainIndex;
+        private int previousFrontierIndex;
+        private int previousForeignFrontierIndex;
+        private boolean fluidPlanInitialized;
+        private boolean journalPrepared;
+        private boolean rescanRequested;
+        private boolean completed;
+
+        private TunnelInfrastructureWork(String sectionKey,
+                                         Volume volume,
+                                         FluidScanner fluidScanner,
+                                         TunnelMaterialPalette palette) {
+            this.sectionKey = Objects.requireNonNull(sectionKey, "sectionKey");
+            this.volume = Objects.requireNonNull(volume, "volume");
+            this.fluidScanner = fluidScanner;
+            this.palette = Objects.requireNonNull(palette, "palette");
+        }
+    }
+
+    private record TunnelMaterialPalette(Material glass,
+                                         Material post,
+                                         Material beam,
+                                         Material floor,
+                                         Material light) {
+
+        private TunnelMaterialPalette {
+            Objects.requireNonNull(glass, "glass");
+            Objects.requireNonNull(post, "post");
+            Objects.requireNonNull(beam, "beam");
+            Objects.requireNonNull(floor, "floor");
+            Objects.requireNonNull(light, "light");
+        }
+    }
+
+    private static final class TunnelDecorationWork {
+        private final String sectionKey;
+        private final List<Placement> placements;
+        private int placementIndex;
+
+        private TunnelDecorationWork(String sectionKey,
+                                     List<Placement> placements) {
+            this.sectionKey = Objects.requireNonNull(sectionKey, "sectionKey");
+            this.placements = List.copyOf(placements);
+        }
+    }
+
     private final class RuntimeSession {
         private final MiningSessionState state;
         private final Set<Chunk> ticketChunks = new HashSet<>();
@@ -5166,6 +7354,13 @@ public class Mineur implements CommandExecutor, Listener {
         private long loopGeneration;
         private InventoryRouter router;
         private DecorationDelegate decoration;
+        private TunnelInfrastructureWork tunnelInfrastructure;
+        private TunnelDecorationWork tunnelDecoration;
+        private TunnelMaterialPalette tunnelMaterialPalette;
+        private long tunnelInfrastructureTicks;
+        private long nextTunnelRescanTick;
+        private String decoratedTunnelSection = "";
+        private boolean tunnelCompletionPending;
         private Hologram storageHologram;
         private MineCabinBuilder.BuildResult freshConstruction;
         /**
@@ -5180,6 +7375,7 @@ public class Mineur implements CommandExecutor, Listener {
 
         void suspend() {
             loopGeneration++;
+            tunnelCompletionPending = false;
             if (loop != null) {
                 loop.cancelAndRollback();
                 loop = null;
@@ -5257,6 +7453,10 @@ public class Mineur implements CommandExecutor, Listener {
             }
             router = null;
             decoration = null;
+            tunnelInfrastructure = null;
+            tunnelDecoration = null;
+            tunnelMaterialPalette = null;
+            decoratedTunnelSection = "";
             containerLocations.clear();
         }
     }

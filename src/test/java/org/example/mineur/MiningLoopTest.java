@@ -2,11 +2,15 @@ package org.example.mineur;
 
 import org.bukkit.Location;
 import org.bukkit.Material;
+import org.bukkit.World;
 import org.bukkit.block.Block;
 import org.bukkit.block.BlockState;
+import org.bukkit.block.data.BlockData;
 import org.bukkit.entity.Villager;
 import org.bukkit.plugin.java.JavaPlugin;
+import org.example.TeleportUtils;
 import org.junit.jupiter.api.Test;
+import org.mockito.MockedStatic;
 
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -17,13 +21,121 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.mockStatic;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class MiningLoopTest {
+
+    @Test
+    void preparationCheckBlocksProgressUntilTheSectionIsReady() {
+        JavaPlugin plugin = mock(JavaPlugin.class);
+        when(plugin.getLogger()).thenReturn(Logger.getAnonymousLogger());
+
+        World world = mock(World.class);
+        when(world.getMinHeight()).thenReturn(-64);
+        when(world.getMaxHeight()).thenReturn(320);
+        when(world.isChunkLoaded(anyInt(), anyInt())).thenReturn(true);
+
+        Block safeSpace = mock(Block.class);
+        when(safeSpace.isPassable()).thenReturn(true);
+        when(safeSpace.isLiquid()).thenReturn(false);
+        when(safeSpace.getType()).thenReturn(Material.AIR);
+        when(world.getBlockAt(anyInt(), anyInt(), anyInt())).thenReturn(safeSpace);
+
+        Block minedBlock = mock(Block.class);
+        when(minedBlock.getWorld()).thenReturn(world);
+        when(minedBlock.getX()).thenReturn(0);
+        when(minedBlock.getY()).thenReturn(64);
+        when(minedBlock.getZ()).thenReturn(0);
+        when(minedBlock.getLocation()).thenReturn(new Location(world, 0, 64, 0));
+        when(minedBlock.getType()).thenReturn(Material.STONE);
+        when(minedBlock.isLiquid()).thenReturn(false);
+        when(minedBlock.getState()).thenReturn(mock(BlockState.class));
+        when(minedBlock.getBlockData()).thenReturn(mock(BlockData.class));
+        when(minedBlock.getDrops()).thenReturn(List.of());
+
+        MiningSessionState state = new MiningSessionState();
+        state.base = new Location(world, 0, 64, 0);
+        state.width = 1;
+        state.length = 1;
+        state.cursor = new MiningCursor(state.base, 1, 1);
+
+        MiningIterator iterator = mock(MiningIterator.class);
+        when(iterator.hasNext()).thenReturn(true);
+        when(iterator.cursor()).thenReturn(state.cursor);
+        when(iterator.next()).thenReturn(minedBlock);
+
+        InventoryRouter router = mock(InventoryRouter.class);
+        when(router.hasTargets()).thenReturn(true);
+        when(router.canFitAll(anyList())).thenReturn(true);
+
+        Villager miner = mock(Villager.class);
+        when(miner.isDead()).thenReturn(false);
+        when(miner.isValid()).thenReturn(true);
+        when(miner.getLocation()).thenReturn(new Location(world, 0.5D, 64.0D, 0.5D));
+
+        AtomicBoolean preparationReady = new AtomicBoolean(false);
+        AtomicBoolean failed = new AtomicBoolean(false);
+        MiningLoop loop = new MiningLoop(
+                plugin,
+                state,
+                iterator,
+                router,
+                miner,
+                null,
+                null,
+                ignored -> MiningLoop.BreakPermissionResult.ALLOWED,
+                null,
+                null,
+                null,
+                null,
+                null,
+                ignored -> failed.set(true),
+                null,
+                true,
+                false,
+                2.0D,
+                preparationReady::get
+        );
+
+        loop.run();
+
+        verify(iterator, never()).hasNext();
+        verify(iterator, never()).next();
+        verify(minedBlock, never()).setType(Material.AIR, true);
+        assertNull(state.pendingCursor);
+        assertFalse(failed.get());
+
+        preparationReady.set(true);
+        try (MockedStatic<TeleportUtils> teleportUtils = mockStatic(TeleportUtils.class)) {
+            teleportUtils.when(() -> TeleportUtils.safeTeleport(
+                    eq(miner),
+                    any(Location.class)
+            )).thenReturn(true);
+
+            /*
+             * Je laisse la machine reprendre normalement : sélection du bloc,
+             * animation, puis casse au lieu de forcer son état par réflexion.
+             */
+            loop.run();
+            loop.run();
+            loop.run();
+        }
+
+        verify(iterator).hasNext();
+        verify(iterator).next();
+        verify(minedBlock).setType(Material.AIR, true);
+        assertNull(state.pendingCursor);
+        assertFalse(state.paused);
+        assertFalse(failed.get());
+    }
 
     @Test
     void missingMinerRequestsRecoveryWithoutPausingOrCompletingTheWorksite() {

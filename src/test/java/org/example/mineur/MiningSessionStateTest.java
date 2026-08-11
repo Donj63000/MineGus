@@ -2,6 +2,7 @@ package org.example.mineur;
 
 import org.bukkit.Location;
 import org.bukkit.World;
+import org.bukkit.util.Vector;
 import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
@@ -20,6 +21,228 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 class MiningSessionStateTest {
+
+    @Test
+    void roundTripsCurrentTunnelInfrastructureStateAndDeduplicatesSeals() {
+        World world = world();
+        MiningSessionState state = new MiningSessionState();
+        state.worldUid = world.getUID();
+        state.base = new Location(world, 10, 64, 12);
+        state.width = 10;
+        state.length = 10;
+        state.cursor = new MiningCursor(state.base, state.width, state.length);
+        state.cursor.height = 3;
+        state.tunnelInfrastructureVersion = 1;
+        state.tunnelArrivalRoom = true;
+        state.tunnelOriginBounds = new MiningSessionState.StructureBounds(
+                10,
+                521,
+                64,
+                95,
+                22,
+                533
+        );
+        state.preparedTunnelSection = "10:64:12:SOUTH:0";
+        state.pendingTunnelInfrastructureSection = "10:64:22:SOUTH:1";
+
+        Vector firstSeal = new Vector(9, 64, 12);
+        Vector secondSeal = new Vector(20, 66, 22);
+        state.tunnelFrontierSeals.add(firstSeal);
+        state.tunnelFrontierSeals.add(firstSeal.clone());
+        state.tunnelFrontierSeals.add(secondSeal);
+
+        Vector firstForeignFrontierSeal = new Vector(9, 65, 13);
+        Vector secondForeignFrontierSeal = new Vector(19, 63, 22);
+        state.tunnelForeignFrontierSeals.add(firstForeignFrontierSeal);
+        state.tunnelForeignFrontierSeals.add(firstForeignFrontierSeal.clone());
+        state.tunnelForeignFrontierSeals.add(secondForeignFrontierSeal);
+
+        Vector firstPermanentSeal = new Vector(10, 63, 13);
+        Vector secondPermanentSeal = new Vector(19, 67, 21);
+        state.tunnelPermanentSeals.add(firstPermanentSeal);
+        state.tunnelPermanentSeals.add(firstPermanentSeal.clone());
+        state.tunnelPermanentSeals.add(secondPermanentSeal);
+
+        Vector firstPendingFrontierSeal = new Vector(11, 63, 14);
+        Vector secondPendingFrontierSeal = new Vector(18, 67, 20);
+        state.pendingTunnelFrontierSeals.add(firstPendingFrontierSeal);
+        state.pendingTunnelFrontierSeals.add(firstPendingFrontierSeal.clone());
+        state.pendingTunnelFrontierSeals.add(secondPendingFrontierSeal);
+
+        Vector firstPendingPermanentSeal = new Vector(12, 64, 15);
+        Vector secondPendingPermanentSeal = new Vector(20, 66, 21);
+        state.pendingTunnelPermanentSeals.add(firstPendingPermanentSeal);
+        state.pendingTunnelPermanentSeals.add(firstPendingPermanentSeal.clone());
+        state.pendingTunnelPermanentSeals.add(secondPendingPermanentSeal);
+
+        Map<String, Object> serialized = state.toMap();
+
+        assertEquals(10, serialized.get("schemaVersion"));
+        assertEquals(2, ((List<?>) serialized.get("tunnelFrontierSeals")).size());
+        assertEquals(2, ((List<?>) serialized.get("tunnelForeignFrontierSeals")).size());
+        assertEquals(2, ((List<?>) serialized.get("tunnelPermanentSeals")).size());
+        assertEquals(2, ((List<?>) serialized.get("pendingTunnelFrontierSeals")).size());
+        assertEquals(2, ((List<?>) serialized.get("pendingTunnelPermanentSeals")).size());
+
+        MiningSessionState restored = MiningSessionState.fromMap(world, serialized);
+
+        assertEquals(1, restored.tunnelInfrastructureVersion);
+        assertTrue(restored.tunnelArrivalRoom);
+        assertEquals(state.tunnelOriginBounds, restored.tunnelOriginBounds);
+        assertEquals(state.preparedTunnelSection, restored.preparedTunnelSection);
+        assertEquals(
+                state.pendingTunnelInfrastructureSection,
+                restored.pendingTunnelInfrastructureSection
+        );
+        assertEquals(List.of(firstSeal, secondSeal), restored.tunnelFrontierSeals);
+        assertEquals(
+                List.of(firstForeignFrontierSeal, secondForeignFrontierSeal),
+                restored.tunnelForeignFrontierSeals
+        );
+        assertEquals(
+                List.of(firstPermanentSeal, secondPermanentSeal),
+                restored.tunnelPermanentSeals
+        );
+        assertEquals(
+                List.of(firstPendingFrontierSeal, secondPendingFrontierSeal),
+                restored.pendingTunnelFrontierSeals
+        );
+        assertEquals(
+                List.of(firstPendingPermanentSeal, secondPendingPermanentSeal),
+                restored.pendingTunnelPermanentSeals
+        );
+    }
+
+    @Test
+    void rejectsForgedTunnelSealsFarFromCursor() {
+        World world = world();
+        MiningSessionState state = new MiningSessionState();
+        state.worldUid = world.getUID();
+        state.base = new Location(world, 10, 64, 12);
+        state.width = 4;
+        state.length = 4;
+        state.cursor = new MiningCursor(state.base, state.width, state.length);
+        state.cursor.height = 3;
+
+        Map<String, Object> serialized = state.toMap();
+        serialized.put(
+                "tunnelFrontierSeals",
+                List.of(
+                        List.of(11, 64, 13),
+                        List.of(100_000, 64, 100_000)
+                )
+        );
+        serialized.put(
+                "tunnelPermanentSeals",
+                List.of(
+                        List.of(12, 65, 14),
+                        List.of(-100_000, 64, -100_000)
+                )
+        );
+        serialized.put(
+                "tunnelForeignFrontierSeals",
+                List.of(
+                        List.of(10, 65, 13),
+                        List.of(100_000, 64, 100_000)
+                )
+        );
+        serialized.put(
+                "pendingTunnelFrontierSeals",
+                List.of(
+                        List.of(9, 66, 15),
+                        List.of(100_000, 64, -100_000)
+                )
+        );
+        serialized.put(
+                "pendingTunnelPermanentSeals",
+                List.of(
+                        List.of(13, 63, 16),
+                        List.of(-100_000, 64, 100_000)
+                )
+        );
+
+        MiningSessionState restored = MiningSessionState.fromMap(world, serialized);
+
+        assertEquals(List.of(new Vector(11, 64, 13)), restored.tunnelFrontierSeals);
+        assertEquals(
+                List.of(new Vector(10, 65, 13)),
+                restored.tunnelForeignFrontierSeals
+        );
+        assertEquals(List.of(new Vector(12, 65, 14)), restored.tunnelPermanentSeals);
+        assertEquals(
+                List.of(new Vector(9, 66, 15)),
+                restored.pendingTunnelFrontierSeals
+        );
+        assertEquals(
+                List.of(new Vector(13, 63, 16)),
+                restored.pendingTunnelPermanentSeals
+        );
+    }
+
+    @Test
+    void loadsSchemaEightWithoutPendingTunnelInfrastructureJournal() {
+        World world = world();
+        Map<String, Object> serialized = baseMap(world);
+        serialized.put("schemaVersion", 8);
+
+        MiningSessionState restored = MiningSessionState.fromMap(world, serialized);
+
+        assertEquals("", restored.pendingTunnelInfrastructureSection);
+        assertTrue(restored.pendingTunnelFrontierSeals.isEmpty());
+        assertTrue(restored.pendingTunnelPermanentSeals.isEmpty());
+    }
+
+    @Test
+    void loadsSchemaNineWithoutTunnelOriginOrForeignFrontierSeals() {
+        World world = world();
+        Map<String, Object> serialized = baseMap(world);
+        serialized.put("schemaVersion", 9);
+
+        MiningSessionState restored = MiningSessionState.fromMap(world, serialized);
+
+        assertNull(restored.tunnelOriginBounds);
+        assertTrue(restored.tunnelForeignFrontierSeals.isEmpty());
+    }
+
+    @Test
+    void rejectsTunnelOriginBoundsFarFromInitialMine() {
+        World world = world();
+        Map<String, Object> serialized = baseMap(world);
+        serialized.put(
+                "tunnelOriginBounds",
+                List.of(100_000, 100_010, 64, 70, 100_000, 100_010)
+        );
+
+        MiningSessionState restored = MiningSessionState.fromMap(world, serialized);
+
+        assertNull(restored.tunnelOriginBounds);
+    }
+
+    @Test
+    void rejectsInvalidTunnelOriginBounds() {
+        World world = world();
+
+        Map<String, Object> oversized = baseMap(world);
+        oversized.put(
+                "tunnelOriginBounds",
+                List.of(10, 522, 64, 70, 12, 20)
+        );
+        assertNull(MiningSessionState.fromMap(world, oversized).tunnelOriginBounds);
+
+        Map<String, Object> outsideWorld = baseMap(world);
+        outsideWorld.put(
+                "tunnelOriginBounds",
+                List.of(10, 20, -65, 70, 12, 20)
+        );
+        assertNull(MiningSessionState.fromMap(world, outsideWorld).tunnelOriginBounds);
+
+        Map<String, Object> malformed = baseMap(world);
+        malformed.put(
+                "tunnelOriginBounds",
+                List.of(10, 20.5D, 64, 70, 12, 20)
+        );
+        assertNull(MiningSessionState.fromMap(world, malformed).tunnelOriginBounds);
+    }
 
     @Test
     void rejectsModernSessionWithoutValidBase() {

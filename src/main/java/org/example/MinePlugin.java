@@ -28,6 +28,7 @@ import org.example.forestry2.SharedChunkTickets;
 import org.example.progression.GlobalProgressionManager;
 import org.example.village.VillageEntityManager;
 import org.example.village.VillageKnightManager;
+import org.example.village.VillageTreasuryManager;
 import org.example.tutorial.TutorialManager;
 
 /**
@@ -98,6 +99,11 @@ public class MinePlugin extends JavaPlugin implements Listener {
     private VillageKnightManager villageKnightManager;
 
     /**
+     * Gère la chambre forte et l'impôt de chaque ville créée par /village.
+     */
+    private VillageTreasuryManager villageTreasuryManager;
+
+    /**
      * Gère la visite privée /tuto et ses mondes temporaires.
      */
     private TutorialManager tutorialManager;
@@ -111,6 +117,9 @@ public class MinePlugin extends JavaPlugin implements Listener {
     public MerchantManager getMerchantManager() { return merchantManager; }
     public RoyalGuardManager getRoyalGuardManager() { return royalGuardManager; }
     public VillageKnightManager getVillageKnightManager() { return villageKnightManager; }
+    public VillageTreasuryManager getVillageTreasuryManager() {
+        return villageTreasuryManager;
+    }
     public TutorialManager getTutorialManager() { return tutorialManager; }
 
 
@@ -145,6 +154,12 @@ public class MinePlugin extends JavaPlugin implements Listener {
          * génération pourra ainsi enregistrer immédiatement ses itinéraires.
          */
         villageKnightManager = new VillageKnightManager(this);
+
+        /*
+         * Le trésor est prêt avant /village afin que la dernière action de la
+         * transaction puisse enregistrer immédiatement la chambre forte.
+         */
+        villageTreasuryManager = new VillageTreasuryManager(this);
 
         // Instancie le gestionnaire de métiers (/job) avant /mineur pour
         // que les sessions restaurées récupèrent immédiatement leur bonus.
@@ -257,6 +272,9 @@ public class MinePlugin extends JavaPlugin implements Listener {
         }
         if (merchantManager != null) {
             merchantManager.shutdown();
+        }
+        if (villageTreasuryManager != null) {
+            villageTreasuryManager.shutdown();
         }
         if (villageKnightManager != null) {
             villageKnightManager.shutdown();

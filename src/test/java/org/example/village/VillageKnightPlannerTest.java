@@ -198,6 +198,46 @@ class VillageKnightPlannerTest {
     }
 
     @Test
+    void createsExactlyFourFixedTreasuryGuardsFromVillageAnchors() {
+        World world = walkableWorld(
+                UUID.randomUUID(),
+                y -> y == 44
+        );
+        Location center = new Location(world, 0.0D, 64.0D, 0.0D);
+        Map<String, Location> anchors = Map.of(
+                "treasury-guard-0",
+                new Location(world, -2.5D, 45.0D, 8.5D),
+                "treasury-guard-1",
+                new Location(world, 3.5D, 45.0D, 8.5D),
+                "treasury-guard-2",
+                new Location(world, -2.5D, 45.0D, -7.5D),
+                "treasury-guard-3",
+                new Location(world, 3.5D, 45.0D, -7.5D)
+        );
+
+        VillageKnightGarrison garrison = VillageKnightPlanner.plan(
+                42,
+                center,
+                emptyLayout(0, 0, 24),
+                anchors,
+                24,
+                24,
+                64,
+                settings(0, 4, 0, 0, 0, 0, false, 0)
+        );
+
+        assertNotNull(garrison);
+        assertEquals(4, garrison.unitCount());
+        assertEquals(4L, countRoutes(
+                garrison,
+                VillageKnightGarrison.RouteKind.TREASURY_SENTRY
+        ));
+        assertTrue(garrison.routes().stream()
+                .allMatch(route -> route.kind().isSentry()
+                        && route.waypoints().size() == 1));
+    }
+
+    @Test
     void upgradesLegacyStrategicRoutesToExplicitRoles() {
         UUID worldId = UUID.randomUUID();
         World world = mock(World.class);

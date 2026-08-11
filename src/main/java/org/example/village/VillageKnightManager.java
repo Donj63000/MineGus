@@ -69,6 +69,8 @@ import java.util.logging.Level;
 public final class VillageKnightManager implements Listener {
 
     public static final String KNIGHT_NAME = "Chevalier du village";
+    public static final String TREASURY_GUARD_NAME =
+            "Garde de la salle des coffres";
     public static final String KNIGHT_TYPE = "village_knight";
 
     private static final String SCOREBOARD_TAG =
@@ -88,6 +90,8 @@ public final class VillageKnightManager implements Listener {
     private static final double TELEPORT_VISIBILITY_RADIUS = 14.0D;
     private static final double MIN_MOVEMENT_SAMPLE_DISTANCE_SQ = 1.0D;
     private static final double RAMPART_VERTICAL_TOLERANCE = 1.75D;
+    private static final double TREASURY_ENGAGEMENT_RADIUS = 30.0D;
+    private static final double TREASURY_POST_ARRIVAL_RADIUS = 0.35D;
 
     private static final Set<Material> DANGEROUS_GROUND = Set.of(
             Material.LAVA,
@@ -190,6 +194,22 @@ public final class VillageKnightManager implements Listener {
     }
 
     /**
+     * Indique si la garnison obligatoire de la salle des coffres pourra être
+     * publiée à l'issue de la génération. Le test est volontairement exécuté
+     * avant toute modification du monde pour ne pas construire une banque
+     * condamnée à être annulée parce que la persistance des gardes est
+     * désactivée ou en lecture seule.
+     */
+    public boolean canPrepareTreasuryGuards(int villageId) {
+        ensurePrimaryThread();
+        return settings.enabled()
+                && !shuttingDown
+                && writable
+                && !garrisons.containsKey(villageId)
+                && garrisons.size() < VillageKnightStore.MAX_GARRISONS;
+    }
+
+    /**
      * Enregistre la garnison une fois la construction du village terminée.
      *
      * @return {@code true} si un plan de garnison a été créé.
@@ -210,6 +230,16 @@ public final class VillageKnightManager implements Listener {
             plugin.getLogger().severe(
                     "[Chevaliers] Garnison " + villageId
                             + " non créée : persistance en lecture seule."
+            );
+            return false;
+        }
+        if (!garrisons.containsKey(villageId)
+                && garrisons.size() >= VillageKnightStore.MAX_GARRISONS) {
+            plugin.getLogger().severe(
+                    "[Chevaliers] Garnison " + villageId
+                            + " non créée : limite de "
+                            + VillageKnightStore.MAX_GARRISONS
+                            + " garnisons persistantes atteinte."
             );
             return false;
         }
@@ -243,6 +273,22 @@ public final class VillageKnightManager implements Listener {
             return false;
         }
 
+        /*
+         * Une chambre forte publiée sans ses quatre sentinelles violerait le
+         * contrat de /village. Le contrôle intervient avant de remplacer une
+         * éventuelle garnison existante, afin que l'opération reste atomique.
+         */
+        if (requiresTreasurySentries(anchors)
+                && countTreasurySentries(planned)
+                != VillageTreasury.REQUIRED_GUARD_COUNT) {
+            plugin.getLogger().severe(
+                    "[Chevaliers] Garnison " + villageId
+                            + " refusée : la salle des coffres exige "
+                            + "exactement quatre sentinelles valides."
+            );
+            return false;
+        }
+
         removeGarrisonInternal(villageId, true);
         garrisons.put(villageId, planned);
         rebuildScanOrder();
@@ -268,6 +314,40 @@ public final class VillageKnightManager implements Listener {
                         + " entité(s) apparue(s) immédiatement."
         );
         return true;
+    }
+
+    private boolean requiresTreasurySentries(
+            Map<String, Location> anchors) {
+        if (anchors == null || anchors.isEmpty()) {
+            return false;
+        }
+        if (anchors.containsKey("treasury")) {
+            return true;
+        }
+        for (int index = 0;
+             index < VillageTreasury.REQUIRED_GUARD_COUNT;
+             index++) {
+            if (anchors.containsKey("treasury-guard-" + index)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private long countTreasurySentries(
+            VillageKnightGarrison garrison) {
+        if (garrison == null) {
+            return 0L;
+        }
+        return garrison.slots().stream()
+                .filter(slot -> {
+                    VillageKnightGarrison.PatrolRoute route =
+                            garrison.route(slot.routeId());
+                    return route != null
+                            && route.kind()
+                            == VillageKnightGarrison.RouteKind.TREASURY_SENTRY;
+                })
+                .count();
     }
 
     /**
@@ -665,6 +745,7 @@ public final class VillageKnightManager implements Listener {
                 now
         );
         if (target != null) {
+            setTreasuryMobility(garrison, slot, knight, true);
             slot.clearNavigationCommand();
             if (knight.getTarget() == null
                     || !knight.getTarget().getUniqueId()
@@ -747,7 +828,7 @@ public final class VillageKnightManager implements Listener {
 
         Entity entity = Bukkit.getEntity(targetId);
         if (!(entity instanceof LivingEntity target)
-                || !isHostile(target)
+                || !isAllowedAssignedTarget(garrison, slot, target)
                 || !knight.getWorld().equals(target.getWorld())
                 || !isWithinCombatLeash(garrison, slot, target)) {
             slot.clearTarget();
@@ -823,7 +904,8 @@ public final class VillageKnightManager implements Listener {
         double distanceSq = knight.getLocation()
                 .distanceSquared(effectiveTarget);
         if (distanceSq <= arrival * arrival) {
-            if (slot.navigationTarget() != null) {
+            if (slot.navigationTarget() != null
+                    || isTreasurySentry(garrison, slot)) {
                 knight.getPathfinder().stopPathfinding();
                 slot.clearNavigationCommand();
             }
@@ -834,8 +916,20 @@ public final class VillageKnightManager implements Listener {
                     ),
                     now
             );
+            /*
+             * Une vitesse nulle empêche les objectifs de promenade vanilla de
+             * décaler les quatre gardes. Leur IA reste active : ils peuvent
+             * regarder autour d'eux et sont remobilisés dès qu'une cible existe.
+             */
+            setTreasuryMobility(garrison, slot, knight, false);
             return;
         }
+
+        /*
+         * Après un combat ou un recul, la sentinelle récupère sa vitesse le
+         * temps de revenir précisément à son point fixe.
+         */
+        setTreasuryMobility(garrison, slot, knight, true);
 
         boolean refreshElapsed = now - slot.lastPathCommandAtMillis()
                 >= settings.pathRefreshMillis();
@@ -1080,6 +1174,10 @@ public final class VillageKnightManager implements Listener {
         if (route == null) {
             return settings.waypointArrivalRadius();
         }
+        if (route.kind()
+                == VillageKnightGarrison.RouteKind.TREASURY_SENTRY) {
+            return TREASURY_POST_ARRIVAL_RADIUS;
+        }
         if (route.kind().isSentry()) {
             return settings.sentryReturnRadius();
         }
@@ -1243,10 +1341,80 @@ public final class VillageKnightManager implements Listener {
                 now + TARGET_MEMORY_MILLIS
         );
         slot.clearNavigationCommand();
+        setTreasuryMobility(garrison, slot, knight, true);
         knight.getPathfinder().stopPathfinding();
         knight.setTarget(target);
         knight.setAggressive(true);
         return true;
+    }
+
+    /**
+     * Autorise les monstres hostiles habituels et, uniquement pour une
+     * sentinelle du trésor, le joueur précis mémorisé après son attaque.
+     * Cette condition interdit qu'un garde acquière spontanément un visiteur.
+     */
+    private boolean isAllowedAssignedTarget(
+            VillageKnightGarrison garrison,
+            VillageKnightGarrison.KnightSlot slot,
+            LivingEntity target) {
+        if (isHostile(target)) {
+            return true;
+        }
+        if (!(target instanceof Player)
+                || !target.isValid()
+                || target.isDead()
+                || target.isInvulnerable()
+                || slot == null
+                || !target.getUniqueId().equals(
+                slot.targetEntityId()
+        )) {
+            return false;
+        }
+        VillageKnightGarrison.PatrolRoute route =
+                garrison != null ? garrison.route(slot.routeId()) : null;
+        return route != null
+                && route.kind()
+                == VillageKnightGarrison.RouteKind.TREASURY_SENTRY;
+    }
+
+    /**
+     * Les quatre gardes de la chambre forte ripostent ensemble. Ils conservent
+     * néanmoins leur laisse locale et reviennent donc à leur poste dès que
+     * l'agresseur quitte la salle.
+     */
+    private void dispatchTreasuryRetaliation(
+            VillageKnightGarrison garrison,
+            Player attacker) {
+        if (garrison == null || attacker == null
+                || !attacker.isValid() || attacker.isDead()) {
+            return;
+        }
+        long now = System.currentTimeMillis();
+        for (VillageKnightGarrison.KnightSlot slot
+                : garrison.slots()) {
+            VillageKnightGarrison.PatrolRoute route =
+                    garrison.route(slot.routeId());
+            if (route == null
+                    || route.kind()
+                    != VillageKnightGarrison.RouteKind.TREASURY_SENTRY
+                    || !isWithinCombatLeash(garrison, slot, attacker)) {
+                continue;
+            }
+            Mob knight = resolveLiveKnight(garrison, slot);
+            if (knight == null) {
+                continue;
+            }
+            slot.assignTarget(
+                    attacker.getUniqueId(),
+                    now + TARGET_MEMORY_MILLIS
+            );
+            slot.clearNavigationCommand();
+            setTreasuryMobility(garrison, slot, knight, true);
+            knight.getPathfinder().stopPathfinding();
+            knight.setTarget(attacker);
+            knight.setAggressive(true);
+            dirty = true;
+        }
     }
 
     private void dispatchDefenders(
@@ -1423,7 +1591,13 @@ public final class VillageKnightManager implements Listener {
         if (route.kind().isSentry()) {
             VillageKnightGarrison.BlockPoint post =
                     route.currentWaypoint();
-            double radius = settings.sentryEngagementRadius();
+            double radius = route.kind()
+                    == VillageKnightGarrison.RouteKind.TREASURY_SENTRY
+                    ? Math.max(
+                    settings.sentryEngagementRadius(),
+                    TREASURY_ENGAGEMENT_RADIUS
+            )
+                    : settings.sentryEngagementRadius();
             return horizontalDistanceSquared(post, location)
                     <= radius * radius
                     && Math.abs(location.getY() - post.y())
@@ -1451,7 +1625,13 @@ public final class VillageKnightManager implements Listener {
             return settings.detectionRadius();
         }
         if (route.kind().isSentry()) {
-            return settings.sentryEngagementRadius();
+            return route.kind()
+                    == VillageKnightGarrison.RouteKind.TREASURY_SENTRY
+                    ? Math.max(
+                    settings.sentryEngagementRadius(),
+                    TREASURY_ENGAGEMENT_RADIUS
+            )
+                    : settings.sentryEngagementRadius();
         }
         if (route.kind()
                 == VillageKnightGarrison.RouteKind.RAMPART) {
@@ -1747,7 +1927,14 @@ public final class VillageKnightManager implements Listener {
             VillageKnightGarrison.KnightSlot slot,
             Mob knight,
             boolean heal) {
-        knight.setCustomName(ChatColor.DARK_AQUA + KNIGHT_NAME);
+        VillageKnightGarrison.PatrolRoute route =
+                garrison.route(slot.routeId());
+        String displayName = route != null
+                && route.kind()
+                == VillageKnightGarrison.RouteKind.TREASURY_SENTRY
+                ? TREASURY_GUARD_NAME
+                : KNIGHT_NAME;
+        knight.setCustomName(ChatColor.DARK_AQUA + displayName);
         knight.setCustomNameVisible(true);
         knight.setAI(true);
         knight.setAware(true);
@@ -1838,6 +2025,10 @@ public final class VillageKnightManager implements Listener {
                 settings.knockbackResistance(),
                 false
         );
+        if (isTreasurySentry(garrison, slot)
+                && slot.targetEntityId() == null) {
+            setTreasuryMobility(garrison, slot, knight, false);
+        }
         if (heal && maxHealth != null) {
             knight.setHealth(Math.min(
                     maxHealth.getValue(),
@@ -1846,6 +2037,44 @@ public final class VillageKnightManager implements Listener {
         }
 
         equipKnight(knight, slot.unitKind());
+    }
+
+    /**
+     * Immobilise uniquement les sentinelles fiscales lorsqu'elles sont à leur
+     * poste. La valeur configurée est restaurée avant tout combat ou trajet de
+     * retour ; aucun effet de potion visible n'est appliqué au PNJ.
+     */
+    private void setTreasuryMobility(
+            VillageKnightGarrison garrison,
+            VillageKnightGarrison.KnightSlot slot,
+            Mob knight,
+            boolean mobile) {
+        if (!isTreasurySentry(garrison, slot) || knight == null) {
+            return;
+        }
+        AttributeInstance movement = knight.getAttribute(
+                Attribute.MOVEMENT_SPEED
+        );
+        if (movement == null) {
+            return;
+        }
+        double expected = mobile ? settings.movementSpeed() : 0.0D;
+        if (Math.abs(movement.getBaseValue() - expected) > 0.000_001D) {
+            movement.setBaseValue(expected);
+        }
+    }
+
+    private boolean isTreasurySentry(
+            VillageKnightGarrison garrison,
+            VillageKnightGarrison.KnightSlot slot) {
+        if (garrison == null || slot == null) {
+            return false;
+        }
+        VillageKnightGarrison.PatrolRoute route =
+                garrison.route(slot.routeId());
+        return route != null
+                && route.kind()
+                == VillageKnightGarrison.RouteKind.TREASURY_SENTRY;
     }
 
     private AttributeInstance setAttribute(
@@ -2340,13 +2569,28 @@ public final class VillageKnightManager implements Listener {
         if (!writable || shuttingDown || urgentSaveTask != null) {
             return;
         }
-        urgentSaveTask = Bukkit.getScheduler().runTask(
-                plugin,
-                () -> {
-                    urgentSaveTask = null;
-                    saveIfDirty();
-                }
-        );
+        try {
+            urgentSaveTask = Bukkit.getScheduler().runTask(
+                    plugin,
+                    () -> {
+                        urgentSaveTask = null;
+                        saveIfDirty();
+                    }
+            );
+        } catch (RuntimeException failure) {
+            /*
+             * L'état reste marqué dirty. L'autosauvegarde ou l'arrêt du plugin
+             * retentera l'écriture sans faire échouer une garnison déjà
+             * publiée dans la transaction de /village.
+             */
+            urgentSaveTask = null;
+            plugin.getLogger().log(
+                    Level.WARNING,
+                    "[Chevaliers] La sauvegarde urgente n'a pas pu être "
+                            + "planifiée ; elle sera retentée.",
+                    failure
+            );
+        }
     }
 
     private void cancelTask(BukkitTask task) {
@@ -2383,7 +2627,11 @@ public final class VillageKnightManager implements Listener {
             }
             boolean allowed = reference != null
                     && target != null
-                    && isHostile(target)
+                    && isAllowedAssignedTarget(
+                    reference.garrison(),
+                    reference.slot(),
+                    target
+            )
                     && isWithinCombatLeash(
                     reference.garrison(),
                     reference.slot(),
@@ -2451,8 +2699,21 @@ public final class VillageKnightManager implements Listener {
         }
 
         if (isVillageKnight(attacker)) {
-            if (!(victim instanceof LivingEntity livingVictim)
-                    || !isHostile(livingVictim)) {
+            SlotReference reference = slotsByEntity.get(
+                    attacker.getUniqueId()
+            );
+            if (reference == null) {
+                reference = referenceFromMarker(attacker);
+            }
+            boolean allowedVictim =
+                    victim instanceof LivingEntity livingVictim
+                            && reference != null
+                            && isAllowedAssignedTarget(
+                            reference.garrison(),
+                            reference.slot(),
+                            livingVictim
+                    );
+            if (!allowedVictim) {
                 event.setCancelled(true);
                 clearTargetIfMatching(attacker, victim);
                 return;
@@ -2483,6 +2744,46 @@ public final class VillageKnightManager implements Listener {
         if (event.getEntity() instanceof LivingEntity victim
                 && isProtectedEntity(victim)) {
             dispatchDefenders(victim, attacker);
+        }
+    }
+
+    /**
+     * Un joueur n'est jamais ciblé de manière préventive. La riposte est
+     * déclenchée seulement après un dommage réellement accepté par le serveur.
+     */
+    @EventHandler(priority = EventPriority.MONITOR,
+            ignoreCancelled = true)
+    public void onTreasurySentryDamaged(
+            EntityDamageByEntityEvent event) {
+        if (!(event.getEntity() instanceof LivingEntity victim)
+                || !isVillageKnight(victim)) {
+            return;
+        }
+        LivingEntity attacker = resolveLivingAttacker(event);
+        if (!(attacker instanceof Player player)) {
+            return;
+        }
+
+        SlotReference reference = slotsByEntity.get(
+                victim.getUniqueId()
+        );
+        if (reference == null) {
+            reference = referenceFromMarker(victim);
+        }
+        if (reference == null) {
+            return;
+        }
+        VillageKnightGarrison.PatrolRoute route =
+                reference.garrison().route(
+                        reference.slot().routeId()
+                );
+        if (route != null
+                && route.kind()
+                == VillageKnightGarrison.RouteKind.TREASURY_SENTRY) {
+            dispatchTreasuryRetaliation(
+                    reference.garrison(),
+                    player
+            );
         }
     }
 

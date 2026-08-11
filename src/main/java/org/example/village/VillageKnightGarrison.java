@@ -45,6 +45,7 @@ public final class VillageKnightGarrison {
         PLAZA_SENTRY,
         KEEP_ENTRANCE_SENTRY,
         KEEP_INTERIOR_SENTRY,
+        TREASURY_SENTRY,
         URBAN,
         RAMPART;
 
@@ -53,7 +54,8 @@ public final class VillageKnightGarrison {
                     || this == GATE_SENTRY
                     || this == PLAZA_SENTRY
                     || this == KEEP_ENTRANCE_SENTRY
-                    || this == KEEP_INTERIOR_SENTRY;
+                    || this == KEEP_INTERIOR_SENTRY
+                    || this == TREASURY_SENTRY;
         }
 
         public boolean isPatrol() {

@@ -57,11 +57,12 @@ mineur:
     material: NETHERITE_PICKAXE
 
   # Mode sûr : le propriétaire doit être connecté pour fournir un vrai Player
-  # aux plugins de protection. Pour miner hors ligne, mettre les deux options
-  # ci-dessous à false en connaissance de cause.
+  # aux plugins de protection. Pour travailler hors ligne, mettre les trois
+  # options ci-dessous à false en connaissance de cause.
   protection:
     require-owner-online: true
     fire-block-break-event: true
+    fire-block-place-event: true
 
   # Persistance de l'acteur visuel. La session reste la source de vérité :
   # après un redémarrage, /kill ou une suppression par un autre plugin, un seul
@@ -118,11 +119,49 @@ mineur:
     gallery-width: 3  # largeur de la galerie principale (en blocs)
 
   tunnel:
+    # Je creuse un tunnel de 10 blocs de large sur 3 blocs de haut et je
+    # progresse par sections de 10 blocs dans la direction choisie.
     section-size: 10
     height: 3
     max-height: 8
-    max-sections: 0               # 0 = infini jusqu'à max-distance-from-base
+    # Je laisse le nombre de sections ouvert, mais je borne toujours le chantier
+    # à 2 048 blocs de sa base pour protéger le serveur.
+    max-sections: 0
     max-distance-from-base: 2048
+
+    infrastructure:
+      # J'équipe chaque section de pieds, de poutres en bois et de lumières ;
+      # la salle d'arrivée reçoit aussi ses plateformes et installations.
+      enabled: true
+      # Je borne tout plan (scan, scellements et décor) ; la valeur runtime est
+      # plafonnée à 20 000 pour éviter une grosse allocation sur un seul tick.
+      max-planned-blocks-per-section: 4096
+      # Je répartis les poses, retraits et décorations sur plusieurs ticks.
+      operations-per-tick: 64
+      # Je borne aussi les lectures du monde pendant la recherche des fluides.
+      fluid-inspections-per-tick: 512
+      support-spacing: 5
+      first-support-offset: 3
+      light-every-frames: 1
+      central-aisle-width: 3
+      arrival-platform-depth: 4
+      post-material: SPRUCE_FENCE
+      beam-material: STRIPPED_SPRUCE_LOG
+      floor-material: SPRUCE_PLANKS
+      light-material: SHROOMLIGHT
+
+      # Je draine uniquement le volume actif. Je vitre les contacts fluides et
+      # les ouvertures de grotte par lesquelles eau ou lave pourraient revenir.
+      glass-material: LIGHT_BLUE_STAINED_GLASS
+      fluids-enabled: true
+
+    arrival-room:
+      # Je construis cette salle une seule fois, lors du premier passage de la
+      # carrière vers le tunnel, avant de poursuivre les sections ordinaires.
+      enabled: true
+      width: 15
+      depth: 15
+      height: 5
 
   vein:
     scan-radius: 5
@@ -250,6 +289,37 @@ village:
   decorDensity: high
   # Respiration minimale entre les derniers jardins et la face intérieure.
   wallGap: 8
+
+  # Chambre forte royale construite sous le donjon par /village.
+  treasury:
+    enabled: true
+
+    # Seul le créateur du village (le roi) ouvre les portes et les coffres.
+    # La permission mineplugin.village.treasury.admin contourne cette règle.
+    owner-only-containers: true
+    door-open-seconds: 6
+
+    # Entretien léger : échéances, dépôts, barre de zone et registre.
+    maintenance-period-ticks: 20
+    autosave-seconds: 30
+
+    tax:
+      # Une collecte globale est planifiée aléatoirement entre 1 et 60 secondes.
+      # Ce n'est volontairement pas une collecte par coffre afin que la réserve
+      # se remplisse lentement malgré ses soixante coffres.
+      min-interval-seconds: 1
+      max-interval-seconds: 60
+
+      # Les échéances continuent hors ligne sans forcer le chargement des chunks.
+      # Les plafonds bornent le rattrapage après une très longue interruption.
+      max-pending: 512
+      catch-up-limit-per-cycle: 256
+      deposits-per-cycle: 1
+
+      # Quantité de la ressource choisie ; la taille maximale propre à l'objet
+      # reste toujours respectée (les objets non empilables restent unitaires).
+      minimum-item-amount: 1
+      maximum-item-amount: 16
 
   # Garnison persistante créée automatiquement à la fin de /village.
   knights:

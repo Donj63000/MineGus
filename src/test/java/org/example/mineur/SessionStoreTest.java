@@ -59,7 +59,7 @@ class SessionStoreTest {
         state.tunnelHeight = 4;
         state.containers.add(new Vector(8, 64, 9));
 
-        store.saveAll(List.of(state));
+        assertTrue(store.saveAll(List.of(state)));
 
         try (MockedStatic<Bukkit> mocked = org.mockito.Mockito.mockStatic(Bukkit.class)) {
             mocked.when(() -> Bukkit.getWorld(worldUid)).thenReturn(world);
@@ -79,6 +79,40 @@ class SessionStoreTest {
             assertEquals(1, restored.containers.size());
             assertEquals(state.selected, restored.selected);
         }
+    }
+
+    @Test
+    void reportsWhenTheAtomicSaveCannotBeWritten() throws IOException {
+        File regularFile = Files.createTempFile(
+                "mineur-store-not-a-folder",
+                ".tmp"
+        ).toFile();
+        regularFile.deleteOnExit();
+
+        SessionStore store = new SessionStore(
+                regularFile,
+                Logger.getAnonymousLogger()
+        );
+
+        // Je dois connaître l'échec avant toute mutation dépendant du journal.
+        assertFalse(store.saveAll(List.of()));
+    }
+
+    @Test
+    void keepsTheLastCompleteFileWhenOneSessionCannotBeSerialized() throws IOException {
+        File folder = Files.createTempDirectory(
+                "mineur-store-serialization-failure"
+        ).toFile();
+        folder.deleteOnExit();
+        SessionStore store = new SessionStore(folder, Logger.getAnonymousLogger());
+
+        assertTrue(store.saveAll(List.of()));
+        File primary = new File(folder, "sessions.yml");
+        String before = Files.readString(primary.toPath());
+
+        // Je refuse une sauvegarde amputée d'une session sans base valide.
+        assertFalse(store.saveAll(List.of(new MiningSessionState())));
+        assertEquals(before, Files.readString(primary.toPath()));
     }
 
     @Test

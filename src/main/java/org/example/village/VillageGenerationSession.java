@@ -25,6 +25,13 @@ public final class VillageGenerationSession {
     private final Set<Location> generatedSpawners = new LinkedHashSet<>();
     private final Map<String, Location> anchors = new LinkedHashMap<>();
 
+    /*
+     * Ces marqueurs distinguent les sous-systèmes publiés par cette transaction
+     * d'un éventuel état plus ancien portant le même identifiant de village.
+     */
+    private boolean treasuryRegistered;
+    private boolean knightGarrisonRegistered;
+
     public VillageGenerationSession(int villageId) {
         this.villageId = villageId;
     }
@@ -54,6 +61,22 @@ public final class VillageGenerationSession {
 
     public Map<String, Location> getAnchors() {
         return anchors;
+    }
+
+    public boolean isTreasuryRegistered() {
+        return treasuryRegistered;
+    }
+
+    public void markTreasuryRegistered() {
+        treasuryRegistered = true;
+    }
+
+    public boolean isKnightGarrisonRegistered() {
+        return knightGarrisonRegistered;
+    }
+
+    public void markKnightGarrisonRegistered() {
+        knightGarrisonRegistered = true;
     }
 
     /**

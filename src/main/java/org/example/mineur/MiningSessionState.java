@@ -19,10 +19,21 @@ import java.util.UUID;
  */
 public final class MiningSessionState {
 
-    public static final int CURRENT_SCHEMA_VERSION = 6;
+    public static final int CURRENT_SCHEMA_VERSION = 10;
+    public static final int CURRENT_TUNNEL_INFRASTRUCTURE_VERSION = 1;
     private static final int MAX_TRUSTED_PLAYERS = 256;
     private static final int MAX_STORED_CONTAINERS = 256;
+    private static final int MAX_TUNNEL_FRONTIER_SEALS = 20_000;
+    private static final int MAX_TUNNEL_FOREIGN_FRONTIER_SEALS = 20_000;
+    private static final int MAX_TUNNEL_PERMANENT_SEALS = 20_000;
+    private static final int MAX_PENDING_TUNNEL_FRONTIER_SEALS = 20_000;
+    private static final int MAX_PENDING_TUNNEL_PERMANENT_SEALS = 20_000;
+    private static final int MAX_INSPECTED_TUNNEL_SEALS = 20_000;
+    private static final int MAX_TUNNEL_SECTION_KEY_LENGTH = 256;
     private static final int MAX_INSPECTED_LIST_ENTRIES = 1_024;
+    private static final int MAX_TUNNEL_ORIGIN_HORIZONTAL_SPAN = 512;
+    private static final int MAX_TUNNEL_ORIGIN_VERTICAL_SPAN = 32;
+    private static final int MAX_TUNNEL_ORIGIN_DISTANCE_FROM_MINE = 512;
 
     /**
      * Origine persistée d'une pause.
@@ -84,6 +95,32 @@ public final class MiningSessionState {
     public int tunnelHeight = 3;
     public int tunnelSectionsMined = 0;
     public int maxTunnelSections = 0;
+    public int tunnelInfrastructureVersion = 0;
+    public boolean tunnelArrivalRoom = false;
+    /*
+     * Je conserve l'emprise compacte du premier tronçon pour pouvoir le
+     * reconnaître même lorsque le curseur actif a progressé loin dans la mine.
+     */
+    public StructureBounds tunnelOriginBounds;
+    public String preparedTunnelSection = "";
+    public final List<Vector> tunnelFrontierSeals = new ArrayList<>();
+    /*
+     * Je distingue les verres temporaires déjà présents dans le monde : ils
+     * doivent être rouverts avec leurs drops sans devenir notre propriété.
+     */
+    public final List<Vector> tunnelForeignFrontierSeals = new ArrayList<>();
+    /*
+     * Je conserve séparément les scellements permanents du tronçon actif afin
+     * de ne jamais les confondre avec la couture temporaire de sa face avant.
+     */
+    public final List<Vector> tunnelPermanentSeals = new ArrayList<>();
+    /*
+     * Je journalise séparément les poses calculées mais pas encore validées :
+     * je peux ainsi reprendre proprement une section après un arrêt brutal.
+     */
+    public String pendingTunnelInfrastructureSection = "";
+    public final List<Vector> pendingTunnelFrontierSeals = new ArrayList<>();
+    public final List<Vector> pendingTunnelPermanentSeals = new ArrayList<>();
 
     public Map<String, Object> toMap() {
         if (base == null) {
@@ -178,6 +215,62 @@ public final class MiningSessionState {
         map.put("tunnelHeight", Math.max(1, tunnelHeight));
         map.put("tunnelSectionsMined", Math.max(0, tunnelSectionsMined));
         map.put("maxTunnelSections", Math.max(0, maxTunnelSections));
+        map.put("tunnelInfrastructureVersion", Math.max(0, tunnelInfrastructureVersion));
+        map.put("tunnelArrivalRoom", tunnelArrivalRoom);
+        StructureBounds serializedTunnelOriginBounds = serializableTunnelOriginBounds(
+                effectiveWorldUid
+        );
+        map.put(
+                "tunnelOriginBounds",
+                serializedTunnelOriginBounds != null
+                        ? serializedTunnelOriginBounds.toList()
+                        : null
+        );
+        map.put(
+                "preparedTunnelSection",
+                preparedTunnelSection != null
+                        && preparedTunnelSection.length() <= MAX_TUNNEL_SECTION_KEY_LENGTH
+                        ? preparedTunnelSection
+                        : ""
+        );
+
+        map.put(
+                "tunnelFrontierSeals",
+                serializeTunnelSeals(tunnelFrontierSeals, MAX_TUNNEL_FRONTIER_SEALS)
+        );
+        map.put(
+                "tunnelForeignFrontierSeals",
+                serializeTunnelSeals(
+                        tunnelForeignFrontierSeals,
+                        MAX_TUNNEL_FOREIGN_FRONTIER_SEALS
+                )
+        );
+        map.put(
+                "tunnelPermanentSeals",
+                serializeTunnelSeals(tunnelPermanentSeals, MAX_TUNNEL_PERMANENT_SEALS)
+        );
+        map.put(
+                "pendingTunnelInfrastructureSection",
+                pendingTunnelInfrastructureSection != null
+                        && pendingTunnelInfrastructureSection.length()
+                        <= MAX_TUNNEL_SECTION_KEY_LENGTH
+                        ? pendingTunnelInfrastructureSection
+                        : ""
+        );
+        map.put(
+                "pendingTunnelFrontierSeals",
+                serializeTunnelSeals(
+                        pendingTunnelFrontierSeals,
+                        MAX_PENDING_TUNNEL_FRONTIER_SEALS
+                )
+        );
+        map.put(
+                "pendingTunnelPermanentSeals",
+                serializeTunnelSeals(
+                        pendingTunnelPermanentSeals,
+                        MAX_PENDING_TUNNEL_PERMANENT_SEALS
+                )
+        );
 
         List<String> trustedList = new ArrayList<>();
         for (UUID uuid : trusted) {
@@ -304,6 +397,69 @@ public final class MiningSessionState {
         state.tunnelHeight = Math.max(1, intValue(map.get("tunnelHeight"), 3));
         state.tunnelSectionsMined = Math.max(0, intValue(map.get("tunnelSectionsMined"), 0));
         state.maxTunnelSections = Math.max(0, intValue(map.get("maxTunnelSections"), 0));
+        state.tunnelInfrastructureVersion = Math.max(
+                0,
+                intValue(map.get("tunnelInfrastructureVersion"), 0)
+        );
+        state.tunnelArrivalRoom = booleanValue(map.get("tunnelArrivalRoom"), false);
+        state.tunnelOriginBounds = tunnelOriginBoundsValue(
+                map.get("tunnelOriginBounds"),
+                state,
+                minimumY,
+                maximumY
+        );
+        Object preparedSection = map.get("preparedTunnelSection");
+        if (preparedSection instanceof String text
+                && text.length() <= MAX_TUNNEL_SECTION_KEY_LENGTH) {
+            state.preparedTunnelSection = text;
+        }
+
+        Object pendingInfrastructureSection = map.get("pendingTunnelInfrastructureSection");
+        if (pendingInfrastructureSection instanceof String text
+                && text.length() <= MAX_TUNNEL_SECTION_KEY_LENGTH) {
+            state.pendingTunnelInfrastructureSection = text;
+        }
+
+        deserializeTunnelSeals(
+                map.get("tunnelFrontierSeals"),
+                state.cursor,
+                minimumY,
+                maximumY,
+                MAX_TUNNEL_FRONTIER_SEALS,
+                state.tunnelFrontierSeals
+        );
+        deserializeTunnelSeals(
+                map.get("tunnelForeignFrontierSeals"),
+                state.cursor,
+                minimumY,
+                maximumY,
+                MAX_TUNNEL_FOREIGN_FRONTIER_SEALS,
+                state.tunnelForeignFrontierSeals
+        );
+        deserializeTunnelSeals(
+                map.get("tunnelPermanentSeals"),
+                state.cursor,
+                minimumY,
+                maximumY,
+                MAX_TUNNEL_PERMANENT_SEALS,
+                state.tunnelPermanentSeals
+        );
+        deserializeTunnelSeals(
+                map.get("pendingTunnelFrontierSeals"),
+                state.cursor,
+                minimumY,
+                maximumY,
+                MAX_PENDING_TUNNEL_FRONTIER_SEALS,
+                state.pendingTunnelFrontierSeals
+        );
+        deserializeTunnelSeals(
+                map.get("pendingTunnelPermanentSeals"),
+                state.cursor,
+                minimumY,
+                maximumY,
+                MAX_PENDING_TUNNEL_PERMANENT_SEALS,
+                state.pendingTunnelPermanentSeals
+        );
 
         Object trustedObj = map.get("trusted");
         if (trustedObj instanceof List<?> list) {
@@ -440,6 +596,103 @@ public final class MiningSessionState {
         }
     }
 
+    /**
+     * Je n'écris l'origine du tunnel que si elle appartient encore au monde
+     * de la session et respecte les mêmes bornes que lors de la restauration.
+     */
+    private StructureBounds serializableTunnelOriginBounds(UUID effectiveWorldUid) {
+        if (tunnelOriginBounds == null || base == null || effectiveWorldUid == null) {
+            return null;
+        }
+        World world = base.getWorld();
+        if (world == null || !effectiveWorldUid.equals(world.getUID())) {
+            return null;
+        }
+        int minimumY = effectiveMinimumHeight(world);
+        int maximumY = effectiveMaximumHeight(world, minimumY);
+        return isValidTunnelOriginBounds(
+                tunnelOriginBounds,
+                this,
+                minimumY,
+                maximumY
+        ) ? tunnelOriginBounds : null;
+    }
+
+    /**
+     * Je restaure uniquement une liste compacte de six entiers exacts. Les
+     * décimaux, débordements et coordonnées supplémentaires sont rejetés.
+     */
+    private static StructureBounds tunnelOriginBoundsValue(Object value,
+                                                            MiningSessionState state,
+                                                            int worldMinimumY,
+                                                            int worldMaximumY) {
+        if (!(value instanceof List<?> list) || list.size() != 6) {
+            return null;
+        }
+
+        Integer minX = nullableExactInt(list.get(0));
+        Integer maxX = nullableExactInt(list.get(1));
+        Integer minY = nullableExactInt(list.get(2));
+        Integer maxY = nullableExactInt(list.get(3));
+        Integer minZ = nullableExactInt(list.get(4));
+        Integer maxZ = nullableExactInt(list.get(5));
+        if (minX == null || maxX == null || minY == null || maxY == null
+                || minZ == null || maxZ == null
+                || minX > maxX || minY > maxY || minZ > maxZ) {
+            return null;
+        }
+
+        StructureBounds bounds = new StructureBounds(minX, maxX, minY, maxY, minZ, maxZ);
+        return isValidTunnelOriginBounds(
+                bounds,
+                state,
+                worldMinimumY,
+                worldMaximumY
+        ) ? bounds : null;
+    }
+
+    private static boolean isValidTunnelOriginBounds(StructureBounds bounds,
+                                                     MiningSessionState state,
+                                                     int worldMinimumY,
+                                                     int worldMaximumY) {
+        if (bounds == null || state == null || state.base == null) {
+            return false;
+        }
+
+        long spanX = (long) bounds.maxX() - bounds.minX() + 1L;
+        long spanY = (long) bounds.maxY() - bounds.minY() + 1L;
+        long spanZ = (long) bounds.maxZ() - bounds.minZ() + 1L;
+        if (spanX > MAX_TUNNEL_ORIGIN_HORIZONTAL_SPAN
+                || spanY > MAX_TUNNEL_ORIGIN_VERTICAL_SPAN
+                || spanZ > MAX_TUNNEL_ORIGIN_HORIZONTAL_SPAN
+                || bounds.minY() < worldMinimumY
+                || bounds.maxY() >= worldMaximumY) {
+            return false;
+        }
+
+        /*
+         * Le premier tronçon peut mesurer 512 blocs et se trouver juste après
+         * une carrière elle-même large de 512 blocs. Je compare donc l'emprise
+         * à la mine bornée, pas seulement à son bloc d'origine.
+         */
+        long mineMinX = state.base.getBlockX();
+        long mineMinZ = state.base.getBlockZ();
+        long mineWidth = Math.max(
+                1L,
+                Math.min(MAX_TUNNEL_ORIGIN_HORIZONTAL_SPAN, (long) state.width)
+        );
+        long mineLength = Math.max(
+                1L,
+                Math.min(MAX_TUNNEL_ORIGIN_HORIZONTAL_SPAN, (long) state.length)
+        );
+        long mineMaxX = mineMinX + mineWidth - 1L;
+        long mineMaxZ = mineMinZ + mineLength - 1L;
+        return bounds.minX() >= mineMinX - MAX_TUNNEL_ORIGIN_DISTANCE_FROM_MINE
+                && bounds.maxX() <= mineMaxX + MAX_TUNNEL_ORIGIN_DISTANCE_FROM_MINE
+                && bounds.minZ() >= mineMinZ - MAX_TUNNEL_ORIGIN_DISTANCE_FROM_MINE
+                && bounds.maxZ() <= mineMaxZ + MAX_TUNNEL_ORIGIN_DISTANCE_FROM_MINE;
+    }
+
     private static StructureBounds structureBoundsValue(Object value,
                                                         MiningSessionState state,
                                                         int worldMinimumY,
@@ -505,6 +758,104 @@ public final class MiningSessionState {
                 || face == BlockFace.WEST;
     }
 
+    /**
+     * Je trie et déduplique les scellements avant leur écriture afin de rendre
+     * le YAML stable tout en respectant strictement la borne mémoire annoncée.
+     */
+    private static List<List<Integer>> serializeTunnelSeals(List<Vector> source,
+                                                            int maximumSeals) {
+        List<Vector> ordered = new ArrayList<>();
+        if (source != null) {
+            for (Vector vector : source) {
+                if (vector != null) {
+                    ordered.add(vector);
+                }
+            }
+        }
+        ordered.sort((first, second) -> {
+            int xOrder = Integer.compare(first.getBlockX(), second.getBlockX());
+            if (xOrder != 0) {
+                return xOrder;
+            }
+            int yOrder = Integer.compare(first.getBlockY(), second.getBlockY());
+            return yOrder != 0
+                    ? yOrder
+                    : Integer.compare(first.getBlockZ(), second.getBlockZ());
+        });
+
+        List<List<Integer>> serialized = new ArrayList<>();
+        Set<String> seenCoordinates = new HashSet<>();
+        for (Vector vector : ordered) {
+            if (serialized.size() >= maximumSeals) {
+                break;
+            }
+            String coordinateKey = vector.getBlockX() + ":" + vector.getBlockY()
+                    + ":" + vector.getBlockZ();
+            if (seenCoordinates.add(coordinateKey)) {
+                serialized.add(List.of(
+                        vector.getBlockX(),
+                        vector.getBlockY(),
+                        vector.getBlockZ()
+                ));
+            }
+        }
+        return serialized;
+    }
+
+    /**
+     * Je partage la même validation pour les coutures temporaires et les
+     * scellements permanents : borne, déduplication et proximité du curseur actif.
+     */
+    private static void deserializeTunnelSeals(Object value,
+                                               MiningCursor cursor,
+                                               int minimumY,
+                                               int maximumY,
+                                               int maximumSeals,
+                                               List<Vector> target) {
+        if (!(value instanceof List<?> list) || target == null) {
+            return;
+        }
+
+        Set<String> seenCoordinates = new HashSet<>();
+        int inspected = 0;
+        for (Object entry : list) {
+            if (inspected++ >= MAX_INSPECTED_TUNNEL_SEALS
+                    || target.size() >= maximumSeals) {
+                break;
+            }
+            if (!(entry instanceof List<?> coordinates) || coordinates.size() < 3) {
+                continue;
+            }
+            Integer x = nullableInt(coordinates.get(0));
+            Integer y = nullableInt(coordinates.get(1));
+            Integer z = nullableInt(coordinates.get(2));
+            if (x == null || y == null || z == null
+                    || y < minimumY || y >= maximumY
+                    || !isNearActiveTunnelCursor(cursor, x, y, z)) {
+                continue;
+            }
+            String coordinateKey = x + ":" + y + ":" + z;
+            if (seenCoordinates.add(coordinateKey)) {
+                target.add(new Vector(x, y, z));
+            }
+        }
+    }
+
+    private static boolean isNearActiveTunnelCursor(MiningCursor cursor, int x, int y, int z) {
+        if (cursor == null) {
+            return false;
+        }
+        long maxX = (long) cursor.minX + Math.max(1, cursor.width) - 1L;
+        long maxY = (long) cursor.minY + Math.max(1, cursor.height) - 1L;
+        long maxZ = (long) cursor.minZ + Math.max(1, cursor.length) - 1L;
+        return (long) x >= (long) cursor.minX - 1L
+                && (long) x <= maxX + 1L
+                && (long) y >= (long) cursor.minY - 1L
+                && (long) y <= maxY + 1L
+                && (long) z >= (long) cursor.minZ - 1L
+                && (long) z <= maxZ + 1L;
+    }
+
     private static Integer nullableInt(Object value) {
         if (!(value instanceof Number number)) {
             return null;
@@ -518,6 +869,20 @@ public final class MiningSessionState {
         }
         if (decimal >= Integer.MAX_VALUE) {
             return Integer.MAX_VALUE;
+        }
+        return (int) decimal;
+    }
+
+    private static Integer nullableExactInt(Object value) {
+        if (!(value instanceof Number number)) {
+            return null;
+        }
+        double decimal = number.doubleValue();
+        if (!Double.isFinite(decimal)
+                || decimal < Integer.MIN_VALUE
+                || decimal > Integer.MAX_VALUE
+                || decimal != Math.rint(decimal)) {
+            return null;
         }
         return (int) decimal;
     }

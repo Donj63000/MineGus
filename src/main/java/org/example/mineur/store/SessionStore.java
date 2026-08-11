@@ -238,11 +238,12 @@ public final class SessionStore {
         return new LoadResult(true, sessions, preserved);
     }
 
-    public synchronized void saveAll(List<MiningSessionState> sessions) {
+    public synchronized boolean saveAll(List<MiningSessionState> sessions) {
         YamlConfiguration yaml = new YamlConfiguration();
         ConfigurationSection root = yaml.createSection("sessions");
 
         int index = 0;
+        boolean serializationFailed = false;
         Set<UUID> serializedIds = new HashSet<>();
         if (sessions != null) {
             for (MiningSessionState state : sessions) {
@@ -256,6 +257,7 @@ public final class SessionStore {
                         serializedIds.add(state.id);
                     }
                 } catch (RuntimeException exception) {
+                    serializationFailed = true;
                     logger.log(Level.WARNING,
                             "[Mineur] Session invalide non sauvegardée"
                                     + (state.id != null ? " (" + state.id + ")" : "") + ".",
@@ -287,10 +289,19 @@ public final class SessionStore {
             }
         }
 
+        if (serializationFailed) {
+            /*
+             * Je conserve le dernier fichier complet : remplacer sessions.yml
+             * par une sauvegarde amputée rendrait un journal de mutation
+             * faussement durable.
+             */
+            return false;
+        }
+
         File parent = file.getParentFile();
         if (parent != null && !parent.exists() && !parent.mkdirs()) {
             logger.severe("[Mineur] Impossible de créer le dossier de sauvegarde " + parent + ".");
-            return;
+            return false;
         }
 
         File temporary = parent != null
@@ -336,6 +347,7 @@ public final class SessionStore {
         if (saved) {
             preserveBackupOnNextSave = false;
         }
+        return saved;
     }
 
     private Map<String, Object> sectionToMap(ConfigurationSection section) {

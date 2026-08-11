@@ -18,6 +18,7 @@ import java.util.List;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.Predicate;
+import java.util.function.BooleanSupplier;
 
 /**
  * Boucle unique d'une session, pilotée par une petite machine à états.
@@ -66,6 +67,7 @@ public final class MiningLoop extends BukkitRunnable {
     private final Consumer<Block> protectionBlockedCallback;
     private final Consumer<Exception> failureCallback;
     private final Runnable minerUnavailableCallback;
+    private final BooleanSupplier preparationCheck;
     private final boolean applyPhysics;
     private final double progressPerTick;
 
@@ -94,9 +96,51 @@ public final class MiningLoop extends BukkitRunnable {
                       Consumer<Block> protectionBlockedCallback,
                       Consumer<Exception> failureCallback,
                       Runnable minerUnavailableCallback,
+                       boolean applyPhysics,
+                       boolean initiallyBlocked,
+                       double progressPerTick) {
+        this(
+                plugin,
+                state,
+                iterator,
+                router,
+                miner,
+                miningTool,
+                candidateFilter,
+                breakPermission,
+                decorationCallback,
+                completionCallback,
+                storageBlockedCallback,
+                storageFreedCallback,
+                protectionBlockedCallback,
+                failureCallback,
+                minerUnavailableCallback,
+                applyPhysics,
+                initiallyBlocked,
+                progressPerTick,
+                null
+        );
+    }
+
+    public MiningLoop(JavaPlugin plugin,
+                      MiningSessionState state,
+                      MiningIterator iterator,
+                      InventoryRouter router,
+                      Villager miner,
+                      ItemStack miningTool,
+                      Predicate<Block> candidateFilter,
+                      Function<Block, BreakPermissionResult> breakPermission,
+                      Consumer<Block> decorationCallback,
+                      Runnable completionCallback,
+                      Runnable storageBlockedCallback,
+                      Runnable storageFreedCallback,
+                      Consumer<Block> protectionBlockedCallback,
+                      Consumer<Exception> failureCallback,
+                      Runnable minerUnavailableCallback,
                       boolean applyPhysics,
                       boolean initiallyBlocked,
-                      double progressPerTick) {
+                      double progressPerTick,
+                      BooleanSupplier preparationCheck) {
         this.plugin = plugin;
         this.state = state;
         this.iterator = iterator;
@@ -112,6 +156,7 @@ public final class MiningLoop extends BukkitRunnable {
         this.protectionBlockedCallback = protectionBlockedCallback;
         this.failureCallback = failureCallback;
         this.minerUnavailableCallback = minerUnavailableCallback;
+        this.preparationCheck = preparationCheck;
         this.applyPhysics = applyPhysics;
         this.storageBlockedNotified = initiallyBlocked;
         this.progressPerTick = Double.isFinite(progressPerTick)
@@ -150,6 +195,15 @@ public final class MiningLoop extends BukkitRunnable {
                 return;
             }
             throw new IllegalStateException("Le PNJ mineur n'est plus disponible.");
+        }
+
+        /*
+         * Je prépare ici le volume avant de demander le premier bloc à
+         * l'itérateur. Le tunnel peut ainsi retirer ses fluides et fermer ses
+         * parois sans laisser un tick de minage contourner cette préparation.
+         */
+        if (preparationCheck != null && !preparationCheck.getAsBoolean()) {
+            return;
         }
 
         /*
@@ -679,10 +733,12 @@ public final class MiningLoop extends BukkitRunnable {
     private void cancelTaskSafely() {
         try {
             cancel();
-        } catch (IllegalStateException ignored) {
+        } catch (IllegalStateException | NullPointerException ignored) {
             /*
              * La boucle peut être exécutée directement par un test ou échouer
-             * avant son enregistrement auprès du scheduler.
+             * avant son enregistrement auprès du scheduler. Dans ce dernier
+             * cas, Bukkit n'a pas encore de serveur statique et cancel() peut
+             * également produire un NullPointerException interne.
              */
         }
     }

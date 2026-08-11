@@ -540,6 +540,32 @@ public final class VillageKnightPlanner {
                 used,
                 result
         );
+
+        /*
+         * Les quatre sentinelles fiscales sont imposées par la structure de la
+         * chambre forte, pas par le quota général de la garnison. Leur ensemble
+         * de séparation est volontairement indépendant : un poste situé vingt
+         * blocs sous un garde du donjon peut partager ses coordonnées X/Z sans
+         * représenter le même emplacement.
+         */
+        List<Location> treasuryCandidates = new ArrayList<>();
+        for (int index = 0;
+             index < VillageTreasury.REQUIRED_GUARD_COUNT;
+             index++) {
+            Location anchor = anchors.get("treasury-guard-" + index);
+            if (anchor != null) {
+                treasuryCandidates.add(anchor);
+            }
+        }
+        appendPostCategory(
+                world,
+                VillageKnightGarrison.RouteKind.TREASURY_SENTRY,
+                treasuryCandidates,
+                VillageTreasury.REQUIRED_GUARD_COUNT,
+                validateWorld,
+                new LinkedHashSet<>(),
+                result
+        );
         return result;
     }
 

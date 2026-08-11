@@ -95,6 +95,9 @@ permissions:
   mineplugin.village.admin:
     description: Annuler le village d'un autre joueur
     default: op
+  mineplugin.village.treasury.admin:
+    description: Ouvrir et modifier les salles des coffres royales
+    default: op
   mineplugin.eleveur.use:
     description: Créer et gérer ses enclos automatisés
     default: op

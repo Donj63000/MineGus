@@ -25,10 +25,10 @@ Notes :
 
 ## Configuration
 Après le premier démarrage, éditez `plugins/MinePlugin/config.yml` :
-- `/mineur` : `stop-at-y` (Y cible), `default.pattern`, `default.speed`, `default.supports-every`, `default.torch-layers`, `default.use-barrel-master`, `branch.spacing`, `branch.gallery-width`, `limits.max-sessions-per-player`, `economy.*`.
+- `/mineur` : `stop-at-y` (Y cible), `default.pattern`, `default.speed`, `default.supports-every`, `default.torch-layers`, `default.use-barrel-master`, `branch.*`, `tunnel.section-size`, `tunnel.height`, `tunnel.max-distance-from-base`, `tunnel.infrastructure.*`, `tunnel.arrival-room.*`, `limits.*`, `economy.*`.
 - `/garde` : `follow-radius`, les paramètres de formation (`formation-side-distance`, `formation-rear-distance`, `formation-tolerance`), l’espace visuel (`personal-space-radius`, `view-clearance-distance`), les rayons `protection-radius`, `threat-detection-radius` et `combat-leash-radius`, l’assistance (`assist-owner-attacks`, `proactive-defense`, `finish-engaged-targets`), `threat-duration-seconds`, `respawn-delay-seconds`, `friendly-fire`, la neutralité des golems, `notifications` et `attributes.*`. Les valeurs invalides ou hors limites reviennent aux valeurs par défaut sûres.
 - `/eleveur` : limites d’animaux, temps de recharge, chances de loot cuit, prix en émeraudes.
-- `/village` : tailles des maisons/grille (`houseSmall`, `houseBig`, `roadHalf`, `spacing`, `plazaSize`, `rows`, `cols`, `wallGap`), densité de végétation (`decorDensity`) et passe lumineuse finale (`lighting.*`).
+- `/village` : tailles des maisons/grille (`houseSmall`, `houseBig`, `roadHalf`, `spacing`, `plazaSize`, `rows`, `cols`, `wallGap`), densité de végétation (`decorDensity`), passe lumineuse finale (`lighting.*`), garnison (`knights.*`) et chambre forte fiscale (`treasury.*`).
 - Progression globale : `progression.xp-levelup`, `progression.bonuses`, `progression.display`, les garde-fous `progression.anti-abuse` et chaque source d'XP sous `progression.sources`. Ce niveau est indépendant du métier Mineur.
 
 Référence par défaut : `src/main/resources/config.yml`. Modifiez seulement la copie dans `plugins/MinePlugin/`.
@@ -71,7 +71,8 @@ Référence par défaut : `src/main/resources/config.yml`. Modifiez seulement la
 - Réglages : `tutorial.enabled`, limite de sessions, distance de rappel, vitesse de DonjBot, budgets de construction, délai de chargement, retour automatique, préfixe/borne/heure/graine du monde.
 
 ### /mineur (permission `mineplugin.mineur.use`)
-- `/mineur` : donne le bâton « Sélecteur de mine ». Clique deux blocs au même Y pour créer automatiquement la mine (cadre, coffres, PNJ mineur, golems). Par défaut, le pattern `QUARRY` creuse jusqu’à `stop-at-y` puis enchaîne sur un tunnel infini 10×10.
+- `/mineur` : donne le bâton « Sélecteur de mine ». Clique deux blocs au même Y pour créer automatiquement la mine (cadre, coffres, PNJ mineur, golems). Par défaut, le pattern `QUARRY` creuse jusqu’à `stop-at-y` puis enchaîne sur un tunnel de 10 blocs de large sur 3 blocs de haut, avancé par sections de 10 blocs et borné à 2 048 blocs de la base.
+- Lors du premier passage de la carrière au tunnel, une salle d’arrivée de 15×15×5 est aménagée avec plateformes, coffres et postes de travail. Chaque section reçoit ensuite des pieds de soutien, des poutres en bois espacées de 5 blocs et des lumières intégrées. Le drainage reste borné au volume actif ; le verre bleu clair ferme les contacts fluides et les ouvertures de grotte exposées.
 - `/mineur vitesse <lent|normal|rapide>` : change la cadence du mineur en cours.
 - `/mineur pattern <carriere|branche|tunnel|veine>` : change le pattern (veine utilise actuellement carrière). Désactive le chaînage automatique.
 - `/mineur pause` / `/mineur reprendre` : met en pause ou relance la session.
@@ -95,8 +96,12 @@ Référence par défaut : `src/main/resources/config.yml`. Modifiez seulement la
 
 ### /village (permission `mineplugin.village.use`, opérateur par défaut)
 - `/village` : génère un village semi-organique autour du joueur avec routes, place centrale, maisons, fermes, muraille, arbres, mares, jardins et mobilier. Les lanternes visibles sont complétées par un audit de lumière de bloc qui sécurise aussi les intérieurs, toitures, chemins de ronde et abords immédiats avec des blocs `LIGHT` invisibles.
-- `/village undo` : annule la dernière génération effectuée par son propriétaire. `mineplugin.village.admin` autorise l'annulation par un administrateur.
-- Une construction interrompue par l'arrêt du plugin est automatiquement annulée afin de ne pas laisser de village partiel.
+- Le donjon contient désormais un escalier vers une grande salle des coffres : double coque d'obsidienne, parement de quartz/diorite façon marbre, or, tapis, éclairage, registre central, sas à doubles portes et 60 coffres individuels. Une barre `Salle des coffres` apparaît seulement dans la chambre principale.
+- Une collecte fiscale globale choisit automatiquement une ressource aléatoire entre les intervalles `village.treasury.tax.min-interval-seconds` et `max-interval-seconds` (1 à 60 secondes par défaut). Tous les matériaux utilisables comme objets sont éligibles, notamment potions, œufs, blocs techniques et spawners. Les échéances hors ligne deviennent des collectes en attente sans forcer le chargement des chunks.
+- Le créateur de `/village` est le roi de cette ville : lui seul ouvre les portes et coffres par défaut. `mineplugin.village.treasury.admin` autorise la maintenance administrative. Hoppers, pistons, explosions, fluides et altérations naturelles ne peuvent pas contourner la protection.
+- Quatre sentinelles fixes de la garnison tiennent les postes de la chambre forte. Elles ne patrouillent pas, mais combattent les monstres à portée et ripostent ensemble lorsqu'un joueur frappe l'une d'elles.
+- `/village undo` : annule la dernière génération effectuée par son propriétaire. Le rollback retire aussi l'état fiscal et les quatre sentinelles avant de restaurer chaque bloc. `mineplugin.village.admin` autorise l'annulation par un administrateur.
+- Une construction interrompue par l'arrêt du plugin, ou une création incomplète de la banque/garnison, est automatiquement annulée afin de ne jamais laisser de village partiel.
 
 ### /armure (permission `mineplugin.armure.use`, opérateur par défaut)
 - Donne l’Armure du roi GIDON (netherite enchantée). Le plugin identifie désormais ses pièces par une donnée interne et non par leur simple nom.
@@ -136,7 +141,7 @@ Les fonctionnalités persistantes sauvegardent leurs informations (YAML) dans `p
 - `org.example.MinePlugin` : point d’entrée. Enregistre `/army` et `/ping`, instancie les modules (`Mineur`, `Agriculture`, `Foret`, `Village`, `Eleveur`, `Armure`) ainsi que les gestionnaires de métier et de progression globale, puis initialise `TutorialManager` et ferme proprement l’ensemble dans `onDisable`.
 - `org.example.tutorial` : monde privé généré, scènes par lots, DonjBot animé, scénario, protections, rappel à 15 blocs, retour transactionnel et suppression sécurisée des mondes.
 - `org.example.progression` : courbe 1–100, collecte multi-actions, bonus attributaires/dégâts, HUD sidebar temporaire, anti-farming des blocs et persistance atomique dans `progression.yml`.
-- `org.example.Mineur` : gère `/mineur`. Bâton de sélection (2 blocs même Y), cadre + coffres + PNJ mineur + golems, minage vertical, persistance `sessions.yml`, arrêt si tous les coffres cassés.
+- `org.example.Mineur` : gère `/mineur`. Bâton de sélection (2 blocs même Y), cadre + coffres + PNJ mineur + golems, minage vertical, salle d’arrivée et infrastructure du tunnel, persistance `sessions.yml`, arrêt si tous les coffres cassés.
 - `org.example.Agriculture` : gère `/champ`. Crée terres labourées + irrigation, PNJ fermier + golems, récolte/stockage auto, persistance `farms.yml`.
 - `org.example.Foret` : gère `/foret`. Grille de pousses, récolte et replantation auto, coffres d’angle, persistance `forests.yml`.
 - `org.example.Eleveur` : gère `/eleveur`. Génère un ranch (clôtures, coffres, spawners), limite d’animaux par espèce (depuis `config.yml`), ramassage et stockage, scoreboard, persistance `ranches.yml`.
@@ -228,12 +233,12 @@ categories:
 - Tutoriel : lancer `/tuto`, vérifier chaque décor et le déplacement de DonjBot ; s'éloigner de plus de 15 blocs ; tenter une autre commande et une interaction ; quitter avec `/tuto` à plusieurs étapes ; tester une déconnexion puis un redémarrage pendant la visite et confirmer le retour exact ainsi que la suppression du dossier `minegus_tuto_*`.
 - Sanity de base : `/ping`, `/army` (spawn + disparition programmée).
 - Gardes royaux : exécuter `/garde`, vérifier les deux positions latérales arrière et tourner rapidement pour confirmer que les gardes dégagent la caméra ; frapper successivement plusieurs mobs puis vérifier qu’ils sont traités dans l’ordre jusqu’à leur mort ; laisser un zombie ou un raider prendre le joueur pour cible sans recevoir de coup et confirmer l’interception proactive ; tester une flèche tirée par le propriétaire, un animal apprivoisé, une attaque PvP, une cible qui sort de la laisse de combat, le rappel hors combat au-delà de 20 blocs et le changement de monde ; approcher ensuite un golem de fer naturel de village, confirmer la neutralité puis provoquer une tentative de frappe ; enfin bloquer un chemin, tuer un garde, vérifier son retour après 20 secondes, renvoyer le duo et confirmer l’annulation des respawns.
-- Mineur : `/mineur`, sélection de deux blocs au même Y, vérifier cadre + coffres + PNJ; changer `/mineur vitesse rapide`.
+- Mineur : `/mineur`, sélectionner deux blocs au même Y, vérifier cadre + coffres + PNJ, changer `/mineur vitesse rapide`, puis contrôler la salle d’arrivée, les cadres, les lumières, le drainage et le verre aux contacts fluides ou ouvertures de grotte lors du passage au tunnel.
 - Progression globale : casser un minerai naturel puis un minerai posé, tuer un mob naturel puis issu d'un spawner, récolter une culture mûre et pêcher ; vérifier `/niveau`, le HUD temporaire, la restauration de l'ancienne sidebar, la persistance après redémarrage et les quatre bonus aux niveaux 2 puis 100.
 - Champ : `/champ`, récolte/stockage, suppression des coffres → arrêt automatique.
 - Forêt : `/foret`, coupe/replantation automatique, persistance après redémarrage.
 - Éleveur : `/eleveur`, `/eleveur list`, `/eleveur delete <id>`; vérifier limites d’animaux configurées.
-- Village : `/village`, observer génération progressive, `/village undo` pour rollback.
+- Village : exécuter `/village`, descendre l’escalier du donjon, vérifier les 60 coffres, le registre, la barre de zone et les quatre sentinelles fixes ; attendre plusieurs collectes, redémarrer le serveur puis contrôler la persistance et le rattrapage borné ; tester l’accès du roi, le refus d’un autre joueur, les hoppers/pistons/explosions/fluides, l’attaque d’une sentinelle et enfin `/village undo` pour le rollback complet.
 - Marchand : spawn avec `/marchand`, ouverture via `/marchand open <joueur>`, tester une offre avec cap quotidien et vérifier le message de blocage après dépassement.
 
 ## Migration depuis une version antérieure au correctif de sécurité
